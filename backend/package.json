@@ -8,31 +8,32 @@
     "dev": "nodemon server.js",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed_historical.js",
+    "pipeline": "node scripts/run_pipeline.js",
     "backtest": "node scripts/run_backtest.js",
     "test": "jest --config jest.config.js",
     "test:integration": "jest --config jest.integration.config.js",
     "test:coverage": "jest --config jest.config.js --coverage"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "mysql2": "^3.12.0",
-    "yahoo-finance2": "^2.14.0",
-    "technicalindicators": "^3.1.0",
-    "node-cron": "^3.0.3",
-    "dotenv": "^16.4.7",
-    "winston": "^3.17.0",
-    "express-rate-limit": "^7.5.0",
-    "joi": "^17.13.3",
-    "csv-parse": "^5.6.0",
     "axios": "^1.7.9",
-    "helmet": "^7.2.0",
     "cors": "^2.8.5",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^7.2.0",
+    "joi": "^17.13.3",
+    "mysql2": "^3.12.0",
+    "node-cron": "^3.0.3",
+    "rss-parser": "^3.13.0",
+    "technicalindicators": "^3.1.0",
     "uuid": "^9.0.1",
-    "rss-parser": "^3.13.0"
+    "winston": "^3.17.0",
+    "yahoo-finance2": "^2.13.2"
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "supertest": "^6.3.4",
-    "nodemon": "^3.1.9"
+    "nodemon": "^3.1.9",
+    "supertest": "^6.3.4"
   }
 }
