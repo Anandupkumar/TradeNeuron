@@ -1,1 +1,0 @@
-import{u as i}from"./vendor-query-C-ewo9kA.js";import{b as e}from"./index-CLF0Vqaj.js";const a={list:s=>e.get("/signals",{params:s}),active:()=>e.get("/signals/active")};function r(){return i({queryKey:["signals","active"],queryFn:()=>a.active(),staleTime:5*60*1e3,refetchOnWindowFocus:!1})}export{a as s,r as u};
