@@ -1,0 +1,1 @@
+ALTER TABLE features ADD COLUMN z_score_20d DECIMAL(8,4);

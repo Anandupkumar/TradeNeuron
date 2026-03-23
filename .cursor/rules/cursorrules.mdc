@@ -1,0 +1,391 @@
+---
+alwaysApply: true
+---
+## 2. ABSOLUTE RULES — NEVER VIOLATE
+
+1. **Never hardcode secrets.** All config comes from `src/config/env.js`. Never read
+   `process.env` directly outside that file.
+
+2. **Never use `close` for calculations.** Always use `adjusted_close`. Corporate actions
+   (splits, dividends) make raw close prices unreliable for indicator maths.
+
+3. **Never skip the risk <= 0 guard** in any strategy or deduplication logic. A signal
+   with non-positive risk must be discarded, never emitted.
+
+4. **Never run migrations on app startup.** Migrations are manual only:
+   `node scripts/migrate.js`. The app boots and checks DB connectivity but never alters schema.
+
+5. **Never call Yahoo Finance or Google News RSS in tests.** All external services must be
+   mocked using fixtures in `tests/fixtures/`. Live API calls in tests are forbidden.
+
+6. **Never use `Date.now()` or `new Date()` without converting to IST.** Use helpers from
+   `src/utils/date.util.js` (`toIST`, `isTradingDay`, `countTradingDays`).
+
+7. **Never emit a BUY signal when `market_regime` is not `'BULLISH'`.** The regime check
+   (NIFTY EMA200 + India VIX) is a global gate. If it fails, skip strategy execution entirely.
+
+8. **Never suppress a signal error silently.** All rejections must be logged with symbol,
+   reason, and relevant values (e.g., confidence score, VIX level, D/E ratio).
+
+9. **The `M&M.NS` symbol contains `&`.** Always URL-encode it as `M%26M.NS` in query
+   strings. Express decodes it automatically on the server side — no extra handling needed
+   in route handlers.
+
+10. **`node-cron` must always use `timezone: "Asia/Kolkata"`.** Never schedule a cron job
+    without an explicit timezone. Default UTC will fire at wrong times on cloud servers.
+
+---
+
+## 3. PROJECT STRUCTURE
+
+Respect this layout exactly. Never create files outside it without instruction.
+
+```
+backend/
+  src/
+    config/          # db.js, env.js, constants.js
+    models/          # *.model.js — DB query wrappers only, no business logic
+    services/
+      data_ingestion/   # yahoo.service.js, bhavcopy.service.js, validation.service.js
+      indicators/       # ema, rsi, macd, atr, volume services + index.js orchestrator
+      features/         # feature.service.js
+      strategies/       # trend_pullback.strategy.js, breakout.strategy.js, index.js
+      scoring/          # scoring.service.js
+      signals/          # signal.service.js
+      fundamentals/     # fundamental.service.js, fundamental.filter.js
+      sentiment/        # news.service.js, sentiment.service.js
+      backtesting/      # backtest.service.js, metrics.service.js
+      favorites/        # favorite.service.js
+      paper_trading/    # paper_trade.service.js
+    routes/          # *.routes.js — thin, delegates to services
+    middlewares/     # error_handler, logger, auth, rate_limiter
+    utils/           # date.util.js, math.util.js, retry.util.js, symbols.util.js, errors.js
+    jobs/            # daily_pipeline.job.js, weekly_fundamentals.job.js
+    validations/     # Joi schemas only
+  migrations/        # 001_*.sql through 010_*.sql — SQL files, never JS
+  tests/
+    unit/            # Per-module, fully mocked
+    integration/     # Requires test DB
+    fixtures/        # candles/, fundamentals/, rss/ — static JSON/XML/CSV
+  scripts/           # seed_historical.js, run_backtest.js, migrate.js
+  server.js          # Entry point only — boots DB, registers routes, starts cron
+```
+
+---
+
+## 4. TECH STACK — APPROVED PACKAGES ONLY
+
+Do not install any package not listed here without explicit approval.
+
+**Runtime:**
+express ^4.x | mysql2 ^3.x | yahoo-finance2 ^2.x | technicalindicators ^3.x |
+node-cron ^3.x | dotenv ^16.x | winston ^3.x | express-rate-limit ^7.x |
+joi ^17.x | csv-parse ^5.x | axios ^1.x | helmet ^7.x | cors ^2.x |
+uuid ^9.x | rss-parser ^3.x
+
+**Dev:**
+jest ^29.x | supertest ^6.x | nodemon ^3.x
+
+---
+
+## 5. ENVIRONMENT VARIABLES
+
+All env vars are defined in `.env.example` and loaded/validated in `src/config/env.js`.
+
+**Required at startup (fail fast if missing):**
+PORT, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, API_KEY,
+CRON_SCHEDULE, CRON_TIMEZONE, FUNDAMENTAL_CRON_SCHEDULE,
+VIX_THRESHOLD, MIN_LIQUIDITY_VOLUME, MIN_CONFIDENCE, MIN_RISK_REWARD
+
+**Key defaults:**
+CRON_SCHEDULE=30 16 * * 1-5   (4:30 PM IST Mon–Fri)
+CRON_TIMEZONE=Asia/Kolkata
+VIX_THRESHOLD=20
+MIN_CONFIDENCE=70
+MIN_RISK_REWARD=2.0
+MAX_ACTIVE_SIGNALS=10
+MAX_SECTOR_SIGNALS=3
+HOLDING_PERIOD_DAYS=10
+SLIPPAGE_PCT=0.1
+BROKERAGE_PCT=0.05
+MIN_LIQUIDITY_VOLUME=500000
+
+When adding a new configurable value, always:
+1. Add it to `.env.example` with a comment
+2. Add it to the required list in `env.js` if it has no safe default
+3. Export it from `env.js` — never read `process.env` elsewhere
+
+---
+
+## 6. DATABASE RULES
+
+- Engine: InnoDB. Charset: utf8mb4. All prices: DECIMAL(12,2). Timestamps: IST.
+- All queries use parameterised statements (`?` placeholders). Never interpolate user input.
+- Use `INSERT ... ON DUPLICATE KEY UPDATE` for upserts — never DELETE then INSERT.
+- Connection pool is in `src/config/db.js`. Import `pool` from there. Never create
+  a new connection directly.
+- On startup (`server.js`): run `SELECT 1` ping. If it fails, `process.exit(1)`.
+- Pool error handler: log and exit on fatal errors, warn on `PROTOCOL_CONNECTION_LOST`.
+- Graceful shutdown: call `pool.end()` on SIGTERM/SIGINT.
+
+**Tables (do not rename or add columns without a migration file):**
+candles | indicators | features (+ is_liquid) | signals | backtest_results |
+favorites | fundamentals | sentiment_flags | paper_trades | _migrations
+
+**`is_liquid` lives in the features table, added by migration 010.**
+The features table schema does NOT include it in the base CREATE — migration 010 adds it.
+
+---
+
+## 7. PIPELINE ARCHITECTURE — 12 STEPS
+
+The daily pipeline runs in this exact order. Never reorder steps.
+
+```
+Step 1:  Fetch candles        — NIFTY50 + ^NSEI + ^INDIAVIX
+Step 2:  Validate data        — gap detection using NSE holiday calendar
+Step 3:  Compute indicators   — NIFTY50 + ^NSEI only (not ^INDIAVIX)
+Step 4:  Extract features     — NIFTY50 only (includes is_liquid)
+Step 5:  Market regime check  — NIFTY EMA200 AND VIX < threshold
+         → IF not BULLISH: GOTO Step 11 (skip signal generation)
+Step 6:  Run strategies       — TREND_PULLBACK + BREAKOUT per symbol
+Step 7:  Fundamental filter   — pass/fail gate, fail-open if no data
+Step 8:  Sentiment filter     — RSS fetch only for symbols with raw signals
+Step 9:  Score + deduplicate  — includes is_liquid gate
+Step 10: Store signals + create paper trades
+Step 11: Update signal statuses
+Step 12: Update paper trade statuses
+```
+
+If market_regime != 'BULLISH' at Step 5, jump to Step 11.
+Signal generation (Steps 6–10) is skipped entirely.
+Status updates (Steps 11–12) always run regardless of regime.
+
+SLA: full pipeline must complete within 7 minutes.
+Per-symbol timeout: 10 seconds — log warning and skip, do not abort pipeline.
+
+---
+
+## 8. SIGNAL LOGIC RULES
+
+### Stop Loss direction (BUY signals)
+- Higher SL = closer to entry = tighter (less breathing room).
+- When merging multiple strategies, we use `MAX(all SL values)` — the closest SL to entry.
+- This is an intentional aggressive choice. Comment must say so in code.
+- `MIN()` gives more breathing room — the code must make the current choice visible.
+
+### Risk guard (both strategies)
+```js
+const risk = entryPrice - stopLoss;
+if (risk <= 0) {
+  // Discard. Log symbol, stopLoss, entryPrice, ATR.
+  return null;
+}
+```
+This guard is mandatory. Never remove it.
+
+### Same-candle SL/Target conflict
+When `candle.low <= stopLoss` AND `candle.high >= targetPrice` on the same candle:
+SL takes priority (conservative assumption). This intentionally understates win rate.
+Both signal lifecycle and paper trading use this same rule.
+
+### Gate order in `deduplicateAndGenerate`:
+1. Merge signals (if multiple)
+2. Risk guard (risk <= 0 → discard)
+3. Liquidity gate (is_liquid = false → reject)
+4. Confidence gate (< MIN_CONFIDENCE → reject)
+5. Risk/reward gate (< MIN_RISK_REWARD → reject)
+6. Active signal cap (>= MAX_ACTIVE_SIGNALS → reject)
+7. Sector cap (>= MAX_SECTOR_SIGNALS → reject)
+
+---
+
+## 9. SCORING ENGINE
+
+Weights (sum = 100):
+- Trend Alignment:  +30  (is_uptrend AND ema_20 > ema_50)
+- RSI Pullback:     +20  (rsi_zone = 'PULLBACK')
+- Volume Spike:     +30  (is_volume_spike)
+- Breakout:         +20  (is_breakout)
+
+MIN_CONFIDENCE default = 70. This requires at least 3 of 4 factors.
+Minimum passing 3-factor combo: Trend(30) + RSI(20) + Breakout(20) = 70.
+
+If weights are ever changed, re-verify the gate is still achievable.
+Add a comment to constants.js documenting the implication.
+
+---
+
+## 10. FUNDAMENTAL FILTER
+
+- Data source: `yahoo-finance2` `quoteSummary()` — no new package needed.
+- Rejection criteria (all configurable via .env):
+  - D/E ratio > MAX_DEBT_TO_EQUITY (default 2.0)
+  - EPS growth negative for >= MIN_EPS_GROWTH_CONSECUTIVE_NEGATIVE quarters (default 2)
+  - Revenue growth negative for >= MIN_REVENUE_GROWTH_CONSECUTIVE_NEGATIVE quarters (default 2)
+  - Promoter pledge > MAX_PROMOTER_PLEDGE_PCT (default 50%)
+- `is_healthy` is precomputed and stored in the fundamentals table.
+- Daily pipeline does a simple lookup — never recomputes health on every run.
+- Fail-open: if no fundamental row exists for a symbol, allow signal through + warn.
+- Weekly refresh job: Saturday 6:00 PM IST. 500ms throttle between symbols.
+
+---
+
+## 11. SENTIMENT LAYER
+
+- Source: Google News RSS (free, no API key).
+- Only fetch for symbols that generated raw signals — not all 50.
+- Strip `.NS` suffix before building the RSS URL.
+- 500ms delay between fetches.
+- Fail-open on RSS fetch failure (fallback to NEUTRAL).
+- `sentiment_flags` table = **audit log only**. Pipeline always does a fresh fetch.
+  Never read stale sentiment from DB to make a gating decision.
+- False positives (e.g., "probe" in "probe clears company") are acceptable in MVP.
+  They suppress signals conservatively, not generate bad ones.
+
+---
+
+## 12. PAPER TRADING
+
+- PnL formula uses **net returns** (after slippage + brokerage), identical to backtesting.
+- Same SL-priority conservative assumption as signal lifecycle.
+- `paper_trades.pnl_pct` = net return, not gross. Schema comment must say this.
+
+```
+effective_entry = entry_price * (1 + (SLIPPAGE_PCT + BROKERAGE_PCT) / 100)
+effective_exit  = exit_price  * (1 - (SLIPPAGE_PCT + BROKERAGE_PCT) / 100)
+pnl_pct = ((effective_exit - effective_entry) / effective_entry) * 100
+```
+
+---
+
+## 13. API CONVENTIONS
+
+Base URL: `/api/v1`
+
+All responses use this envelope:
+```json
+{ "success": true/false, "data": {...} | null, "error": null | "message" }
+```
+
+Authentication: `X-API-Key` header required on all routes except `GET /health`.
+Favorites routes also require `X-User-Id` header (max 64 chars).
+
+Pagination: all list endpoints support `page`, `limit` (max 100), `sort_by`, `sort_order`.
+
+HTTP status codes:
+200 OK | 201 Created | 400 Bad Request | 401 Unauthorized |
+404 Not Found | 409 Conflict | 500 Internal Server Error | 502 Bad Gateway
+
+Rate limits:
+- Global: 100 req/min per IP
+- `GET /history/:symbol`: 30 req/min
+
+Error class hierarchy (`src/utils/errors.js`):
+AppError(500) → DataFetchError(502) | ValidationError(400) | NotFoundError(404) |
+AuthError(401) | ConflictError(409) | FundamentalError(502, non-blocking)
+
+All errors go through the centralized `error_handler.middleware.js`.
+In production: return generic message. In development: return err.message.
+Stack traces only in development.
+
+---
+
+## 14. LOGGING RULES
+
+Library: winston. Format: JSON. All pipeline logs include `pipeline_run_id`.
+
+Log structure:
+```json
+{
+  "timestamp": "ISO8601",
+  "level": "info|warn|error|debug",
+  "message": "Step N/12: ...",
+  "service": "daily_pipeline",
+  "pipeline_run_id": "run_YYYYMMDD_HHMM",
+  "meta": { "symbols_processed": 51, "duration_ms": 1234 }
+}
+```
+
+- Every signal rejection must be logged at `info` level with symbol + reason + values.
+- Every pipeline step must log start and completion with counts.
+- Never log sensitive data (DB passwords, API keys).
+- Pipeline log file: `logs/pipeline.log` (separate from combined.log).
+
+---
+
+## 15. TESTING RULES
+
+- Unit tests: `tests/unit/`. Run: `npm test`. Coverage target: 80%+ on services + utils.
+- Integration tests: `tests/integration/`. Run: `npm run test:integration`. Requires test DB.
+- ALL external services must be mocked:
+  - `yahoo-finance2` (`historical` AND `quoteSummary`) → fixtures in `tests/fixtures/candles/` and `tests/fixtures/fundamentals/`
+  - `axios` (Bhavcopy) → fixture CSV strings
+  - `rss-parser` → fixture XML in `tests/fixtures/rss/`
+- Never call live APIs in any test.
+- Integration tests use a separate test database — never the development DB.
+- Backtest regression: re-run after any strategy/scoring change. Fail if win rate drops > 5pp.
+
+---
+
+## 16. NSE-SPECIFIC RULES
+
+Symbol list: 50 stocks in `src/utils/symbols.util.js`. Do not add/remove without instruction.
+Index symbols: `^NSEI` (NIFTY 50) and `^INDIAVIX` (India VIX).
+
+`M&M.NS` — the `&` in the symbol:
+- In URLs/query params: must be `M%26M.NS` (URL-encoded).
+- Express auto-decodes it in `req.query`/`req.params`. No manual decoding needed in handlers.
+- In DB queries: use parameterised query with raw value `'M&M.NS'`.
+
+Holiday calendar: defined in `src/config/constants.js` as `nse_holidays_YYYY`.
+Must be updated every December for the next year.
+`countTradingDays()` and `isTradingDay()` in `date.util.js` use this calendar.
+Without it, data validation fires false-positive "missing candle" warnings for every NSE holiday.
+
+---
+
+## 17. CODE STYLE
+
+- All async functions use `async/await`. No raw `.then()` chains.
+- All DB queries and external calls are wrapped in `try/catch`. Never swallow errors.
+- Use the custom error classes from `src/utils/errors.js`. Never `throw new Error(...)` directly.
+- Functions are named clearly for what they do: `fetchAndStoreCandles`, `computeHealthFlag`,
+  `deduplicateAndGenerate`. No vague names like `process` or `handle`.
+- No magic numbers. All thresholds come from `src/config/env.js` or `constants.js`.
+- Comments are required for non-obvious financial logic (e.g., why MAX not MIN for SL merge).
+- Use `DECIMAL` arithmetic carefully — JavaScript floats. Round with `math.util.js` helpers.
+
+---
+
+## 18. DOCUMENT SYNC RULE
+
+**The technical document (`backend_technical_document.md`) is the source of truth.**
+
+When any of the following change in code, the document must be updated in the same session:
+- DB schema (table, column, index)
+- Pipeline step sequence or count
+- API endpoint (path, params, response shape)
+- Environment variable (added, renamed, removed)
+- Scoring weights or gate thresholds
+- Strategy entry conditions or signal calculation
+- Error class hierarchy
+
+Do not mark a task complete if the code and document are out of sync.
+
+---
+
+## 19. WHAT NOT TO DO
+
+- Do not add a new npm package without noting it in the document and getting approval.
+- Do not create a new DB table without a numbered migration SQL file.
+- Do not read `process.env` outside `src/config/env.js`.
+- Do not use `console.log` — use the winston logger.
+- Do not write raw SQL strings with user input — always parameterise.
+- Do not store `^INDIAVIX` indicators or features — candles only.
+- Do not run the fundamental filter for all 50 stocks in the pipeline — only for symbols
+  that have raw signals after the strategy engine.
+- Do not run the sentiment RSS fetch for all 50 stocks — same restriction as above.
+- Do not auto-run migrations on server boot.
+- Do not change the SL-priority conflict resolution without updating both signal lifecycle
+  and paper trading to match, and documenting the change.
