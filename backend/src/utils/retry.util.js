@@ -1,5 +1,10 @@
 const { logger } = require('../middlewares/logger.middleware');
 
+function isRateLimited(error) {
+  const msg = error.message || '';
+  return msg.includes('Too Many Requests') || msg.includes('429');
+}
+
 async function withRetry(fn, options = {}) {
   const {
     max_retries = 3,
@@ -15,8 +20,13 @@ async function withRetry(fn, options = {}) {
         logger.error(`${label} failed after ${max_retries} attempts: ${error.message}`);
         throw error;
       }
-      const delay = backoff_base_ms * Math.pow(2, attempt - 1);
-      logger.warn(`${label} attempt ${attempt} failed, retrying in ${delay}ms: ${error.message}`);
+      let delay = backoff_base_ms * Math.pow(2, attempt - 1);
+      if (isRateLimited(error)) {
+        delay = Math.max(delay, 30000) * attempt;
+        logger.warn(`${label} rate limited, waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}`);
+      } else {
+        logger.warn(`${label} attempt ${attempt} failed, retrying in ${delay}ms: ${error.message}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
