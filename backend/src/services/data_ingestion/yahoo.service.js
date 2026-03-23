@@ -22,9 +22,9 @@ async function fetchYahooCandles(symbol, start_date, end_date) {
   const label = `Yahoo candles for ${symbol}`;
 
   const yf = await getYf();
-  const candles = await withRetry(
+  const chart_result = await withRetry(
     async () => {
-      const result = await yf.historical(symbol, {
+      const result = await yf.chart(symbol, {
         period1: start_date,
         period2: end_date,
         interval: '1d',
@@ -40,22 +40,25 @@ async function fetchYahooCandles(symbol, start_date, end_date) {
 
   await sleep(config.yahoo_throttle_ms);
 
-  if (!candles || candles.length === 0) {
+  const quotes = chart_result?.quotes;
+  if (!quotes || quotes.length === 0) {
     logger.warn(`${label}: No data returned`);
     return [];
   }
 
-  return candles.map((c) => ({
-    symbol,
-    date: formatDate(c.date),
-    open: roundDecimal(c.open),
-    high: roundDecimal(c.high),
-    low: roundDecimal(c.low),
-    close: roundDecimal(c.close),
-    adjusted_close: roundDecimal(c.adjClose ?? c.close),
-    volume: c.volume || 0,
-    source: 'YAHOO',
-  }));
+  return quotes
+    .filter((c) => c.close != null)
+    .map((c) => ({
+      symbol,
+      date: formatDate(c.date),
+      open: roundDecimal(c.open),
+      high: roundDecimal(c.high),
+      low: roundDecimal(c.low),
+      close: roundDecimal(c.close),
+      adjusted_close: roundDecimal(c.adjclose ?? c.close),
+      volume: c.volume || 0,
+      source: 'YAHOO',
+    }));
 }
 
 async function fetchQuoteSummary(symbol) {
