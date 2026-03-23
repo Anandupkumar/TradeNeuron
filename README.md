@@ -2,30 +2,86 @@
 
 ## Overview
 
-A simple rule-based system that analyzes NIFTY 50 stocks and generates swing trading signals (entry, stop loss, target) with a confidence score.
+An advanced rule-based swing trading system that analyzes NIFTY 50 stocks and generates high-quality trading signals (entry, stop loss, target, position size) with a confidence score.
 
-> This is a decision-support tool, not an auto-trading bot.
+The system uses **multi-strategy logic, market regime detection, adaptive thresholds, and risk management** to improve consistency across different market conditions.
 
----
-
-## What it does
-
-* Fetches daily OHLCV data
-* Calculates indicators (EMA, RSI, MACD, ATR)
-* Applies strategies (trend pullback, breakout)
-* Scores setups and outputs signals
-* Basic backtesting to validate logic
+> ⚠️ This is a decision-support tool, not an automated trading bot.
 
 ---
 
-## Data Source
+## 🚀 Key Features
 
-* Primary: Yahoo Finance (unofficial)
-* Fallback: NSE bhavcopy (CSV)
+### 🧠 Multi-Strategy Engine
+Supports multiple trading strategies based on market conditions:
+
+- Trend Pullback (Long)
+- Breakout (Long)
+- Range Trading (Sideways markets)
+- Mean Reversion
+- Trend Pullback (Short)
+- Breakdown (Short)
 
 ---
 
-## Example Signal
+### 📊 Market Regime Detection
+
+Automatically detects market conditions and adapts strategy selection:
+
+- **BULLISH** → Trend & breakout strategies  
+- **SIDEWAYS** → Range & mean reversion  
+- **BEARISH** → Short strategies  
+- **HIGH VOLATILITY** → No trading (risk avoidance)
+
+---
+
+### ⚙️ Adaptive Thresholds
+
+Dynamic indicator thresholds based on market behavior:
+
+- RSI (adaptive zones)
+- Volume (rolling percentiles)
+- Volatility (VIX-based filtering)
+
+---
+
+### 💰 Risk & Position Management
+
+- Risk per trade (configurable % of capital)
+- ATR-based stop loss
+- Minimum Risk:Reward (≥ 1:2)
+- Max position size caps
+- Separate allocation for long/short trades
+
+---
+
+### 📰 Sentiment Analysis
+
+- News-based filtering
+- Negation-aware keyword logic
+- Optional external sentiment API integration
+- Confidence scoring for sentiment
+
+---
+
+### 🏗️ Robust Data Pipeline
+
+- Primary: Yahoo Finance
+- Fallback: NSE Bhavcopy (CSV)
+- Data validation & retry handling
+- Missing data safeguards
+
+---
+
+### 🧪 Backtesting & Validation
+
+- Walk-forward backtesting
+- Paper trading support
+- Cost model (brokerage + slippage)
+
+---
+
+## 📦 Example Signal
 
 ```json
 {
@@ -34,36 +90,6 @@ A simple rule-based system that analyzes NIFTY 50 stocks and generates swing tra
   "confidence": 78,
   "entry": 2450,
   "stopLoss": 2380,
-  "target": 2600
+  "target": 2600,
+  "positionSize": 12
 }
-```
-
----
-
-## Tech Stack
-
-* Node.js (ES6)
-* Express
-* MySQL
-* axios, technicalindicators
-
----
-
-## Flow
-
-Fetch Data → Indicators → Strategies → Score → Signal
-
----
-
-## Run (high level)
-
-1. Setup DB
-2. Configure env (API, DB)
-3. Run data job
-4. Run analysis job
-
----
-
-## Disclaimer
-
-For learning/research only. No profit guarantees.
