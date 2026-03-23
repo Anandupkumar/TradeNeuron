@@ -1,10 +1,18 @@
-const yahooFinance = require('yahoo-finance2').default;
 const config = require('../../config/env');
 const { logger } = require('../../middlewares/logger.middleware');
 const { withRetry } = require('../../utils/retry.util');
 const { DataFetchError } = require('../../utils/errors');
 const { formatDate } = require('../../utils/date.util');
 const { roundDecimal } = require('../../utils/math.util');
+
+let _yf;
+async function getYf() {
+  if (!_yf) {
+    const mod = await import('yahoo-finance2');
+    _yf = mod.default;
+  }
+  return _yf;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,9 +21,10 @@ function sleep(ms) {
 async function fetchYahooCandles(symbol, start_date, end_date) {
   const label = `Yahoo candles for ${symbol}`;
 
+  const yf = await getYf();
   const candles = await withRetry(
     async () => {
-      const result = await yahooFinance.historical(symbol, {
+      const result = await yf.historical(symbol, {
         period1: start_date,
         period2: end_date,
         interval: '1d',
@@ -52,9 +61,10 @@ async function fetchYahooCandles(symbol, start_date, end_date) {
 async function fetchQuoteSummary(symbol) {
   const label = `Yahoo quoteSummary for ${symbol}`;
 
+  const yf = await getYf();
   const summary = await withRetry(
     async () => {
-      const result = await yahooFinance.quoteSummary(symbol, {
+      const result = await yf.quoteSummary(symbol, {
         modules: ['defaultKeyStatistics', 'financialData', 'earnings'],
       });
       return result;
