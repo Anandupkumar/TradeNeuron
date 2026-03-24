@@ -19,6 +19,13 @@ apiClient.interceptors.request.use((config) => {
 
 apiClient.interceptors.response.use(
   (response) => {
+    // If the response is an HTML string (e.g. Vite SPA fallback for a 404 API route)
+    // or does not contain the standard API envelope 'success' field
+    if (typeof response.data === 'string' || !response.data || typeof response.data !== 'object' || !('success' in response.data)) {
+      logger.error('[API] Unexpected response format (likely 404 HTML fallback).');
+      return Promise.reject(new Error('Invalid API response format. Check API URL and server status.'));
+    }
+
     const envelope = response.data as ApiEnvelope<unknown>;
     if (envelope.success === false) {
       return Promise.reject(new Error(envelope.error ?? 'Unknown error'));
