@@ -38,11 +38,13 @@ async function loadAdaptiveWeights() {
   return cached_adaptive_weights;
 }
 
-async function calculateScore(symbol, date) {
+async function _scoreInternal(symbol, date) {
   const feature = await featureModel.findBySymbolAndDate(symbol, date);
   const indicator = await indicatorModel.findBySymbolAndDate(symbol, date);
 
-  if (!feature || !indicator) return 0;
+  if (!feature || !indicator) {
+    return { score: 0, breakdown: null, feature, indicator };
+  }
 
   const adaptive = await loadAdaptiveWeights();
 
@@ -50,39 +52,124 @@ async function calculateScore(symbol, date) {
   const w_rsi = adaptive ? adaptive.rsi : SCORING_WEIGHTS.RSI_PULLBACK;
   const w_breakout = adaptive ? adaptive.breakout : SCORING_WEIGHTS.BREAKOUT;
 
-  let score = 0;
+  let technical = 0;
+  let momentum = 0;
+  let volume = 0;
+  let quality = 0;
 
   const is_uptrend = feature.is_uptrend === 1 || feature.is_uptrend === true;
   const ema_20 = indicator.ema_20 != null ? parseFloat(indicator.ema_20) : null;
   const ema_50 = indicator.ema_50 != null ? parseFloat(indicator.ema_50) : null;
 
   if (is_uptrend && ema_20 != null && ema_50 != null && ema_20 > ema_50) {
-    score += w_trend;
+    technical += w_trend;
   }
 
   if (feature.rsi_zone === 'PULLBACK') {
-    score += w_rsi;
+    momentum += w_rsi;
   }
 
   const volume_tier = feature.volume_tier || 'normal';
   if (adaptive) {
     const tier_multiplier = { extreme: 1.0, high: 0.67, elevated: 0.33, normal: 0 };
-    score += adaptive.volume * (tier_multiplier[volume_tier] || 0);
+    volume += adaptive.volume * (tier_multiplier[volume_tier] || 0);
   } else {
-    score += VOLUME_TIER_SCORES[volume_tier] || 0;
+    volume += VOLUME_TIER_SCORES[volume_tier] || 0;
   }
 
   const is_breakout = feature.is_breakout === 1 || feature.is_breakout === true;
   if (is_breakout) {
-    score += w_breakout;
+    technical += w_breakout;
   }
 
   const is_high_delivery = feature.is_high_delivery === 1 || feature.is_high_delivery === true;
   if (is_high_delivery && is_breakout) {
-    score += 10;
+    quality += 10;
   }
 
-  return clamp(score, 0, 100);
+  const raw_score = technical + momentum + volume + quality;
+  const score = clamp(raw_score, 0, 100);
+
+  const breakdown = {
+    technical: Math.round(technical * 100) / 100,
+    momentum: Math.round(momentum * 100) / 100,
+    volume: Math.round(volume * 100) / 100,
+    quality: Math.round(quality * 100) / 100,
+  };
+
+  return { score, breakdown, feature, indicator };
+}
+
+async function calculateScore(symbol, date) {
+  const { score } = await _scoreInternal(symbol, date);
+  return score;
+}
+
+async function calculateScoreWithBreakdown(symbol, date) {
+  const { score, breakdown, feature, indicator } = await _scoreInternal(symbol, date);
+  return { score, breakdown, feature, indicator };
+}
+
+function buildExplanations(feature, indicator, regime, sentiment) {
+  const sentences = [];
+
+  if (!feature || !indicator) {
+    sentences.push('Insufficient data to generate a detailed explanation.');
+    return sentences;
+  }
+
+  if (regime) {
+    sentences.push(`Market regime is ${regime}.`);
+  }
+
+  const is_uptrend = feature.is_uptrend === 1 || feature.is_uptrend === true;
+  const ema_20 = indicator.ema_20 != null ? parseFloat(indicator.ema_20) : null;
+  const ema_50 = indicator.ema_50 != null ? parseFloat(indicator.ema_50) : null;
+
+  if (is_uptrend && ema_20 != null && ema_50 != null && ema_20 > ema_50) {
+    sentences.push(`Stock is in an uptrend with EMA 20 (${ema_20.toFixed(2)}) above EMA 50 (${ema_50.toFixed(2)}), adding trend alignment points.`);
+  } else if (is_uptrend) {
+    sentences.push('Stock is in an uptrend but EMA 20/50 crossover not confirmed.');
+  } else {
+    sentences.push('Stock is not in an uptrend — no trend alignment points awarded.');
+  }
+
+  if (feature.rsi_zone === 'PULLBACK') {
+    const rsi_val = indicator.rsi_14 != null ? parseFloat(indicator.rsi_14).toFixed(1) : '?';
+    sentences.push(`RSI is in the pullback zone (${rsi_val}), indicating a favorable entry point.`);
+  } else {
+    sentences.push(`RSI zone is ${feature.rsi_zone || 'NEUTRAL'} — no momentum bonus.`);
+  }
+
+  const volume_tier = feature.volume_tier || 'normal';
+  if (volume_tier !== 'normal') {
+    const rvol = feature.rvol != null ? parseFloat(feature.rvol).toFixed(2) : '?';
+    sentences.push(`Volume tier is ${volume_tier.toUpperCase()} (RVOL: ${rvol}x), contributing volume points.`);
+  } else {
+    sentences.push('Volume is at normal levels — no volume bonus.');
+  }
+
+  const is_breakout = feature.is_breakout === 1 || feature.is_breakout === true;
+  if (is_breakout) {
+    sentences.push('Price is breaking out above resistance, earning breakout points.');
+  }
+
+  const is_high_delivery = feature.is_high_delivery === 1 || feature.is_high_delivery === true;
+  if (is_high_delivery && is_breakout) {
+    sentences.push('High delivery percentage on a breakout day adds a quality bonus (+10).');
+  }
+
+  if (sentiment) {
+    if (sentiment === 'NEGATIVE') {
+      sentences.push('Negative news sentiment was detected — signal was subject to sentiment filtering.');
+    } else if (sentiment === 'POSITIVE') {
+      sentences.push('Positive news sentiment supports the trade thesis.');
+    } else {
+      sentences.push('News sentiment is neutral.');
+    }
+  }
+
+  return sentences;
 }
 
 function mergeScores(scores) {
@@ -90,4 +177,4 @@ function mergeScores(scores) {
   return Math.min(total, 100);
 }
 
-module.exports = { calculateScore, mergeScores };
+module.exports = { calculateScore, calculateScoreWithBreakdown, buildExplanations, mergeScores };

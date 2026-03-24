@@ -2,8 +2,8 @@ const { pool } = require('../config/db');
 
 async function create(signal) {
   const sql = `
-    INSERT INTO signals (symbol, date, signal_type, confidence, entry_price, stop_loss, target_price, risk_reward, reasons, status, strategy_source, direction, shares_to_buy, position_value, capital_risk_inr)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO signals (symbol, date, signal_type, confidence, entry_price, stop_loss, target_price, risk_reward, reasons, status, strategy_source, direction, shares_to_buy, position_value, capital_risk_inr, explanation, confidence_breakdown)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     signal.symbol, signal.date, signal.signal_type || 'BUY',
@@ -15,6 +15,8 @@ async function create(signal) {
     signal.shares_to_buy || null,
     signal.position_value || null,
     signal.capital_risk_inr || null,
+    signal.explanation ? JSON.stringify(signal.explanation) : null,
+    signal.confidence_breakdown ? JSON.stringify(signal.confidence_breakdown) : null,
   ];
   const [result] = await pool.query(sql, params);
   return { id: result.insertId, ...signal };
@@ -44,34 +46,56 @@ async function updateStatus(id, status, closed_at) {
   return result;
 }
 
-async function findAll({ page = 1, limit = 20, sort_by = 'date', sort_order = 'DESC', status, symbol, strategy_source } = {}) {
+async function findAll({ page = 1, limit = 20, sort_by = 'date', sort_order = 'DESC', status, symbol, strategy_source, direction, min_confidence, from_date, to_date, favorites_only, user_id } = {}) {
   let where_clauses = [];
   let params = [];
+  let use_join = false;
 
   if (status) {
-    where_clauses.push('status = ?');
+    where_clauses.push('s.status = ?');
     params.push(status);
   }
   if (symbol) {
-    where_clauses.push('symbol = ?');
+    where_clauses.push('s.symbol = ?');
     params.push(symbol);
   }
   if (strategy_source) {
-    where_clauses.push('strategy_source = ?');
+    where_clauses.push('s.strategy_source = ?');
     params.push(strategy_source);
+  }
+  if (direction) {
+    where_clauses.push('s.direction = ?');
+    params.push(direction);
+  }
+  if (min_confidence != null && min_confidence > 0) {
+    where_clauses.push('s.confidence >= ?');
+    params.push(min_confidence);
+  }
+  if (from_date) {
+    where_clauses.push('s.date >= ?');
+    params.push(from_date);
+  }
+  if (to_date) {
+    where_clauses.push('s.date <= ?');
+    params.push(to_date);
+  }
+  if (favorites_only && user_id) {
+    use_join = true;
+    where_clauses.push('f.id IS NOT NULL');
   }
 
   const where = where_clauses.length > 0 ? `WHERE ${where_clauses.join(' AND ')}` : '';
-  const allowed_sort = ['date', 'confidence', 'risk_reward', 'created_at'];
+  const join = use_join ? `INNER JOIN favorites f ON f.symbol = s.symbol AND f.user_identifier = '${user_id.replace(/'/g, "''")}'` : '';
+  const allowed_sort = ['date', 'confidence', 'risk_reward', 'symbol', 'created_at'];
   const safe_sort = allowed_sort.includes(sort_by) ? sort_by : 'date';
   const safe_order = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   const offset = (page - 1) * limit;
 
-  const count_sql = `SELECT COUNT(*) as total FROM signals ${where}`;
+  const count_sql = `SELECT COUNT(*) as total FROM signals s ${join} ${where}`;
   const [count_rows] = await pool.query(count_sql, params);
   const total = count_rows[0].total;
 
-  const data_sql = `SELECT * FROM signals ${where} ORDER BY ${safe_sort} ${safe_order} LIMIT ? OFFSET ?`;
+  const data_sql = `SELECT s.* FROM signals s ${join} ${where} ORDER BY s.${safe_sort} ${safe_order} LIMIT ? OFFSET ?`;
   const [rows] = await pool.query(data_sql, [...params, limit, offset]);
 
   return { rows, total, page, limit };

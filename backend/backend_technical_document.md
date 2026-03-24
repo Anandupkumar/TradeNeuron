@@ -48,6 +48,8 @@ backend/
       adaptive_threshold.model.js
       signal_outcome.model.js       # Signal outcome snapshots for dynamic weight calibration
       nifty50_composition.model.js  # Historical NIFTY 50 index composition
+      rejected_signal.model.js      # Stores rejected signal candidates with rejection reason
+      trade_decision.model.js       # Manual trader decisions (TAKEN/SKIPPED/MODIFIED)
     services/
       data_ingestion/
         yahoo.service.js      # Yahoo Finance fetcher
@@ -90,13 +92,14 @@ backend/
       paper_trading/
         paper_trade.service.js   # Creates and tracks simulated trades
     routes/
-      signal.routes.js
+      signal.routes.js              # Signal CRUD + rejected signals endpoint
       stock.routes.js
       history.routes.js
       backtest.routes.js
       favorite.routes.js
       paper_trade.routes.js
       health.routes.js
+      tradeDecision.routes.js       # Manual trade decision CRUD
     middlewares/
       error_handler.middleware.js
       logger.middleware.js
@@ -141,6 +144,9 @@ backend/
     020_add_delivery_pct.sql
     021_create_signal_outcomes.sql
     022_create_nifty50_composition.sql
+    023_add_explanation_and_breakdown.sql
+    024_create_rejected_signals.sql
+    025_create_trade_decisions.sql
   tests/
     unit/
       indicators/
@@ -489,6 +495,8 @@ CREATE TABLE signals (
 - `status` tracks the full signal lifecycle: ACTIVE on creation, transitions to TARGET_HIT / SL_HIT / EXPIRED during daily status checks.
 - `closed_at` records when the signal was resolved.
 - `risk_reward` is stored precomputed for fast filtering.
+- `explanation` (migration 023) stores a JSON array of human-readable sentences explaining why the signal was generated (e.g., `["Stock is in an uptrend with EMA 20 above EMA 50", "RSI in pullback zone (38.5)"]`). Nullable for backward compatibility with older signals.
+- `confidence_breakdown` (migration 023) stores a JSON object decomposing the confidence score into four categories: `{ "technical": 30, "momentum": 20, "volume": 20, "quality": 10 }`. Nullable for backward compatibility.
 
 ### 4.5 backtest_results
 
@@ -770,6 +778,53 @@ CREATE TABLE IF NOT EXISTS nifty50_composition (
 
 **Key decision:** Tracks which stocks were in the NIFTY 50 index at any point in time. Used by the backtesting engine to include historically removed stocks (survivorship-bias-free backtesting). `removed_date = NULL` means the stock is currently in the index.
 
+### 4.23 rejected_signals (migration 024)
+
+```sql
+CREATE TABLE IF NOT EXISTS rejected_signals (
+    id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    symbol          VARCHAR(20)     NOT NULL,
+    date            DATE            NOT NULL,
+    strategy_source VARCHAR(100)    NOT NULL,
+    reject_stage    ENUM(
+      'FUNDAMENTAL_FILTER', 'SENTIMENT_FILTER',
+      'VWAP_FILTER', 'PCR_FILTER', 'SECTOR_GATE',
+      'CONFIDENCE_GATE', 'RR_GATE', 'LIQUIDITY_GATE',
+      'MERGED_RISK_ZERO', 'ACTIVE_CAP', 'POSITION_SIZING'
+    ) NOT NULL,
+    reject_reason   VARCHAR(500)    NOT NULL,
+    raw_confidence  DECIMAL(5,2)    DEFAULT NULL,
+    raw_rr          DECIMAL(5,2)    DEFAULT NULL,
+    created_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_symbol (symbol),
+    INDEX idx_date   (date),
+    INDEX idx_stage  (reject_stage)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**Key decision:** Every pipeline rejection point in `deduplicateAndGenerate()` inserts a row here before returning null. This provides full transparency into which stocks nearly generated a signal and why they were filtered out. The `reject_stage` ENUM maps directly to the filtering gate that rejected the candidate.
+
+### 4.24 trade_decisions (migration 025)
+
+```sql
+CREATE TABLE IF NOT EXISTS trade_decisions (
+    id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    signal_id        BIGINT UNSIGNED NOT NULL,
+    user_identifier  VARCHAR(64)     NOT NULL,
+    decision         ENUM('TAKEN', 'SKIPPED', 'MODIFIED') NOT NULL,
+    notes            TEXT,
+    actual_entry     DECIMAL(12,2)   DEFAULT NULL,
+    actual_qty       INT UNSIGNED    DEFAULT NULL,
+    decided_at       TIMESTAMP       DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP       DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE INDEX uq_signal_user (signal_id, user_identifier),
+    INDEX idx_user (user_identifier),
+    INDEX idx_signal (signal_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**Key decision:** One decision per signal per user, enforced by the unique index. Uses INSERT ON DUPLICATE KEY UPDATE for upsert semantics — if the trader changes their mind, the row updates instead of duplicating. `actual_entry` and `actual_qty` are populated only for `MODIFIED` decisions where the trader deviated from the system's suggestion.
+
 ### ER Diagram
 
 ```
@@ -778,9 +833,11 @@ candles 1──* features              (symbol + date)
 candles 1──* signals               (symbol + date)
 signals 1──* paper_trades          (signal_id)
 signals 1──1 signal_outcomes       (signal_id)
+signals 1──* trade_decisions       (signal_id)
 favorites *──1 candles             (symbol, logical reference)
 fundamentals *──1 candles          (symbol, logical reference)
 sentiment_flags *──1 candles       (symbol, logical reference)
+rejected_signals                   (standalone audit log, populated per pipeline run)
 nifty50_composition                (standalone, referenced by backtest.service.js)
 adaptive_thresholds                (stores adaptive RSI/volume thresholds + scoring weights)
 ```
@@ -1927,42 +1984,71 @@ The **weekly weight calibration job** (`weekly_weight_calibration.job.js`, runs 
 
 ### Scoring Algorithm
 
+The scoring engine provides two entry points: `calculateScore(symbol, date)` for backward-compatible total score, and `calculateScoreWithBreakdown(symbol, date)` which returns both the score and a four-bucket breakdown.
+
 ```
-FUNCTION calculateScore(symbol, date)
+FUNCTION _scoreInternal(symbol, date)
     features  = FETCH features for symbol, date
     indicator = FETCH indicators for symbol, date
-    IF NOT features OR NOT indicator: RETURN 0
+    IF NOT features OR NOT indicator: RETURN { score: 0, breakdown: null, feature, indicator }
 
     adaptive = loadAdaptiveWeights()
     w_trend    = adaptive ? adaptive.trend    : SCORING_WEIGHTS.TREND        // 30
     w_rsi      = adaptive ? adaptive.rsi      : SCORING_WEIGHTS.RSI_PULLBACK // 20
     w_breakout = adaptive ? adaptive.breakout : SCORING_WEIGHTS.BREAKOUT     // 20
 
-    score = 0
+    technical = 0, momentum = 0, volume = 0, quality = 0
 
     IF features.is_uptrend AND indicator.ema_20 > indicator.ema_50
-        score += w_trend
+        technical += w_trend
 
     IF features.rsi_zone == 'PULLBACK'
-        score += w_rsi
+        momentum += w_rsi
 
     // Tiered volume scoring (replaces flat is_volume_spike weight)
     volume_tier = features.volume_tier OR 'normal'
     IF adaptive:
         tier_multiplier = { extreme: 1.0, high: 0.67, elevated: 0.33, normal: 0 }
-        score += adaptive.volume * tier_multiplier[volume_tier]
+        volume += adaptive.volume * tier_multiplier[volume_tier]
     ELSE:
-        score += VOLUME_TIER_SCORES[volume_tier]    // 30/20/10/0
+        volume += VOLUME_TIER_SCORES[volume_tier]    // 30/20/10/0
 
     IF features.is_breakout
-        score += w_breakout
+        technical += w_breakout
 
     // High delivery bonus for breakout strategies
     IF features.is_high_delivery AND features.is_breakout
-        score += 10
+        quality += 10
 
-    RETURN CLAMP(score, 0, 100)
+    score = CLAMP(technical + momentum + volume + quality, 0, 100)
+    breakdown = { technical, momentum, volume, quality }
+    RETURN { score, breakdown, feature, indicator }
+
+FUNCTION calculateScore(symbol, date)
+    RETURN _scoreInternal(symbol, date).score
+
+FUNCTION calculateScoreWithBreakdown(symbol, date)
+    RETURN _scoreInternal(symbol, date)
 ```
+
+### Confidence Breakdown
+
+The breakdown object stored on each signal has this shape:
+
+```json
+{ "technical": 30, "momentum": 20, "volume": 20, "quality": 10 }
+```
+
+| Bucket | What contributes | Max |
+|--------|-----------------|-----|
+| technical | Trend alignment (`w_trend`) + Breakout (`w_breakout`) | 50 |
+| momentum | RSI pullback (`w_rsi`) | 20 |
+| volume | Volume tier score (RVOL-based) | 30 |
+| quality | High delivery + breakout bonus | 10 |
+
+### Explainability (buildExplanations)
+
+A companion function `buildExplanations(feature, indicator, regime, sentiment)` produces an array of plain-English sentences using the same feature and indicator data that `calculateScore` evaluates. It covers trend alignment, RSI zone, volume tier, breakout status, delivery quality, and news sentiment. The result is stored as `explanation` JSON on the signal.
 
 ### Normalization for Merged Signals
 
@@ -2055,15 +2141,18 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
         LOG: "Signal for {symbol} suppressed: sector {sector} at limit"
         RETURN null
 
-    confidence = calculateScore(symbol, date)
+    { confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator }
+        = calculateScoreWithBreakdown(symbol, date)
 
     IF confidence < MIN_CONFIDENCE
-        LOG: "Signal for {symbol} rejected: confidence {confidence} below threshold"
+        LOG + INSERT rejected_signals(CONFIDENCE_GATE)
         RETURN null
 
     IF risk_reward < MIN_RISK_REWARD
-        LOG: "Signal for {symbol} rejected: R:R {risk_reward} below minimum"
+        LOG + INSERT rejected_signals(RR_GATE)
         RETURN null
+
+    explanation = buildExplanations(scoreFeature, scoreIndicator, regime, sentiment)
 
     RETURN {
         symbol,
@@ -2076,9 +2165,27 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
         risk_reward,
         reasons,
         status: 'ACTIVE',
-        strategy_source: strategies.join('+')
+        strategy_source: strategies.join('+'),
+        confidence_breakdown: breakdown,
+        explanation
     }
 ```
+
+### Rejection Logging
+
+Every `RETURN null` path in `deduplicateAndGenerate` now writes to the `rejected_signals` table before returning. This provides full pipeline transparency. The rejection points are:
+
+| Gate | `reject_stage` | When |
+|------|----------------|------|
+| Merged SL risk | `MERGED_RISK_ZERO` | Risk <= 0 after SL merge |
+| Liquidity | `LIQUIDITY_GATE` | `is_liquid = false` |
+| VWAP distance | `VWAP_FILTER` | Price stretched > ±2% from VWAP |
+| Put-Call Ratio | `PCR_FILTER` | PCR > 1.5 for LONG signals |
+| Confidence | `CONFIDENCE_GATE` | Confidence below `MIN_CONFIDENCE` |
+| Risk:Reward | `RR_GATE` | R:R below `MIN_RISK_REWARD` |
+| Active cap | `ACTIVE_CAP` | Active signals at capacity |
+| Sector cap | `SECTOR_GATE` | Sector signals at capacity |
+| Position sizing | `POSITION_SIZING` | 0 shares after sizing |
 
 ### Position Sizing (ATR-based)
 
@@ -2122,7 +2229,19 @@ capital_risk_inr = shares_to_buy * risk_per_share
   "reasons": ["Trend Alignment", "Volume Spike", "Breakout"],
   "status": "ACTIVE",
   "strategy_source": "TREND_PULLBACK+BREAKOUT",
-  "created_at": "2026-03-23T16:45:00.000Z"
+  "created_at": "2026-03-23T16:45:00.000Z",
+  "explanation": [
+    "Stock is in an uptrend with EMA 20 (2420.50) above EMA 50 (2380.00), adding trend alignment points.",
+    "RSI is in the pullback zone (42.3), indicating a favorable entry point.",
+    "Volume tier is HIGH (RVOL: 1.85x), contributing volume points.",
+    "Price is breaking out above resistance, earning breakout points."
+  ],
+  "confidence_breakdown": {
+    "technical": 50,
+    "momentum": 20,
+    "volume": 20,
+    "quality": 0
+  }
 }
 ```
 
@@ -2600,7 +2719,9 @@ Error responses:
         "status": "ACTIVE",
         "strategy_source": "TREND_PULLBACK+BREAKOUT",
         "is_favorite": true,
-        "created_at": "2026-03-23T16:45:00.000Z"
+        "created_at": "2026-03-23T16:45:00.000Z",
+        "explanation": ["Stock is in an uptrend...", "RSI in pullback zone..."],
+        "confidence_breakdown": { "technical": 50, "momentum": 20, "volume": 20, "quality": 0 }
       }
     ],
     "pagination": {
@@ -2985,6 +3106,146 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 - Protected by API key auth (same as all other endpoints).
 - Rate-limited to **1 request per 10 minutes** to prevent accidental or malicious re-triggering that could hammer Yahoo Finance and cause rate-limit bans.
 - Gated by a check: if a pipeline is already running, return `409 Conflict` with message "Pipeline already in progress".
+
+---
+
+### 17.11 GET /api/v1/signals/rejected
+
+**Description:** Retrieve rejected signal candidates from the latest pipeline run, optionally filtered by date.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| date | string (YYYY-MM-DD) | today | Filter by pipeline date |
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "rejected": [
+      {
+        "id": 1,
+        "symbol": "TATASTEEL.NS",
+        "date": "2026-03-23",
+        "strategy_source": "BREAKOUT",
+        "reject_stage": "CONFIDENCE_GATE",
+        "reject_reason": "Confidence 50.00 below threshold 70",
+        "raw_confidence": 50.00,
+        "raw_rr": 2.30,
+        "created_at": "2026-03-23T16:45:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 17.12 Trade Decision Endpoints
+
+#### POST /api/v1/signals/:id/decision
+
+**Description:** Record or update the trader's decision on a specific signal.
+
+**Headers:** `X-User-Id` (required)
+
+**Request Body:**
+
+```json
+{
+  "decision": "TAKEN",
+  "notes": "Good setup, taking at market open",
+  "actual_entry": 2455.00,
+  "actual_qty": 25
+}
+```
+
+**Validation:** `decision` must be one of `TAKEN`, `SKIPPED`, `MODIFIED`. `notes` is optional (max 2000 chars). `actual_entry` and `actual_qty` are optional numbers.
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "signal_id": 142,
+    "user_identifier": "uuid-abc-123",
+    "decision": "TAKEN",
+    "notes": "Good setup, taking at market open",
+    "actual_entry": 2455.00,
+    "actual_qty": 25,
+    "decided_at": "2026-03-23T10:30:00.000Z"
+  }
+}
+```
+
+---
+
+#### GET /api/v1/signals/:id/decision
+
+**Description:** Retrieve the trader's decision for a specific signal.
+
+**Headers:** `X-User-Id` (required)
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "signal_id": 142,
+    "user_identifier": "uuid-abc-123",
+    "decision": "TAKEN",
+    "notes": "Good setup, taking at market open",
+    "actual_entry": 2455.00,
+    "actual_qty": 25,
+    "decided_at": "2026-03-23T10:30:00.000Z"
+  }
+}
+```
+
+Returns `null` data if no decision exists for this signal + user.
+
+---
+
+#### GET /api/v1/decisions
+
+**Description:** Retrieve the trader's decision history.
+
+**Headers:** `X-User-Id` (required)
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| limit | number | 50 | Maximum results to return |
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "decisions": [
+      {
+        "signal_id": 142,
+        "decision": "TAKEN",
+        "notes": "Good setup",
+        "actual_entry": 2455.00,
+        "actual_qty": 25,
+        "decided_at": "2026-03-23T10:30:00.000Z",
+        "symbol": "RELIANCE.NS",
+        "signal_type": "BUY",
+        "confidence": 78.00,
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+```
 
 ---
 

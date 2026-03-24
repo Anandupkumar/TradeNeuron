@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { Zap } from 'lucide-react';
+import { Zap, ChevronDown, ChevronRight } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useSignalFilters } from '../hooks/useFilterUrlSync';
 import { useSignals } from '../hooks/useSignals';
 import { useActiveSignals } from '../hooks/useActiveSignals';
+import { useDecisionHistory } from '../hooks/useTradeDecisions';
+import { signalsApi } from '../api/signals.api';
 import { SignalFilters as SignalFiltersBar } from '../components/signals/SignalFilters';
 import { SignalCard } from '../components/signals/SignalCard';
 import { SignalTable } from '../components/signals/SignalTable';
@@ -11,7 +14,8 @@ import { Pagination } from '../components/common/Pagination';
 import { LoadingSkeleton } from '../components/common/LoadingSkeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { EmptyState } from '../components/common/EmptyState';
-import type { Signal, SignalFilters } from '../types';
+import { formatINR, formatPct } from '../utils/format';
+import type { Signal, SignalFilters, RejectedSignal, DecisionHistoryItem } from '../types';
 
 interface AllSignalsContentProps {
   is_loading: boolean;
@@ -58,6 +62,159 @@ function AllSignalsContent(props: AllSignalsContentProps) {
         </div>
       )}
     </>
+  );
+}
+
+const REJECT_STAGE_COLORS: Record<string, string> = {
+  LIQUIDITY_GATE: 'bg-red-900/50 text-red-300',
+  VWAP_FILTER: 'bg-amber-900/50 text-amber-300',
+  PCR_FILTER: 'bg-purple-900/50 text-purple-300',
+  CONFIDENCE_GATE: 'bg-orange-900/50 text-orange-300',
+  RR_GATE: 'bg-yellow-900/50 text-yellow-300',
+  ACTIVE_CAP: 'bg-blue-900/50 text-blue-300',
+  SECTOR_GATE: 'bg-indigo-900/50 text-indigo-300',
+  POSITION_SIZING: 'bg-pink-900/50 text-pink-300',
+  MERGED_RISK_ZERO: 'bg-red-900/50 text-red-300',
+  FUNDAMENTAL_FILTER: 'bg-teal-900/50 text-teal-300',
+  SENTIMENT_FILTER: 'bg-cyan-900/50 text-cyan-300',
+};
+
+function RejectedSignalsSection() {
+  const [show, set_show] = useState(false);
+  const query = useQuery({
+    queryKey: ['rejected-signals'],
+    queryFn: () => signalsApi.rejected(),
+    enabled: show,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const rejected = query.data?.rejected ?? [];
+
+  return (
+    <div className="space-y-3">
+      <button
+        type="button"
+        onClick={() => set_show((v) => !v)}
+        className="flex items-center gap-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
+      >
+        {show ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        Show rejected signals
+        {show && rejected.length > 0 && ` (${rejected.length})`}
+      </button>
+
+      {show && (
+        <div>
+          {query.isLoading && <LoadingSkeleton variant="table-row" count={4} />}
+          {query.isError && <ErrorState message="Failed to load rejected signals" onRetry={() => { query.refetch(); }} />}
+          {!query.isLoading && !query.isError && rejected.length === 0 && (
+            <p className="py-4 text-center text-sm text-zinc-500">No rejected signals</p>
+          )}
+          {rejected.length > 0 && (
+            <div className="overflow-x-auto rounded-lg border border-zinc-800">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-zinc-800 bg-zinc-900/50 text-xs uppercase text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-2.5">Symbol</th>
+                    <th className="px-4 py-2.5">Strategy</th>
+                    <th className="px-4 py-2.5">Stage</th>
+                    <th className="px-4 py-2.5">Reason</th>
+                    <th className="px-4 py-2.5 text-right">Confidence</th>
+                    <th className="px-4 py-2.5 text-right">R:R</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/50">
+                  {rejected.map((r: RejectedSignal) => (
+                    <tr key={r.id} className="text-zinc-300">
+                      <td className="whitespace-nowrap px-4 py-2 font-medium text-zinc-100">{r.symbol}</td>
+                      <td className="whitespace-nowrap px-4 py-2">{r.strategy_source}</td>
+                      <td className="px-4 py-2">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${REJECT_STAGE_COLORS[r.reject_stage] ?? 'bg-zinc-800 text-zinc-400'}`}>
+                          {r.reject_stage.replaceAll('_', ' ')}
+                        </span>
+                      </td>
+                      <td className="max-w-xs truncate px-4 py-2 text-zinc-400">{r.reject_reason}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right">{r.raw_confidence == null ? '—' : `${r.raw_confidence}%`}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right">{r.raw_rr == null ? '—' : `${r.raw_rr}x`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DECISION_COLORS: Record<string, string> = {
+  TAKEN: 'bg-emerald-900/50 text-emerald-300',
+  SKIPPED: 'bg-zinc-700/50 text-zinc-300',
+  MODIFIED: 'bg-amber-900/50 text-amber-300',
+};
+
+function DecisionHistorySection() {
+  const [show, set_show] = useState(false);
+  const query = useDecisionHistory(50);
+
+  const decisions = query.data?.decisions ?? [];
+
+  return (
+    <div className="space-y-3">
+      <button
+        type="button"
+        onClick={() => set_show((v) => !v)}
+        className="flex items-center gap-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
+      >
+        {show ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        Decision history
+        {show && decisions.length > 0 && ` (${decisions.length})`}
+      </button>
+
+      {show && (
+        <div>
+          {query.isLoading && <LoadingSkeleton variant="table-row" count={4} />}
+          {query.isError && <ErrorState message="Failed to load decision history" onRetry={() => { query.refetch(); }} />}
+          {!query.isLoading && !query.isError && decisions.length === 0 && (
+            <p className="py-4 text-center text-sm text-zinc-500">No decisions recorded yet</p>
+          )}
+          {decisions.length > 0 && (
+            <div className="overflow-x-auto rounded-lg border border-zinc-800">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-zinc-800 bg-zinc-900/50 text-xs uppercase text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-2.5">Symbol</th>
+                    <th className="px-4 py-2.5">Direction</th>
+                    <th className="px-4 py-2.5">Decision</th>
+                    <th className="px-4 py-2.5 text-right">Entry</th>
+                    <th className="px-4 py-2.5 text-right">Confidence</th>
+                    <th className="px-4 py-2.5">Notes</th>
+                    <th className="px-4 py-2.5">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/50">
+                  {decisions.map((d: DecisionHistoryItem) => (
+                    <tr key={d.id} className="text-zinc-300">
+                      <td className="whitespace-nowrap px-4 py-2 font-medium text-zinc-100">{d.symbol}</td>
+                      <td className="whitespace-nowrap px-4 py-2">{d.direction}</td>
+                      <td className="px-4 py-2">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${DECISION_COLORS[d.decision] ?? 'bg-zinc-800 text-zinc-400'}`}>
+                          {d.decision}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right">{formatINR(d.entry_price)}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right">{formatPct(d.confidence)}</td>
+                      <td className="max-w-xs truncate px-4 py-2 text-zinc-400">{d.notes ?? '—'}</td>
+                      <td className="whitespace-nowrap px-4 py-2">{d.signal_status?.replaceAll('_', ' ') ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -130,6 +287,10 @@ export default function SignalsPage() {
           on_filter_change={set_filters}
         />
       </div>
+
+      <RejectedSignalsSection />
+
+      <DecisionHistorySection />
 
       <SignalDetailDrawer
         signal={selected_signal}

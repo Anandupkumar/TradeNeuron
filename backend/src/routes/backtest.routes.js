@@ -4,9 +4,38 @@ const backtestResultModel = require('../models/backtest_result.model');
 
 router.get('/backtest/results', async (req, res, next) => {
   try {
-    const { strategy, page = 1, limit = 20, sort_by = 'run_date', sort_order = 'DESC' } = req.query;
+    const { strategy, latest, page = 1, limit = 20, sort_by = 'run_date', sort_order = 'DESC' } = req.query;
 
     const strategy_name = strategy && strategy !== 'ALL' ? strategy : undefined;
+
+    // When latest=true, return only the most recent run per strategy
+    if (latest === 'true') {
+      const result = await backtestResultModel.findAll({
+        page: 1,
+        limit: 100,
+        sort_by: 'run_date',
+        sort_order: 'DESC',
+        strategy_name,
+      });
+
+      const seen = new Set();
+      const latest_results = [];
+      for (const r of result.rows) {
+        if (!seen.has(r.strategy_name)) {
+          seen.add(r.strategy_name);
+          latest_results.push({
+            ...r,
+            weight_config: typeof r.weight_config === 'string' ? JSON.parse(r.weight_config) : r.weight_config,
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: { results: latest_results },
+        error: null,
+      });
+    }
 
     const result = await backtestResultModel.findAll({
       page: parseInt(page, 10),

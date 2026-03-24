@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { SignalListResponse, ActiveSignalsResponse, SignalFilters } from '../types';
+import type { SignalListResponse, ActiveSignalsResponse, SignalFilters, RejectedSignalsResponse } from '../types';
 
 function stripAllValues(filters: SignalFilters): Record<string, unknown> {
   const cleaned: Record<string, unknown> = {};
@@ -16,4 +16,6 @@ export const signalsApi = {
   list: (filters: SignalFilters): Promise<SignalListResponse> =>
     apiClient.get('/signals', { params: stripAllValues(filters) }),
   active: (): Promise<ActiveSignalsResponse> => apiClient.get('/signals/active'),
+  rejected: (date?: string): Promise<RejectedSignalsResponse> =>
+    apiClient.get('/signals/rejected', { params: date ? { date } : {} }),
 };

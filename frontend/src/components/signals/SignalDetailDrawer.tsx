@@ -3,6 +3,10 @@ import { cn } from '@/lib/utils';
 import { formatINR, formatDate, formatRR, formatDateTime } from '../../utils/format';
 import { SignalBadge } from './SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
+import { ConfidenceBreakdownBar } from './ConfidenceBreakdownBar';
+import { ExplainabilityPanel } from './ExplainabilityPanel';
+import { TradeChecklist } from './TradeChecklist';
+import { DecisionOverridePanel } from './DecisionOverridePanel';
 import type { Signal } from '../../types';
 
 interface SignalDetailDrawerProps {
@@ -31,10 +35,6 @@ function detailRow(label: string, value: React.ReactNode) {
 
 export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawerProps) {
   if (!signal) return null;
-
-  let confidence_color = 'bg-red-500';
-  if (signal.confidence >= 80) confidence_color = 'bg-emerald-500';
-  else if (signal.confidence >= 70) confidence_color = 'bg-amber-500';
 
   return (
     <>
@@ -74,20 +74,10 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
             {StatusBadge({ status: signal.status })}
           </div>
 
-          <div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-zinc-400">Confidence</span>
-              <span className="font-semibold text-zinc-100">
-                {Math.round(signal.confidence)}%
-              </span>
-            </div>
-            <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-zinc-800">
-              <div
-                className={cn('h-full rounded-full transition-all', confidence_color)}
-                style={{ width: `${Math.min(signal.confidence, 100)}%` }}
-              />
-            </div>
-          </div>
+          <ConfidenceBreakdownBar
+            breakdown={signal.confidence_breakdown}
+            confidence={signal.confidence}
+          />
 
           <div className="divide-y divide-zinc-800/50 rounded-lg border border-zinc-800 bg-zinc-900 px-4">
             {priceRow('Entry Price', signal.entry_price, 'text-zinc-100')}
@@ -97,7 +87,7 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
 
           <div className="divide-y divide-zinc-800/50 rounded-lg border border-zinc-800 bg-zinc-900 px-4">
             {detailRow('Risk : Reward', formatRR(signal.risk_reward))}
-            {detailRow('Shares', signal.shares_to_buy.toLocaleString('en-IN'))}
+            {detailRow('Shares', (typeof signal.shares_to_buy === 'string' ? Number.parseInt(signal.shares_to_buy, 10) : signal.shares_to_buy).toLocaleString('en-IN'))}
             {detailRow('Position Value', formatINR(signal.position_value))}
             {detailRow('Capital at Risk', formatINR(signal.capital_risk_inr))}
           </div>
@@ -108,23 +98,14 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
             {detailRow('Date', formatDate(signal.date))}
           </div>
 
-          {signal.reasons.length > 0 && (
-            <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
-                Reasons
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {signal.reasons.map((reason) => (
-                  <span
-                    key={reason}
-                    className="rounded-full bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300"
-                  >
-                    {reason}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          <TradeChecklist signal={signal} />
+
+          <ExplainabilityPanel
+            explanation={signal.explanation}
+            reasons={signal.reasons}
+          />
+
+          <DecisionOverridePanel signalId={signal.id} />
         </div>
       </div>
     </>

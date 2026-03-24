@@ -2,11 +2,12 @@ const { pool } = require('../config/db');
 
 async function create(trade) {
   const sql = `
-    INSERT INTO paper_trades (signal_id, symbol, entry_date, entry_price, stop_loss, target_price, status, shares_to_buy)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO paper_trades (signal_id, symbol, direction, entry_date, entry_price, stop_loss, target_price, status, shares_to_buy)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
-    trade.signal_id, trade.symbol, trade.entry_date,
+    trade.signal_id, trade.symbol, trade.direction || 'LONG',
+    trade.entry_date,
     trade.entry_price, trade.stop_loss, trade.target_price,
     trade.status || 'OPEN',
     trade.shares_to_buy || null,
@@ -75,7 +76,33 @@ async function getSummary() {
     FROM paper_trades
   `;
   const [rows] = await pool.query(sql);
-  return rows[0];
+  const row = rows[0];
+
+  const closed = parseInt(row.closed_trades, 10) || 0;
+  const winning = parseInt(row.winning_trades, 10) || 0;
+  const win_rate_pct = closed > 0 ? (winning / closed) * 100 : 0;
+
+  // Max drawdown via running cumulative PnL on closed trades
+  let max_drawdown_pct = 0;
+  if (closed > 0) {
+    const [closed_rows] = await pool.query(
+      `SELECT pnl_pct FROM paper_trades WHERE status = 'CLOSED' ORDER BY exit_date ASC, id ASC`
+    );
+    let cumulative = 0;
+    let peak = 0;
+    for (const t of closed_rows) {
+      cumulative += parseFloat(t.pnl_pct) || 0;
+      if (cumulative > peak) peak = cumulative;
+      const drawdown = peak - cumulative;
+      if (drawdown > max_drawdown_pct) max_drawdown_pct = drawdown;
+    }
+  }
+
+  return {
+    ...row,
+    win_rate_pct: Math.round(win_rate_pct * 100) / 100,
+    max_drawdown_pct: Math.round(max_drawdown_pct * 100) / 100,
+  };
 }
 
 module.exports = { create, findOpen, updateClose, findAll, getSummary };

@@ -21,6 +21,11 @@ export interface CandleWithIndicators extends Candle {
     ema_50?: number | null;
     ema_200?: number | null;
     rsi?: number | null;
+    macd_line?: number | null;
+    macd_signal?: number | null;
+    macd_histogram?: number | null;
+    atr?: number | null;
+    volume_change?: number | null;
   };
 }
 

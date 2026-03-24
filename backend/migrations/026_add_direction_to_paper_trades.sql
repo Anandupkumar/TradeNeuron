@@ -1,0 +1,2 @@
+ALTER TABLE paper_trades
+  ADD COLUMN direction ENUM('LONG', 'SHORT') NOT NULL DEFAULT 'LONG' AFTER symbol;

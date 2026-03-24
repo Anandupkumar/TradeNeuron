@@ -13,6 +13,7 @@ async function createPaperTrades(signals) {
     await paperTradeModel.create({
       signal_id: signal.id,
       symbol: signal.symbol,
+      direction: signal.direction || 'LONG',
       entry_date: signal.date,
       entry_price: signal.entry_price,
       stop_loss: signal.stop_loss,

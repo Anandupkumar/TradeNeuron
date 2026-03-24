@@ -6,9 +6,10 @@ const { getSector } = require('../../utils/symbols.util');
 const signalModel = require('../../models/signal.model');
 const featureModel = require('../../models/feature.model');
 const candleModel = require('../../models/candle.model');
-const { calculateScore } = require('../scoring/scoring.service');
+const { calculateScoreWithBreakdown, buildExplanations } = require('../scoring/scoring.service');
 const { nifty_50_symbols } = require('../../utils/symbols.util');
 const signalOutcomeModel = require('../../models/signal_outcome.model');
+const rejectedSignalModel = require('../../models/rejected_signal.model');
 
 function computePositionSizing(entry_price, stop_loss, direction) {
   const risk_per_share = direction === 'SHORT'
@@ -65,6 +66,7 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
 
     if (risk <= 0) {
       logger.info(`Merged signal for ${symbol} discarded: non-positive risk after SL merge`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: raw_signals.map(s => s.strategy).join('+'), reject_stage: 'MERGED_RISK_ZERO', reject_reason: `Non-positive risk (${risk}) after SL merge` });
       return null;
     }
 
@@ -97,6 +99,7 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
   const feature = await featureModel.findBySymbolAndDate(symbol, date);
   if (feature && (feature.is_liquid === 0 || feature.is_liquid === false)) {
     logger.info(`Signal for ${symbol} rejected: insufficient liquidity`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'LIQUIDITY_GATE', reject_reason: 'Insufficient liquidity (is_liquid = false)' });
     return null;
   }
 
@@ -104,27 +107,32 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     const vwap_dist = parseFloat(feature.vwap_distance_pct);
     if (direction === 'LONG' && vwap_dist > 2.0) {
       logger.info(`Signal for ${symbol} rejected: price stretched above VWAP (${vwap_dist}%)`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price stretched above VWAP (${vwap_dist}%)` });
       return null;
     }
     if (direction === 'SHORT' && vwap_dist < -2.0) {
       logger.info(`Signal for ${symbol} rejected: price stretched below VWAP (${vwap_dist}%)`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price stretched below VWAP (${vwap_dist}%)` });
       return null;
     }
   }
 
   if (nifty_pcr != null && direction === 'LONG' && nifty_pcr > 1.5) {
     logger.info(`Signal for ${symbol} rejected: PCR ${nifty_pcr.toFixed(3)} > 1.5 — bearish options sentiment`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'PCR_FILTER', reject_reason: `PCR ${nifty_pcr.toFixed(3)} > 1.5 — bearish options sentiment` });
     return null;
   }
 
-  const confidence = await calculateScore(symbol, date);
+  const { score: confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date);
   if (confidence < config.min_confidence) {
     logger.info(`Signal for ${symbol} rejected: confidence ${confidence} below ${config.min_confidence}`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'CONFIDENCE_GATE', reject_reason: `Confidence ${confidence} below minimum ${config.min_confidence}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
     return null;
   }
 
   if (signal.risk_reward < config.min_risk_reward) {
     logger.info(`Signal for ${symbol} rejected: R:R ${signal.risk_reward} below ${config.min_risk_reward}`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'RR_GATE', reject_reason: `R:R ${signal.risk_reward} below minimum ${config.min_risk_reward}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
     return null;
   }
 
@@ -133,6 +141,7 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
   const total_active = total_active_db + total_active_batch;
   if (total_active >= config.max_active_signals) {
     logger.info(`Signal for ${symbol} rejected: active ${direction} signal cap reached (${total_active}/${config.max_active_signals})`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'ACTIVE_CAP', reject_reason: `Active ${direction} signal cap reached (${total_active}/${config.max_active_signals})`, raw_confidence: confidence });
     return null;
   }
 
@@ -145,14 +154,18 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
   const sector_active = sector_active_db + sector_active_batch;
   if (sector_active >= config.max_sector_signals) {
     logger.info(`Signal for ${symbol} rejected: sector ${sector} ${direction} cap reached (${sector_active}/${config.max_sector_signals})`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'SECTOR_GATE', reject_reason: `Sector ${sector} ${direction} cap reached (${sector_active}/${config.max_sector_signals})`, raw_confidence: confidence });
     return null;
   }
 
   const sizing = computePositionSizing(signal.entry_price, signal.stop_loss, direction);
   if (!sizing || sizing.shares_to_buy <= 0) {
     logger.info(`Signal for ${symbol} rejected: position sizing resulted in 0 shares`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'POSITION_SIZING', reject_reason: 'Position sizing resulted in 0 shares', raw_confidence: confidence });
     return null;
   }
+
+  const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null);
 
   return {
     symbol,
@@ -170,6 +183,8 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     shares_to_buy: sizing.shares_to_buy,
     position_value: sizing.position_value,
     capital_risk_inr: sizing.capital_risk_inr,
+    confidence_breakdown: breakdown,
+    explanation,
   };
 }
 

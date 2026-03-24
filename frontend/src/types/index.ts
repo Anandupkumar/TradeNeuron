@@ -5,10 +5,22 @@ export type {
   SignalStatus,
   StrategySource,
   Signal,
+  ConfidenceBreakdown,
   SignalFilters,
   ActiveSignalsResponse,
   SignalListResponse,
 } from './signal.types';
+export type {
+  RejectStage,
+  RejectedSignal,
+  RejectedSignalsResponse,
+} from './rejectedSignal.types';
+export type {
+  DecisionType,
+  TradeDecision,
+  DecisionHistoryItem,
+  DecisionHistoryResponse,
+} from './tradeDecision.types';
 export type {
   RsiZone,
   MarketRegime,
