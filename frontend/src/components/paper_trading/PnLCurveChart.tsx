@@ -75,7 +75,7 @@ export function PnLCurveChart({ trades }: PnLCurveChartProps) {
             stroke="#3f3f46"
           />
           <YAxis
-            tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+            tickFormatter={(v: number | string) => `${Number(v).toFixed(1)}%`}
             tick={{ fill: '#a1a1aa', fontSize: 11 }}
             stroke="#3f3f46"
             domain={[Math.floor(min_pnl - 1), Math.ceil(max_pnl + 1)]}

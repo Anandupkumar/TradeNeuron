@@ -35,7 +35,7 @@ export function EquityCurveChart({ data, height = 300 }: EquityCurveChartProps) 
           tick={{ fill: '#a1a1aa', fontSize: 12 }}
           tickLine={{ stroke: '#27272a' }}
           axisLine={{ stroke: '#27272a' }}
-          tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+          tickFormatter={(v: number | string) => `${Number(v).toFixed(1)}%`}
         />
         <Tooltip
           contentStyle={{
@@ -45,7 +45,7 @@ export function EquityCurveChart({ data, height = 300 }: EquityCurveChartProps) 
             color: '#fafafa',
           }}
           labelStyle={{ color: '#a1a1aa' }}
-          formatter={(value: number) => [`${value.toFixed(2)}%`, 'Cumulative PnL']}
+          formatter={(value: number | string) => [`${Number(value).toFixed(2)}%`, 'Cumulative PnL']}
         />
         <ReferenceLine y={0} stroke="#52525b" strokeDasharray="3 3" />
         <Area
