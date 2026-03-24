@@ -294,6 +294,19 @@ MAX_POSITION_PCT=10
 # ─── Adaptive Thresholds ───
 ADAPTIVE_THRESHOLDS_ENABLED=true
 ADAPTIVE_MIN_DATA_POINTS=30
+ADAPTIVE_MIN_TRADES_PARTIAL=15
+ADAPTIVE_MIN_TRADES_FULL=30
+ADAPTIVE_PARTIAL_BLEND=0.3
+
+# ─── Confidence Tiers ───
+CONFIDENCE_TIER_HIGH=85
+CONFIDENCE_TIER_NORMAL=75
+CONFIDENCE_TIER_LOW=70
+
+# ─── Smart Expiry ───
+EXPIRED_MIN_PENALTY=-0.1
+EXPIRED_MAX_PENALTY=-0.2
+EXPIRED_MOVEMENT_THRESHOLD=1.0
 
 # ─── Short Selling ───
 MAX_POSITION_PCT_SHORT=5
@@ -442,6 +455,8 @@ CREATE TABLE features (
     rsi_zone                    ENUM('OVERSOLD', 'PULLBACK', 'NEUTRAL', 'OVERBOUGHT') NOT NULL DEFAULT 'NEUTRAL',
     is_volume_spike             TINYINT(1)      NOT NULL DEFAULT 0,
     is_breakout                 TINYINT(1)      NOT NULL DEFAULT 0,
+    close_position              DECIMAL(5,4)    DEFAULT NULL,
+    ema50_slope                 DECIMAL(12,4)   DEFAULT NULL,
     near_support                TINYINT(1)      NOT NULL DEFAULT 0,
     distance_from_52w_high_pct  DECIMAL(8,4),
     relative_strength_vs_nifty  DECIMAL(8,4),
@@ -459,6 +474,8 @@ CREATE TABLE features (
 - `rsi_zone` is an ENUM because the thresholds are fixed at calculation time and strategies query by zone name.
 - Features are persisted (not ephemeral) so backtesting can replay exact historical feature state without recalculation.
 - `rvol` and `volume_tier` (migration 018) provide continuous relative volume scoring replacing binary `is_volume_spike`.
+- `close_position` (migration 027) = `(close - low) / (high - low)` — soft breakout confirmation metric.
+- `ema50_slope` (migration 027) = `ema50_today - ema50_5d_ago` — trend slope for soft penalty scoring.
 - `vwap`, `vwap_distance_pct`, `is_near_vwap` (migration 019) enable VWAP-based signal quality filtering.
 - `is_high_delivery` (migration 020) flags high delivery percentage (>50%) from NSE Bhavcopy data.
 
@@ -471,6 +488,7 @@ CREATE TABLE signals (
     date            DATE            NOT NULL,
     signal_type     ENUM('BUY')     NOT NULL,
     confidence      DECIMAL(5,2)    NOT NULL,
+    confidence_tier ENUM('HIGH', 'NORMAL', 'LOW') DEFAULT NULL,
     entry_price     DECIMAL(12,2)   NOT NULL,
     stop_loss       DECIMAL(12,2)   NOT NULL,
     target_price    DECIMAL(12,2)   NOT NULL,
@@ -1292,6 +1310,8 @@ Features are derived from indicators and candle data. Computed per symbol per da
 | RVOL | `rvol` | decimal | `volume / volume_sma_20` — continuous relative volume ratio |
 | Volume Tier | `volume_tier` | enum | `extreme` (>=3.0), `high` (>=2.0), `elevated` (>=1.3), `normal` |
 | Breakout | `is_breakout` | boolean | `adjusted_close > MAX(high) of last 20 candles` (excluding current) |
+| Close Position | `close_position` | decimal(5,4) | `(adjusted_close - candle_low) / (candle_high - candle_low)` — breakout strength metric |
+| EMA50 Slope | `ema50_slope` | decimal(12,4) | `ema50_today - ema50_5d_ago` — positive = rising trend, negative = flat/declining |
 | Near Support | `near_support` | boolean | see below |
 | Distance from 52w High | `distance_from_52w_high_pct` | decimal | `(max_high_252d - adjusted_close) / max_high_252d * 100` |
 | Relative Strength vs NIFTY | `relative_strength_vs_nifty` | decimal | see below |
@@ -1952,11 +1972,20 @@ FOR each [symbol, signals] in raw_signals:
 
 | Factor | Base Weight | Condition to Score |
 |--------|--------|--------------------|
-| Trend Alignment | +30 | `is_uptrend = true` AND `ema_20 > ema_50` |
+| Trend Alignment | +30 | `is_uptrend = true` AND `ema_20 > ema_50`. **Soft filter:** if `ema50_slope <= 0`, reduced by 15 (TREND_SLOPE_PENALTY) |
 | RSI Pullback | +20 | `rsi_zone = 'PULLBACK'` |
 | Volume (tiered) | 0-30 | Based on `volume_tier`: extreme=30, high=20, elevated=10, normal=0 |
-| Breakout | +20 | `is_breakout = true` |
+| Breakout | +20 | `is_breakout = true`. **Soft filter:** if `close_position < 0.6`, 0 points; if `0.6-0.75`, reduced by 10 (BREAKOUT_SOFT_PENALTY); if `>= 0.75`, full points |
 | High Delivery Bonus | +10 | `is_high_delivery = true` AND `is_breakout = true` |
+
+**Soft filter constants** (stored in `src/config/constants.js` under `SOFT_FILTER`):
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| BREAKOUT_CLOSE_POSITION_HARD | 0.6 | Below this, no breakout points |
+| BREAKOUT_CLOSE_POSITION_SOFT | 0.75 | Below this (but >= 0.6), reduced breakout points |
+| BREAKOUT_SOFT_PENALTY | 10 | Points deducted for moderate close position |
+| TREND_SLOPE_PENALTY | 15 | Points deducted for flat/declining EMA50 |
 
 **Volume tier scores** replace the flat `is_volume_spike = +30`:
 
@@ -1980,7 +2009,17 @@ FUNCTION loadAdaptiveWeights()
     ELSE: return null (use static SCORING_WEIGHTS)
 ```
 
-The **weekly weight calibration job** (`weekly_weight_calibration.job.js`, runs Sunday 2 AM IST) queries the last 90 days of `signal_outcomes`, computes win rates per feature, and adjusts weights using the formula: `adjusted_weight = BASE_WEIGHT * (0.5 + winRate)`. This makes the scoring engine self-calibrating based on actual signal performance. Requires at least 30 resolved outcomes to activate.
+The **weekly weight calibration job** (`weekly_weight_calibration.job.js`, runs Sunday 2 AM IST) queries the last 90 days of `signal_outcomes`, computes win rates per feature, and adjusts weights using the formula: `adjusted_weight = BASE_WEIGHT * (0.5 + winRate)`. This makes the scoring engine self-calibrating based on actual signal performance.
+
+**Gradual calibration** (two-stage):
+
+| Outcome Count | Action | Env Var |
+|---------------|--------|---------|
+| < 15 | Skip calibration entirely | `ADAPTIVE_MIN_TRADES_PARTIAL` |
+| 15 – 29 | Apply 30% blended adjustment: `new = base * 0.7 + adaptive * 0.3` | `ADAPTIVE_PARTIAL_BLEND` |
+| >= 30 | Apply full adjustment (100% adaptive weights) | `ADAPTIVE_MIN_TRADES_FULL` |
+
+This prevents noisy early learning while still allowing the system to adapt with limited data.
 
 ### Scoring Algorithm
 
@@ -2000,7 +2039,11 @@ FUNCTION _scoreInternal(symbol, date)
     technical = 0, momentum = 0, volume = 0, quality = 0
 
     IF features.is_uptrend AND indicator.ema_20 > indicator.ema_50
-        technical += w_trend
+        trend_score = w_trend
+        // Soft filter: penalize flat/declining EMA50 slope
+        IF features.ema50_slope != null AND features.ema50_slope <= 0
+            trend_score = MAX(0, trend_score - SOFT_FILTER.TREND_SLOPE_PENALTY)
+        technical += trend_score
 
     IF features.rsi_zone == 'PULLBACK'
         momentum += w_rsi
@@ -2014,7 +2057,14 @@ FUNCTION _scoreInternal(symbol, date)
         volume += VOLUME_TIER_SCORES[volume_tier]    // 30/20/10/0
 
     IF features.is_breakout
-        technical += w_breakout
+        // Soft filter: close_position determines breakout strength
+        close_pos = features.close_position
+        IF close_pos != null AND close_pos < BREAKOUT_CLOSE_POSITION_HARD (0.6)
+            // Weak breakout — no points
+        ELSE IF close_pos != null AND close_pos < BREAKOUT_CLOSE_POSITION_SOFT (0.75)
+            technical += MAX(0, w_breakout - BREAKOUT_SOFT_PENALTY)
+        ELSE
+            technical += w_breakout
 
     // High delivery bonus for breakout strategies
     IF features.is_high_delivery AND features.is_breakout
@@ -2068,6 +2118,18 @@ A signal is emitted only if ALL conditions pass:
 2. `risk_reward >= MIN_RISK_REWARD` (default: 2.0)
 3. Number of current ACTIVE signals < `MAX_ACTIVE_SIGNALS` (default: 10)
 4. Number of ACTIVE signals in the same sector < `MAX_SECTOR_SIGNALS` (default: 3)
+
+### Confidence Tier System
+
+After a signal passes the confidence gate, it is assigned a **confidence tier**:
+
+| Confidence | Tier | Env Var |
+|------------|------|---------|
+| >= 85 | HIGH | `CONFIDENCE_TIER_HIGH` |
+| >= 75 | NORMAL | `CONFIDENCE_TIER_NORMAL` |
+| >= 70 | LOW | `CONFIDENCE_TIER_LOW` |
+
+The tier is stored as `confidence_tier` on the signal (ENUM: HIGH, NORMAL, LOW) and exposed via the API. Frontend can filter signals by tier.
 
 ---
 
@@ -2584,6 +2646,14 @@ FUNCTION updatePaperTrades()
             gross_pnl_inr = trade.shares_to_buy * (exit_price - trade.entry_price)
         ELSE IF signal.direction == 'SHORT'
             gross_pnl_inr = trade.shares_to_buy * (trade.entry_price - exit_price)
+
+        // Smart Expiry: apply opportunity cost penalty for negligible movement
+        IF exit_reason == 'EXPIRED' AND ABS(pnl_pct) < EXPIRED_MOVEMENT_THRESHOLD (1.0%)
+            movement_ratio = 1 - ABS(pnl_pct) / EXPIRED_MOVEMENT_THRESHOLD
+            penalty = EXPIRED_MIN_PENALTY + (EXPIRED_MAX_PENALTY - EXPIRED_MIN_PENALTY) * movement_ratio
+            pnl_pct = pnl_pct + penalty    // penalty is negative (-0.1 to -0.2)
+            exit_reason = 'EXPIRED_PENALIZED'
+            LOG info: "penalty applied: {penalty}%"
 
         UPDATE paper_trades SET
             status = 'CLOSED',

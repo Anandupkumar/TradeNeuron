@@ -1,6 +1,6 @@
 import type { SignalDirection } from './signal.types';
 
-export type ExitReason = 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'MANUAL';
+export type ExitReason = 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED' | 'MANUAL';
 export type TradeStatus = 'OPEN' | 'CLOSED';
 
 export interface PaperTrade {

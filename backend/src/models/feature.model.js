@@ -2,13 +2,15 @@ const { pool } = require('../config/db');
 
 async function upsert(feature) {
   const sql = `
-    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, close_position, ema50_slope, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       is_uptrend = VALUES(is_uptrend),
       rsi_zone = VALUES(rsi_zone),
       is_volume_spike = VALUES(is_volume_spike),
       is_breakout = VALUES(is_breakout),
+      close_position = VALUES(close_position),
+      ema50_slope = VALUES(ema50_slope),
       near_support = VALUES(near_support),
       distance_from_52w_high_pct = VALUES(distance_from_52w_high_pct),
       relative_strength_vs_nifty = VALUES(relative_strength_vs_nifty),
@@ -26,6 +28,8 @@ async function upsert(feature) {
     feature.symbol, feature.date,
     feature.is_uptrend ? 1 : 0, feature.rsi_zone,
     feature.is_volume_spike ? 1 : 0, feature.is_breakout ? 1 : 0,
+    feature.close_position != null ? feature.close_position : null,
+    feature.ema50_slope != null ? feature.ema50_slope : null,
     feature.near_support ? 1 : 0,
     feature.distance_from_52w_high_pct, feature.relative_strength_vs_nifty,
     feature.is_liquid ? 1 : 0,
@@ -45,13 +49,15 @@ async function upsert(feature) {
 async function bulkUpsert(features) {
   if (features.length === 0) return;
   const sql = `
-    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
+    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, close_position, ema50_slope, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
     VALUES ?
     ON DUPLICATE KEY UPDATE
       is_uptrend = VALUES(is_uptrend),
       rsi_zone = VALUES(rsi_zone),
       is_volume_spike = VALUES(is_volume_spike),
       is_breakout = VALUES(is_breakout),
+      close_position = VALUES(close_position),
+      ema50_slope = VALUES(ema50_slope),
       near_support = VALUES(near_support),
       distance_from_52w_high_pct = VALUES(distance_from_52w_high_pct),
       relative_strength_vs_nifty = VALUES(relative_strength_vs_nifty),
@@ -69,6 +75,8 @@ async function bulkUpsert(features) {
     f.symbol, f.date,
     f.is_uptrend ? 1 : 0, f.rsi_zone,
     f.is_volume_spike ? 1 : 0, f.is_breakout ? 1 : 0,
+    f.close_position != null ? f.close_position : null,
+    f.ema50_slope != null ? f.ema50_slope : null,
     f.near_support ? 1 : 0,
     f.distance_from_52w_high_pct, f.relative_strength_vs_nifty,
     f.is_liquid ? 1 : 0,

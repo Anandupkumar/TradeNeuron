@@ -151,6 +151,24 @@ async function computeFeatures(symbol, candles, indicators, nifty_candles) {
     const is_ranging = computeIsRanging(candles, i, atr_values, breakout, rsi_zone);
     const z_score_20d = computeZScore(candles, i);
 
+    const candle_high = parseFloat(candle.high);
+    const candle_low = parseFloat(candle.low);
+    const candle_range = candle_high - candle_low;
+    const close_position = candle_range > 0
+      ? roundDecimal((adjusted_close - candle_low) / candle_range, 4)
+      : null;
+
+    let ema50_slope = null;
+    if (i >= 5 && ema_50 != null) {
+      const prev_indicator = indicators[i - 5] || null;
+      const prev_ema50 = prev_indicator && prev_indicator.ema_50 != null
+        ? parseFloat(prev_indicator.ema_50)
+        : null;
+      if (prev_ema50 != null) {
+        ema50_slope = roundDecimal(ema_50 - prev_ema50, 4);
+      }
+    }
+
     const delivery_pct = candle.delivery_pct != null ? parseFloat(candle.delivery_pct) : null;
     const is_high_delivery = delivery_pct != null ? delivery_pct > 50 : null;
 
@@ -179,6 +197,8 @@ async function computeFeatures(symbol, candles, indicators, nifty_candles) {
       rsi_zone,
       is_volume_spike: volume_spike,
       is_breakout: breakout,
+      close_position,
+      ema50_slope,
       near_support,
       distance_from_52w_high_pct,
       relative_strength_vs_nifty,

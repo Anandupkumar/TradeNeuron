@@ -50,3 +50,9 @@ export function formatConfidence(value: number | string | null | undefined): str
   return Math.round(n).toString();
 }
 
+export function formatExitReason(reason: string | null | undefined): string {
+  if (!reason) return '—';
+  if (reason === 'EXPIRED_PENALIZED') return 'Expired (penalized)';
+  return reason.split('_').join(' ');
+}
+

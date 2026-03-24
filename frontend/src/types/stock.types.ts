@@ -46,6 +46,8 @@ export interface StockFeatures {
   rsi_zone: RsiZone;
   is_volume_spike: boolean;
   is_breakout: boolean;
+  close_position: number | null;
+  ema50_slope: number | null;
   near_support: boolean;
   is_liquid: boolean;
   is_ranging: boolean;

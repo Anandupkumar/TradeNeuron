@@ -48,7 +48,19 @@ export function SignalCard({ signal, className }: SignalCardProps) {
       <div className="mt-3">
         <div className="flex items-center justify-between text-xs text-zinc-400">
           <span>Confidence</span>
-          <span className="font-medium text-zinc-200">{Math.round(signal.confidence)}%</span>
+          <div className="flex items-center gap-1.5">
+            <span className="font-medium text-zinc-200">{Math.round(signal.confidence)}%</span>
+            {signal.confidence_tier && (
+              <span className={cn(
+                'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                signal.confidence_tier === 'HIGH' ? 'bg-emerald-500/15 text-emerald-400' :
+                signal.confidence_tier === 'NORMAL' ? 'bg-blue-500/15 text-blue-400' :
+                'bg-amber-500/15 text-amber-400',
+              )}>
+                {signal.confidence_tier === 'HIGH' ? 'High' : signal.confidence_tier === 'NORMAL' ? 'Normal' : 'Low'}
+              </span>
+            )}
+          </div>
         </div>
         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
           <div

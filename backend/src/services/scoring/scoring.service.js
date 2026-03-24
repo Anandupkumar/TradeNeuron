@@ -1,4 +1,4 @@
-const { SCORING_WEIGHTS, VOLUME_TIER_SCORES } = require('../../config/constants');
+const { SCORING_WEIGHTS, VOLUME_TIER_SCORES, SOFT_FILTER } = require('../../config/constants');
 const indicatorModel = require('../../models/indicator.model');
 const featureModel = require('../../models/feature.model');
 const { clamp } = require('../../utils/math.util');
@@ -62,7 +62,13 @@ async function _scoreInternal(symbol, date) {
   const ema_50 = indicator.ema_50 != null ? parseFloat(indicator.ema_50) : null;
 
   if (is_uptrend && ema_20 != null && ema_50 != null && ema_20 > ema_50) {
-    technical += w_trend;
+    let trend_score = w_trend;
+    // Improvement 3: penalize flat/declining EMA50 slope
+    const ema50_slope = feature.ema50_slope != null ? parseFloat(feature.ema50_slope) : null;
+    if (ema50_slope != null && ema50_slope <= 0) {
+      trend_score = Math.max(0, trend_score - SOFT_FILTER.TREND_SLOPE_PENALTY);
+    }
+    technical += trend_score;
   }
 
   if (feature.rsi_zone === 'PULLBACK') {
@@ -79,7 +85,15 @@ async function _scoreInternal(symbol, date) {
 
   const is_breakout = feature.is_breakout === 1 || feature.is_breakout === true;
   if (is_breakout) {
-    technical += w_breakout;
+    // Improvement 1: soft breakout confirmation via close_position
+    const close_position = feature.close_position != null ? parseFloat(feature.close_position) : null;
+    if (close_position != null && close_position < SOFT_FILTER.BREAKOUT_CLOSE_POSITION_HARD) {
+      // Weak breakout — no points awarded
+    } else if (close_position != null && close_position < SOFT_FILTER.BREAKOUT_CLOSE_POSITION_SOFT) {
+      technical += Math.max(0, w_breakout - SOFT_FILTER.BREAKOUT_SOFT_PENALTY);
+    } else {
+      technical += w_breakout;
+    }
   }
 
   const is_high_delivery = feature.is_high_delivery === 1 || feature.is_high_delivery === true;
@@ -127,7 +141,12 @@ function buildExplanations(feature, indicator, regime, sentiment) {
   const ema_50 = indicator.ema_50 != null ? parseFloat(indicator.ema_50) : null;
 
   if (is_uptrend && ema_20 != null && ema_50 != null && ema_20 > ema_50) {
-    sentences.push(`Stock is in an uptrend with EMA 20 (${ema_20.toFixed(2)}) above EMA 50 (${ema_50.toFixed(2)}), adding trend alignment points.`);
+    const ema50_slope = feature.ema50_slope != null ? parseFloat(feature.ema50_slope) : null;
+    if (ema50_slope != null && ema50_slope <= 0) {
+      sentences.push(`Stock is in an uptrend with EMA 20 (${ema_20.toFixed(2)}) above EMA 50 (${ema_50.toFixed(2)}), but EMA 50 slope is flat/declining (${ema50_slope.toFixed(2)}) — trend score reduced.`);
+    } else {
+      sentences.push(`Stock is in an uptrend with EMA 20 (${ema_20.toFixed(2)}) above EMA 50 (${ema_50.toFixed(2)}), adding trend alignment points.`);
+    }
   } else if (is_uptrend) {
     sentences.push('Stock is in an uptrend but EMA 20/50 crossover not confirmed.');
   } else {
@@ -151,7 +170,14 @@ function buildExplanations(feature, indicator, regime, sentiment) {
 
   const is_breakout = feature.is_breakout === 1 || feature.is_breakout === true;
   if (is_breakout) {
-    sentences.push('Price is breaking out above resistance, earning breakout points.');
+    const close_position = feature.close_position != null ? parseFloat(feature.close_position) : null;
+    if (close_position != null && close_position < SOFT_FILTER.BREAKOUT_CLOSE_POSITION_HARD) {
+      sentences.push(`Price is breaking out but close position is weak (${close_position.toFixed(2)}) — no breakout points awarded.`);
+    } else if (close_position != null && close_position < SOFT_FILTER.BREAKOUT_CLOSE_POSITION_SOFT) {
+      sentences.push(`Price is breaking out with moderate close position (${close_position.toFixed(2)}) — breakout points reduced.`);
+    } else {
+      sentences.push('Price is breaking out above resistance, earning full breakout points.');
+    }
   }
 
   const is_high_delivery = feature.is_high_delivery === 1 || feature.is_high_delivery === true;

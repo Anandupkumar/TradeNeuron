@@ -28,6 +28,13 @@ const RSI_ZONES = {
   OVERBOUGHT: { min: 65, max: 100 },
 };
 
+const SOFT_FILTER = {
+  BREAKOUT_CLOSE_POSITION_HARD: 0.6,
+  BREAKOUT_CLOSE_POSITION_SOFT: 0.75,
+  BREAKOUT_SOFT_PENALTY: 10,
+  TREND_SLOPE_PENALTY: 15,
+};
+
 const NEGATION_WORDS = [
   'clears', 'cleared', 'acquitted', 'not guilty',
   'no evidence', 'dismissed', 'drops', 'resolved',
@@ -37,6 +44,7 @@ const NEGATION_WORDS = [
 module.exports = {
   SCORING_WEIGHTS,
   VOLUME_TIER_SCORES,
+  SOFT_FILTER,
   NSE_HOLIDAYS,
   NEGATIVE_KEYWORDS,
   NEGATION_WORDS,

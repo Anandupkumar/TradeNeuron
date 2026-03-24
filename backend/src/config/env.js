@@ -63,6 +63,17 @@ const config = Object.freeze({
 
   adaptive_thresholds_enabled: (process.env.ADAPTIVE_THRESHOLDS_ENABLED || 'true').toLowerCase() === 'true',
   adaptive_min_data_points: parseInt(process.env.ADAPTIVE_MIN_DATA_POINTS || '30', 10),
+  adaptive_min_trades_partial: parseInt(process.env.ADAPTIVE_MIN_TRADES_PARTIAL || '15', 10),
+  adaptive_min_trades_full: parseInt(process.env.ADAPTIVE_MIN_TRADES_FULL || '30', 10),
+  adaptive_partial_blend: parseFloat(process.env.ADAPTIVE_PARTIAL_BLEND || '0.3'),
+
+  confidence_tier_high: parseFloat(process.env.CONFIDENCE_TIER_HIGH || '85'),
+  confidence_tier_normal: parseFloat(process.env.CONFIDENCE_TIER_NORMAL || '75'),
+  confidence_tier_low: parseFloat(process.env.CONFIDENCE_TIER_LOW || '70'),
+
+  expired_min_penalty: parseFloat(process.env.EXPIRED_MIN_PENALTY || '-0.1'),
+  expired_max_penalty: parseFloat(process.env.EXPIRED_MAX_PENALTY || '-0.2'),
+  expired_movement_threshold: parseFloat(process.env.EXPIRED_MOVEMENT_THRESHOLD || '1.0'),
 
   finnhub_api_key: process.env.FINNHUB_API_KEY || '',
 

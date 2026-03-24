@@ -1,101 +1,162 @@
-# Frontend Improvements Log
+# TradeNeuron Frontend — Improvement Plan
 
-## Phase 2 — Five Feature Improvements
-
-### Feature 1: Explainability Panel
-
-Replaces the plain "Reasons" badge pills in the Signal Detail Drawer with rich, human-readable explanation sentences.
-
-**Files created:**
-
-- `src/components/signals/ExplainabilityPanel.tsx` — Renders `explanation` array as a checklist with checkmark icons. Falls back to `reasons` badge pills if `explanation` is null (backward compatible with older signals).
-
-**Files changed:**
-
-- `src/types/signal.types.ts` — Added `explanation: string[] | null` to `Signal` interface.
-- `src/components/signals/SignalDetailDrawer.tsx` — Replaced inline reasons section with `<ExplainabilityPanel>`.
+Frontend changes required to support the 5 backend scoring improvements.
+Improvement 4 (Adaptive Learning) has no frontend impact — it is backend-only.
 
 ---
 
-### Feature 2: Confidence Breakdown Bar
+## 1. Soft Breakout Confirmation — UI Changes
 
-Replaces the single-color confidence bar with a segmented, multi-color bar showing how the score is composed.
+### What the Backend Adds
 
-**Files created:**
+A new `close_position` field (0.0 – 1.0) on each stock's features, representing where the candle closed relative to its daily range.
 
-- `src/components/signals/ConfidenceBreakdownBar.tsx` — Segmented bar with 4 colored sections:
-  - Technical (blue)
-  - Momentum (green)
-  - Volume (amber)
-  - Quality (purple)
-  - Includes a legend grid showing individual point values. Falls back to simple confidence bar if breakdown is null.
+### Frontend Changes
 
-**Files changed:**
+| File | Change |
+|------|--------|
+| `src/types/stock.types.ts` | Add `close_position: number \| null` to the `Features` interface |
+| `src/components/stocks/FeatureGrid.tsx` | Display `close_position` as "Breakout Strength" with a visual indicator |
 
-- `src/types/signal.types.ts` — Added `ConfidenceBreakdown` interface and `confidence_breakdown: ConfidenceBreakdown | null` to `Signal`.
-- `src/types/index.ts` — Exported `ConfidenceBreakdown`.
-- `src/components/signals/SignalDetailDrawer.tsx` — Replaced inline confidence bar with `<ConfidenceBreakdownBar>`.
+### Display Rules
 
----
+- `close_position >= 0.75` — green badge: "Strong"
+- `close_position 0.6 – 0.74` — amber badge: "Moderate"
+- `close_position < 0.6` — grey badge: "Weak"
+- `null` — not shown (no data)
 
-### Feature 3: Trade Checklist
+### Where It Appears
 
-A grid of pass/warn/fail check items derived from signal data. No backend changes needed.
-
-**Files created:**
-
-- `src/components/signals/TradeChecklist.tsx` — Grid of 6 check items (Confidence, R:R, Direction, Status, Position Size, Volume) each with pass/warn/fail icons. All data derived from the existing `Signal` object and `confidence_breakdown`.
-
-**Files changed:**
-
-- `src/components/signals/SignalDetailDrawer.tsx` — Added `<TradeChecklist>` between position sizing and explanation panels.
+- **StockDetail page** — FeatureGrid section, alongside existing features like `is_breakout`, `is_volume_spike`
 
 ---
 
-### Feature 4: Rejected Signals Log
+## 2. Confidence Tier System — UI Changes
 
-Adds a collapsible section on the Signals page showing which symbols were rejected by the pipeline and why.
+### What the Backend Adds
 
-**Files created:**
+A new `confidence_tier` field (`'HIGH' | 'NORMAL' | 'LOW'`) on each signal, computed from the confidence score.
 
-- `src/types/rejectedSignal.types.ts` — `RejectStage` union type, `RejectedSignal` interface, `RejectedSignalsResponse`.
+### Frontend Changes
 
-**Files changed:**
+| File | Change |
+|------|--------|
+| `src/types/signal.types.ts` | Add `confidence_tier: 'HIGH' \| 'NORMAL' \| 'LOW' \| null` to the `Signal` interface |
+| `src/types/signal.types.ts` | Add `confidence_tier?: 'HIGH' \| 'NORMAL' \| 'LOW' \| 'all'` to `SignalFilters` |
+| `src/components/common/ConfidenceBar.tsx` | Show tier label next to the bar (e.g., "High Priority") |
+| `src/components/signals/SignalCard.tsx` | Add tier badge with distinct color treatment |
+| `src/components/signals/SignalBadge.tsx` | Support rendering a tier badge variant |
+| `src/components/signals/SignalFilters.tsx` | Add a "Priority" dropdown filter: All / High / Normal / Low |
+| `src/hooks/useSignals.ts` | Pass `confidence_tier` filter to API call |
+| `src/pages/Signals.tsx` | Include tier filter in filter bar; support sorting by tier |
 
-- `src/types/index.ts` — Exported `RejectStage`, `RejectedSignal`, `RejectedSignalsResponse`.
-- `src/api/signals.api.ts` — Added `rejected(date?: string)` method.
-- `src/pages/Signals.tsx` — Added `RejectedSignalsSection` component: collapsible "Show rejected signals" toggle with lazy-loaded table showing symbol, strategy, reject stage (colored pill), reason text, confidence, and R:R.
+### Display Rules
+
+| Tier | Badge Color | Label |
+|------|-------------|-------|
+| HIGH | Green | "High Priority" |
+| NORMAL | Blue | "Normal" |
+| LOW | Amber | "Low Priority" |
+| null (legacy) | Grey | "—" |
+
+### ConfidenceBar Enhancement
+
+The existing `ConfidenceBar` uses color thresholds (70-79 amber, 80-89 light green, 90-100 green). These remain unchanged. The tier label is appended as a small text badge to the right of the bar.
+
+### Where It Appears
+
+- **Dashboard** — SignalCard tiles show tier badge
+- **Signals page** — SignalTable column, filter dropdown, sort option
+- **SignalDetailDrawer** — Tier label in the confidence section
 
 ---
 
-### Feature 5: Manual Decision Log (Trade Override)
+## 3. Trend Slope — UI Changes
 
-Traders can record their decision (Taken/Skipped/Modified) for any signal, with optional notes and actual entry/qty.
+### What the Backend Adds
 
-**Files created:**
+A new `ema50_slope` field (positive = rising, negative = falling) on each stock's features.
 
-- `src/types/tradeDecision.types.ts` — `DecisionType`, `TradeDecision`, `DecisionHistoryItem`, `DecisionHistoryResponse` types.
-- `src/api/tradeDecision.api.ts` — `get`, `upsert`, `history` API methods.
-- `src/hooks/useTradeDecisions.ts` — `useDecision(signalId)` query and `useUpsertDecision(signalId)` mutation with toast notifications.
-- `src/components/signals/DecisionOverridePanel.tsx` — Three decision buttons (Taken/Skipped/Modified), notes textarea, optional actual entry/qty fields (shown for "Modified"), save button with loading state, last-updated timestamp.
+### Frontend Changes
 
-**Files changed:**
+| File | Change |
+|------|--------|
+| `src/types/stock.types.ts` | Add `ema50_slope: number \| null` to the `Features` interface |
+| `src/components/stocks/FeatureGrid.tsx` | Display `ema50_slope` as "EMA50 Trend" with directional arrow |
+| `src/components/stocks/IndicatorGrid.tsx` | Show slope value in the EMA section with up/down visual |
 
-- `src/types/index.ts` — Exported `DecisionType`, `TradeDecision`, `DecisionHistoryItem`, `DecisionHistoryResponse`.
-- `src/components/signals/SignalDetailDrawer.tsx` — Added `<DecisionOverridePanel>` as the last section in the drawer.
+### Display Rules
+
+- `ema50_slope > 0` — green up-arrow + value (e.g., "↑ +12.45")
+- `ema50_slope <= 0` — red down-arrow + value (e.g., "↓ -3.20")
+- `null` — dash ("—")
+
+### Where It Appears
+
+- **StockDetail page** — FeatureGrid and IndicatorGrid sections
 
 ---
 
-## SignalDetailDrawer Layout (updated)
+## 4. Adaptive Learning — No Frontend Changes
 
-The Signal Detail Drawer now contains the following sections in order:
+Improvement 4 is entirely backend (calibration job logic). No types, components, or hooks are affected.
 
-1. Symbol + Date header
-2. Signal type + Status badges
-3. **Confidence Breakdown Bar** (new)
-4. Price rows (Entry, Target, Stop Loss)
-5. Position sizing details (R:R, Shares, Value, Capital at Risk)
-6. Strategy details (Strategy, Direction, Date)
-7. **Trade Checklist** (new)
-8. **Explainability Panel** (new — replaces Reasons)
-9. **Decision Override Panel** (new)
+---
+
+## 5. Smart Expiry Handling — UI Changes
+
+### What the Backend Adds
+
+Expired trades with negligible price movement receive an opportunity cost penalty (-0.1% to -0.2%). The `exit_reason` value can now be `'EXPIRED_PENALIZED'` in addition to the existing `'EXPIRED'`.
+
+### Frontend Changes
+
+| File | Change |
+|------|--------|
+| `src/types/signal.types.ts` | Add `'EXPIRED_PENALIZED'` to `SignalStatus` type |
+| `src/types/paperTrade.types.ts` | Add `'EXPIRED_PENALIZED'` to exit_reason union if it exists |
+| `src/components/paper_trading/PaperTradeTable.tsx` | Render `EXPIRED_PENALIZED` rows with a tooltip explaining the penalty |
+| `src/components/signals/SignalBadge.tsx` | Map `EXPIRED_PENALIZED` to the same visual as `EXPIRED` but with a penalty indicator |
+| `src/utils/format.ts` | Add `formatExitReason()` helper: maps `EXPIRED_PENALIZED` to "Expired (penalized)" |
+
+### Display Rules
+
+- `EXPIRED_PENALIZED` shows the same amber/grey color as `EXPIRED`
+- A small info icon with tooltip: "Opportunity cost penalty applied due to negligible price movement"
+- PnL column for these rows shows the penalized value (already adjusted by backend)
+
+### Where It Appears
+
+- **Paper Trading page** — PaperTradeTable exit_reason column
+- **Signals page** — Signal status badge (if signal was expired with penalty)
+
+---
+
+## New Types Summary
+
+```typescript
+// signal.types.ts additions
+export type SignalStatus = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED';
+export type ConfidenceTier = 'HIGH' | 'NORMAL' | 'LOW';
+
+// Signal interface additions
+confidence_tier: ConfidenceTier | null;
+
+// SignalFilters additions
+confidence_tier?: ConfidenceTier | 'all';
+
+// stock.types.ts additions (Features interface)
+close_position: number | null;
+ema50_slope: number | null;
+```
+
+---
+
+## Implementation Order
+
+1. **Types first** — Update `signal.types.ts` and `stock.types.ts` with new fields
+2. **Improvement 1 + 3** — FeatureGrid / IndicatorGrid display for `close_position` and `ema50_slope`
+3. **Improvement 2** — ConfidenceBar tier badge, SignalCard tier badge, SignalFilters tier dropdown
+4. **Improvement 5** — SignalBadge and PaperTradeTable penalty display
+
+This order matches the backend implementation sequence and ensures types are available before components consume them.

@@ -343,7 +343,8 @@ export interface PaginatedResponse<T> {
 
 export type SignalType      = 'BUY' | 'SELL';
 export type SignalDirection = 'LONG' | 'SHORT';
-export type SignalStatus    = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED';
+export type SignalStatus    = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED';
+export type ConfidenceTier  = 'HIGH' | 'NORMAL' | 'LOW';
 export type StrategySource  =
   | 'TREND_PULLBACK'
   | 'BREAKOUT'
@@ -367,6 +368,7 @@ export interface Signal {
   signal_type: SignalType;
   direction: SignalDirection;
   confidence: number;              // 0–100
+  confidence_tier: ConfidenceTier | null;  // HIGH (85+), NORMAL (75-84), LOW (70-74)
   entry_price: number;
   stop_loss: number;
   target_price: number;
@@ -386,6 +388,7 @@ export interface Signal {
 export interface SignalFilters {
   status?: SignalStatus | 'all';
   direction?: SignalDirection | 'all';
+  confidence_tier?: ConfidenceTier | 'all';
   symbol?: string;
   from_date?: string;
   to_date?: string;
@@ -458,6 +461,8 @@ export interface StockFeatures {
   rsi_zone: RsiZone;
   is_volume_spike: boolean;
   is_breakout: boolean;
+  close_position: number | null;  // (close - low) / (high - low) — breakout strength
+  ema50_slope: number | null;     // ema50_today - ema50_5d_ago — trend direction
   near_support: boolean;
   is_liquid: boolean;
   is_ranging: boolean;
@@ -504,7 +509,7 @@ export interface HistoryResponse {
 ```typescript
 // src/types/paperTrade.types.ts
 
-export type ExitReason = 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'MANUAL';
+export type ExitReason = 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED' | 'MANUAL';
 export type TradeStatus = 'OPEN' | 'CLOSED';
 
 export interface PaperTrade {
@@ -1392,20 +1397,28 @@ type StatusBadgeProps = { status: SignalStatus | TradeStatus };
 ACTIVE      → blue pill
 TARGET_HIT  → green pill
 SL_HIT      → red pill
-EXPIRED     → grey pill
-OPEN        → blue pill
-CLOSED      → grey pill
+EXPIRED            → grey pill
+EXPIRED_PENALIZED  → amber pill, label "Expired (penalized)"
+OPEN               → blue pill
+CLOSED             → grey pill
 ```
 
 ### ConfidenceBar
 
 ```typescript
-type ConfidenceBarProps = { value: number };  // 0–100
+type ConfidenceBarProps = {
+  value: number;                     // 0–100
+  tier?: ConfidenceTier | null;      // 'HIGH' | 'NORMAL' | 'LOW'
+};
 
-// 70–79: amber
-// 80–89: light green
-// 90–100: green
-// Below 70: grey (should not appear — backend gate — but render defensively)
+// Bar colour thresholds unchanged:
+// < 40: red | 40–69: amber | 70+: green
+
+// Tier badge (appended to right of bar):
+// HIGH   → green badge "High"
+// NORMAL → blue badge "Normal"
+// LOW    → amber badge "Low"
+// null   → no badge (legacy signals)
 ```
 
 ### StatCard
@@ -1743,6 +1756,12 @@ export function formatConfidence(value: number | string | null | undefined): str
   const n = toNum(value);
   if (n == null) return '—';
   return Math.round(n).toString();
+}
+
+export function formatExitReason(reason: string | null | undefined): string {
+  if (!reason) return '—';
+  if (reason === 'EXPIRED_PENALIZED') return 'Expired (penalized)';
+  return reason.split('_').join(' ');
 }
 ```
 
@@ -2541,6 +2560,7 @@ export const decodeSymbol = (s: string) => decodeURIComponent(s);
 | `signal_type` | `'BUY' \| 'SELL'` | — | `SignalBadge` |
 | `direction` | `'LONG' \| 'SHORT'` | — | `SignalBadge` |
 | `confidence` | `number` | `formatConfidence()` | `ConfidenceBar` |
+| `confidence_tier` | `ConfidenceTier \| null` | — | Tier badge in `ConfidenceBar` and `SignalCard` |
 | `entry_price` | `number` | `formatINR()` | Text |
 | `stop_loss` | `number` | `formatINR()` | Text |
 | `target_price` | `number` | `formatINR()` | Text |
