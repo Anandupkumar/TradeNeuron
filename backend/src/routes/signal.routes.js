@@ -41,6 +41,7 @@ router.get('/signals', async (req, res, next) => {
       status: value.status,
       symbol: value.symbol,
       direction: value.direction,
+      confidence_tier: value.confidence_tier,
       min_confidence: value.min_confidence,
       from_date: value.from_date,
       to_date: value.to_date,

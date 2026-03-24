@@ -71,6 +71,8 @@ router.get('/stock/:symbol', async (req, res, next) => {
           rsi_zone: feature.rsi_zone,
           is_volume_spike: !!feature.is_volume_spike,
           is_breakout: !!feature.is_breakout,
+          close_position: feature.close_position ?? null,
+          ema50_slope: feature.ema50_slope ?? null,
           near_support: !!feature.near_support,
           is_liquid: !!feature.is_liquid,
           is_ranging: !!feature.is_ranging,

@@ -25,6 +25,13 @@ const direction_options = [
   { value: 'SHORT', label: 'Short' },
 ];
 
+const tier_options = [
+  { value: 'all', label: 'All Priority' },
+  { value: 'HIGH', label: 'High Priority' },
+  { value: 'NORMAL', label: 'Normal' },
+  { value: 'LOW', label: 'Low Priority' },
+];
+
 const select_classes =
   'rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500';
 
@@ -77,6 +84,18 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
           ))}
         </select>
       )}
+
+      <select
+        value={filters.confidence_tier ?? 'all'}
+        onChange={(e) => on_change({ confidence_tier: e.target.value as SignalFilters['confidence_tier'] })}
+        className={select_classes}
+      >
+        {tier_options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
 
       <div className="flex items-center gap-2">
         <label htmlFor="confidence-slider" className="text-xs text-zinc-400">

@@ -2,12 +2,14 @@ const { pool } = require('../config/db');
 
 async function create(signal) {
   const sql = `
-    INSERT INTO signals (symbol, date, signal_type, confidence, entry_price, stop_loss, target_price, risk_reward, reasons, status, strategy_source, direction, shares_to_buy, position_value, capital_risk_inr, explanation, confidence_breakdown)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO signals (symbol, date, signal_type, confidence, confidence_tier, entry_price, stop_loss, target_price, risk_reward, reasons, status, strategy_source, direction, shares_to_buy, position_value, capital_risk_inr, explanation, confidence_breakdown)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     signal.symbol, signal.date, signal.signal_type || 'BUY',
-    signal.confidence, signal.entry_price, signal.stop_loss,
+    signal.confidence,
+    signal.confidence_tier || null,
+    signal.entry_price, signal.stop_loss,
     signal.target_price, signal.risk_reward,
     JSON.stringify(signal.reasons), signal.status || 'ACTIVE',
     signal.strategy_source,
@@ -46,7 +48,7 @@ async function updateStatus(id, status, closed_at) {
   return result;
 }
 
-async function findAll({ page = 1, limit = 20, sort_by = 'date', sort_order = 'DESC', status, symbol, strategy_source, direction, min_confidence, from_date, to_date, favorites_only, user_id } = {}) {
+async function findAll({ page = 1, limit = 20, sort_by = 'date', sort_order = 'DESC', status, symbol, strategy_source, direction, confidence_tier, min_confidence, from_date, to_date, favorites_only, user_id } = {}) {
   let where_clauses = [];
   let params = [];
   let use_join = false;
@@ -66,6 +68,10 @@ async function findAll({ page = 1, limit = 20, sort_by = 'date', sort_order = 'D
   if (direction) {
     where_clauses.push('s.direction = ?');
     params.push(direction);
+  }
+  if (confidence_tier) {
+    where_clauses.push('s.confidence_tier = ?');
+    params.push(confidence_tier);
   }
   if (min_confidence != null && min_confidence > 0) {
     where_clauses.push('s.confidence >= ?');

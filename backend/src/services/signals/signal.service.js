@@ -130,6 +130,13 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     return null;
   }
 
+  let confidence_tier = 'LOW';
+  if (confidence >= config.confidence_tier_high) {
+    confidence_tier = 'HIGH';
+  } else if (confidence >= config.confidence_tier_normal) {
+    confidence_tier = 'NORMAL';
+  }
+
   if (signal.risk_reward < config.min_risk_reward) {
     logger.info(`Signal for ${symbol} rejected: R:R ${signal.risk_reward} below ${config.min_risk_reward}`);
     await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'RR_GATE', reject_reason: `R:R ${signal.risk_reward} below minimum ${config.min_risk_reward}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
@@ -173,6 +180,7 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     signal_type: is_short ? 'SELL' : 'BUY',
     direction,
     confidence,
+    confidence_tier,
     entry_price: signal.entry_price,
     stop_loss: signal.stop_loss,
     target_price: signal.target_price,
@@ -236,7 +244,16 @@ async function updateSignalStatuses() {
 
     if (new_status) {
       await signalModel.updateStatus(signal.id, new_status, today);
-      await recordOutcome(signal, new_status, today);
+      let outcome_status = new_status;
+      if (new_status === 'EXPIRED') {
+        const entry = parseFloat(signal.entry_price);
+        const exit = parseFloat(candle.adjusted_close);
+        const rough_pnl_pct = entry > 0 ? Math.abs(((exit - entry) / entry) * 100) : 0;
+        if (rough_pnl_pct < config.expired_movement_threshold) {
+          outcome_status = 'EXPIRED_PENALIZED';
+        }
+      }
+      await recordOutcome(signal, outcome_status, today);
       updated++;
     }
   }

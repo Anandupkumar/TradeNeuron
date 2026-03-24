@@ -101,8 +101,17 @@ async function updatePaperTrades() {
       }
     }
 
-    const pnl_pct = calculateNetPnl(entry_price, exit_price);
+    let pnl_pct = calculateNetPnl(entry_price, exit_price);
     const gross_pnl_inr = computeGrossPnlInr(entry_price, exit_price, shares, direction);
+
+    if (exit_reason === 'EXPIRED' && Math.abs(pnl_pct) < config.expired_movement_threshold) {
+      const movement_ratio = 1 - Math.abs(pnl_pct) / config.expired_movement_threshold;
+      const penalty = config.expired_min_penalty + (config.expired_max_penalty - config.expired_min_penalty) * movement_ratio;
+      logger.info(`Paper trade ${trade.symbol}: expired with negligible movement (${pnl_pct.toFixed(4)}%), applying penalty ${penalty.toFixed(2)}%`);
+      pnl_pct = roundDecimal(pnl_pct + penalty, 4);
+      exit_reason = 'EXPIRED_PENALIZED';
+    }
+
     await paperTradeModel.updateClose(trade.id, today, exit_price, exit_reason, pnl_pct, gross_pnl_inr);
     updated++;
   }

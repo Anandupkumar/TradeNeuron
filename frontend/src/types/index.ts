@@ -3,6 +3,7 @@ export type {
   SignalType,
   SignalDirection,
   SignalStatus,
+  ConfidenceTier,
   StrategySource,
   Signal,
   ConfidenceBreakdown,

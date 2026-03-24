@@ -2,7 +2,8 @@ import type { PaginationMeta } from './api.types';
 
 export type SignalType = 'BUY' | 'SELL';
 export type SignalDirection = 'LONG' | 'SHORT';
-export type SignalStatus = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED';
+export type SignalStatus = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED';
+export type ConfidenceTier = 'HIGH' | 'NORMAL' | 'LOW';
 export type StrategySource =
   | 'TREND_PULLBACK'
   | 'BREAKOUT'
@@ -26,6 +27,7 @@ export interface Signal {
   signal_type: SignalType;
   direction: SignalDirection;
   confidence: number;
+  confidence_tier: ConfidenceTier | null;
   entry_price: number;
   stop_loss: number;
   target_price: number;
@@ -47,6 +49,7 @@ export interface Signal {
 export interface SignalFilters {
   status?: SignalStatus | 'all';
   direction?: SignalDirection | 'all';
+  confidence_tier?: ConfidenceTier | 'all';
   symbol?: string;
   from_date?: string;
   to_date?: string;

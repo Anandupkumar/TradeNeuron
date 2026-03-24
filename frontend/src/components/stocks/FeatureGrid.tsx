@@ -1,4 +1,4 @@
-import { Check, X as XIcon } from 'lucide-react';
+import { Check, X as XIcon, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPct, formatINR, formatRR, toNum } from '../../utils/format';
 import type { StockFeatures, RsiZone, VolumeTier } from '../../types';
@@ -81,6 +81,49 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
 
       {booleanPill(features.is_volume_spike, 'Volume Spike')}
       {booleanPill(features.is_breakout, 'Breakout')}
+
+      {features.close_position != null && (
+        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+          <span className="text-sm text-zinc-300">Breakout Strength</span>
+          <span
+            className={cn(
+              'rounded-full px-2 py-0.5 text-xs font-medium',
+              features.close_position >= 0.75
+                ? 'bg-emerald-500/20 text-emerald-400'
+                : features.close_position >= 0.6
+                  ? 'bg-amber-500/20 text-amber-400'
+                  : 'bg-zinc-700/50 text-zinc-400',
+            )}
+          >
+            {features.close_position >= 0.75
+              ? 'Strong'
+              : features.close_position >= 0.6
+                ? 'Moderate'
+                : 'Weak'}
+          </span>
+        </div>
+      )}
+
+      {features.ema50_slope != null && (
+        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+          <span className="text-sm text-zinc-300">EMA50 Trend</span>
+          <span
+            className={cn(
+              'flex items-center gap-1 text-sm font-medium',
+              features.ema50_slope > 0 ? 'text-emerald-400' : 'text-red-400',
+            )}
+          >
+            {features.ema50_slope > 0 ? (
+              <TrendingUp className="h-3.5 w-3.5" />
+            ) : (
+              <TrendingDown className="h-3.5 w-3.5" />
+            )}
+            {features.ema50_slope > 0 ? '+' : ''}
+            {(toNum(features.ema50_slope) ?? 0).toFixed(2)}
+          </span>
+        </div>
+      )}
+
       {booleanPill(features.near_support, 'Near Support')}
       {booleanPill(features.is_liquid, 'Liquid')}
       {booleanPill(features.is_ranging, 'Ranging')}
