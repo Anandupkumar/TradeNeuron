@@ -25,41 +25,43 @@ interface AllSignalsContentProps {
   on_filter_change: (f: Partial<SignalFilters>) => void;
 }
 
-function allSignalsContent(props: AllSignalsContentProps) {
-  if (props.is_loading) return LoadingSkeleton({ variant: 'table-row', count: 8 });
+function AllSignalsContent(props: AllSignalsContentProps) {
+  if (props.is_loading) return <LoadingSkeleton variant="table-row" count={8} />;
 
   if (props.is_error) {
-    return ErrorState({ message: 'Failed to load signals', onRetry: props.on_refetch });
+    return <ErrorState message="Failed to load signals" onRetry={props.on_refetch} />;
   }
 
   if (props.signal_list.length === 0) {
-    return EmptyState({
-      icon: <Zap className="h-8 w-8" />,
-      title: 'No signals found',
-      description: 'Try adjusting your filters or wait for the next pipeline run.',
-    });
+    return (
+      <EmptyState
+        icon={<Zap className="h-8 w-8" />}
+        title="No signals found"
+        description="Try adjusting your filters or wait for the next pipeline run."
+      />
+    );
   }
 
   return (
     <>
-      {SignalTable({ signals: props.signal_list, on_row_click: props.on_row_click })}
+      <SignalTable signals={props.signal_list} on_row_click={props.on_row_click} />
       {props.total_pages > 1 && (
         <div className="pt-2">
-          {Pagination({
-            page: props.current_page,
-            total_pages: props.total_pages,
-            onPageChange: (page: number) => props.on_filter_change({ page }),
-            page_sizes: [10, 20, 50],
-            current_size: props.filters.limit ?? 20,
-            onPageSizeChange: (size: number) => props.on_filter_change({ limit: size, page: 1 }),
-          })}
+          <Pagination
+            page={props.current_page}
+            total_pages={props.total_pages}
+            onPageChange={(page: number) => props.on_filter_change({ page })}
+            page_sizes={[10, 20, 50]}
+            current_size={props.filters.limit ?? 20}
+            onPageSizeChange={(size: number) => props.on_filter_change({ limit: size, page: 1 })}
+          />
         </div>
       )}
     </>
   );
 }
 
-export default function signalsPage() {
+export default function SignalsPage() {
   const [filters, set_filters] = useSignalFilters();
   const signals_query = useSignals(filters);
   const active_query = useActiveSignals();
@@ -92,7 +94,7 @@ export default function signalsPage() {
         </p>
       </div>
 
-      {SignalFiltersBar({ filters, on_change: set_filters })}
+      <SignalFiltersBar filters={filters} on_change={set_filters} />
 
       {active_signals.length > 0 && (
         <div className="space-y-3">
@@ -107,7 +109,7 @@ export default function signalsPage() {
                 className="text-left"
                 onClick={() => handle_row_click(signal)}
               >
-                {SignalCard({ signal })}
+                <SignalCard signal={signal} />
               </button>
             ))}
           </div>
@@ -116,24 +118,24 @@ export default function signalsPage() {
 
       <div className="space-y-4">
         <h2 className="text-base font-semibold text-zinc-200">All Signals</h2>
-        {allSignalsContent({
-          is_loading: signals_query.isLoading,
-          is_error: signals_query.isError,
-          signal_list,
-          total_pages,
-          current_page,
-          filters,
-          on_row_click: handle_row_click,
-          on_refetch: () => { signals_query.refetch(); },
-          on_filter_change: set_filters,
-        })}
+        <AllSignalsContent
+          is_loading={signals_query.isLoading}
+          is_error={signals_query.isError}
+          signal_list={signal_list}
+          total_pages={total_pages}
+          current_page={current_page}
+          filters={filters}
+          on_row_click={handle_row_click}
+          on_refetch={() => { signals_query.refetch(); }}
+          on_filter_change={set_filters}
+        />
       </div>
 
-      {SignalDetailDrawer({
-        signal: selected_signal,
-        open: drawer_open,
-        on_close: handle_close_drawer,
-      })}
+      <SignalDetailDrawer
+        signal={selected_signal}
+        open={drawer_open}
+        on_close={handle_close_drawer}
+      />
     </div>
   );
 }

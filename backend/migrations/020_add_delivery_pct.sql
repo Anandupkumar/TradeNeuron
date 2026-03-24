@@ -1,0 +1,5 @@
+ALTER TABLE candles
+  ADD COLUMN delivery_pct DECIMAL(5,2) DEFAULT NULL;
+
+ALTER TABLE features
+  ADD COLUMN is_high_delivery BOOLEAN DEFAULT NULL;

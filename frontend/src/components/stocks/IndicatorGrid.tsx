@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { formatINR, formatPct } from '../../utils/format';
+import { formatINR, formatPct, toNum } from '../../utils/format';
 import type { StockIndicators } from '../../types';
 
 interface IndicatorGridProps {
@@ -22,35 +22,35 @@ function rsiColor(v: number): string {
 
 export function IndicatorGrid({ indicators, className }: IndicatorGridProps) {
   const cards: IndicatorCardData[] = [
-    { label: 'EMA 20', value: indicators.ema_20, formatter: formatINR },
-    { label: 'EMA 50', value: indicators.ema_50, formatter: formatINR },
-    { label: 'EMA 200', value: indicators.ema_200, formatter: formatINR },
+    { label: 'EMA 20', value: toNum(indicators.ema_20), formatter: formatINR },
+    { label: 'EMA 50', value: toNum(indicators.ema_50), formatter: formatINR },
+    { label: 'EMA 200', value: toNum(indicators.ema_200), formatter: formatINR },
     {
       label: 'RSI',
-      value: indicators.rsi,
-      formatter: (v) => v.toFixed(2),
+      value: toNum(indicators.rsi),
+      formatter: (v) => (toNum(v) ?? 0).toFixed(2),
       color_fn: rsiColor,
     },
     {
       label: 'MACD Line',
-      value: indicators.macd_line,
-      formatter: (v) => v.toFixed(4),
+      value: toNum(indicators.macd_line),
+      formatter: (v) => (toNum(v) ?? 0).toFixed(4),
     },
     {
       label: 'MACD Signal',
-      value: indicators.macd_signal,
-      formatter: (v) => v.toFixed(4),
+      value: toNum(indicators.macd_signal),
+      formatter: (v) => (toNum(v) ?? 0).toFixed(4),
     },
     {
       label: 'MACD Histogram',
-      value: indicators.macd_histogram,
-      formatter: (v) => v.toFixed(4),
+      value: toNum(indicators.macd_histogram),
+      formatter: (v) => (toNum(v) ?? 0).toFixed(4),
       color_fn: (v) => (v >= 0 ? 'text-emerald-400' : 'text-red-400'),
     },
-    { label: 'ATR', value: indicators.atr, formatter: formatINR },
+    { label: 'ATR', value: toNum(indicators.atr), formatter: formatINR },
     {
       label: 'Volume Change',
-      value: indicators.volume_change,
+      value: toNum(indicators.volume_change),
       formatter: (v) => formatPct(v, true),
       color_fn: (v) => (v >= 0 ? 'text-emerald-400' : 'text-red-400'),
     },

@@ -34,7 +34,7 @@ function computeFromDate(tf: Timeframe): string {
   }
 }
 
-export default function stockDetailPage() {
+export default function StockDetailPage() {
   const { symbol: encoded_symbol } = useParams<{ symbol: string }>();
   const symbol = decodeURIComponent(encoded_symbol ?? '');
 
@@ -53,8 +53,8 @@ export default function stockDetailPage() {
   if (detail_query.isLoading || history_query.isLoading) {
     return (
       <div className="space-y-4 p-6">
-        {LoadingSkeleton({ variant: 'chart' })}
-        {LoadingSkeleton({ variant: 'card', count: 3 })}
+        <LoadingSkeleton variant="chart" />
+        <LoadingSkeleton variant="card" count={3} />
       </div>
     );
   }
@@ -62,10 +62,10 @@ export default function stockDetailPage() {
   if (detail_query.isError) {
     return (
       <div className="p-6">
-        {ErrorState({
-          message: 'Failed to load stock details',
-          onRetry: () => detail_query.refetch(),
-        })}
+        <ErrorState
+          message="Failed to load stock details"
+          onRetry={() => detail_query.refetch()}
+        />
       </div>
     );
   }
@@ -73,10 +73,10 @@ export default function stockDetailPage() {
   if (history_query.isError) {
     return (
       <div className="p-6">
-        {ErrorState({
-          message: 'Failed to load price history',
-          onRetry: () => history_query.refetch(),
-        })}
+        <ErrorState
+          message="Failed to load price history"
+          onRetry={() => history_query.refetch()}
+        />
       </div>
     );
   }
@@ -98,7 +98,7 @@ export default function stockDetailPage() {
         <span className="text-sm text-zinc-500">Back to Dashboard</span>
       </div>
 
-      {StockHeader({ stock })}
+      <StockHeader stock={stock} />
 
       <div className="flex items-center gap-1 rounded-lg bg-zinc-900 p-1">
         {timeframe_options.map((tf) => (
@@ -119,31 +119,31 @@ export default function stockDetailPage() {
 
       <ChartErrorBoundary>
         <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          {CandlestickChart({ candles })}
+          <CandlestickChart candles={candles} />
         </div>
       </ChartErrorBoundary>
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-        {VolumeChart({ candles })}
+        <VolumeChart candles={candles} />
       </div>
 
-      {IndicatorOverlay({ indicators: stock.indicators })}
+      <IndicatorOverlay indicators={stock.indicators} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
           <h2 className="mb-3 text-lg font-semibold text-zinc-100">Indicators</h2>
-          {IndicatorGrid({ indicators: stock.indicators })}
+          <IndicatorGrid indicators={stock.indicators} />
         </div>
         <div>
           <h2 className="mb-3 text-lg font-semibold text-zinc-100">Features</h2>
-          {FeatureGrid({ features: stock.features })}
+          <FeatureGrid features={stock.features} />
         </div>
       </div>
 
       {stock.active_signal && (
         <div>
           <h2 className="mb-3 text-lg font-semibold text-zinc-100">Active Signal</h2>
-          {SignalCard({ signal: stock.active_signal })}
+          <SignalCard signal={stock.active_signal} />
         </div>
       )}
     </div>

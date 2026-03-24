@@ -43,17 +43,22 @@ async function fetchBhavcopy(date) {
 
     const candles = records
       .filter((r) => r.SERIES === 'EQ' && nifty_bare_symbols.has(r.SYMBOL))
-      .map((r) => ({
-        symbol: `${r.SYMBOL}.NS`,
-        date: formatDate(date),
-        open: roundDecimal(parseFloat(r.OPEN)),
-        high: roundDecimal(parseFloat(r.HIGH)),
-        low: roundDecimal(parseFloat(r.LOW)),
-        close: roundDecimal(parseFloat(r.CLOSE)),
-        adjusted_close: roundDecimal(parseFloat(r.CLOSE)),
-        volume: parseInt(r.TOTTRDQTY, 10) || 0,
-        source: 'BHAVCOPY',
-      }));
+      .map((r) => {
+        const raw_delivery = parseFloat(r.DELIV_PER || r['DELIV_PER'] || r['DELIVERY PER'] || '');
+        const delivery_pct = Number.isFinite(raw_delivery) ? roundDecimal(raw_delivery, 2) : null;
+        return {
+          symbol: `${r.SYMBOL}.NS`,
+          date: formatDate(date),
+          open: roundDecimal(parseFloat(r.OPEN)),
+          high: roundDecimal(parseFloat(r.HIGH)),
+          low: roundDecimal(parseFloat(r.LOW)),
+          close: roundDecimal(parseFloat(r.CLOSE)),
+          adjusted_close: roundDecimal(parseFloat(r.CLOSE)),
+          volume: parseInt(r.TOTTRDQTY, 10) || 0,
+          delivery_pct,
+          source: 'BHAVCOPY',
+        };
+      });
 
     logger.info(`${label}: Parsed ${candles.length} NIFTY 50 candles`);
     return candles;

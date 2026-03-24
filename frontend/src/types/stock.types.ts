@@ -2,6 +2,7 @@ import type { Signal } from './signal.types';
 
 export type RsiZone = 'OVERSOLD' | 'PULLBACK' | 'NEUTRAL' | 'OVERBOUGHT';
 export type MarketRegime = 'BULLISH' | 'SIDEWAYS' | 'BEARISH' | 'HIGH_VOLATILITY';
+export type VolumeTier = 'LOW' | 'NORMAL' | 'HIGH' | 'VERY_HIGH' | 'EXTREME';
 
 export interface Candle {
   date: string;
@@ -11,6 +12,7 @@ export interface Candle {
   close: number;
   adjusted_close: number;
   volume: number;
+  delivery_pct: number | null;
 }
 
 export interface CandleWithIndicators extends Candle {
@@ -45,6 +47,13 @@ export interface StockFeatures {
   z_score_20d: number | null;
   distance_from_52w_high_pct: number | null;
   relative_strength_vs_nifty: number | null;
+  rvol: number | null;
+  volume_tier: VolumeTier | null;
+  vwap: number | null;
+  vwap_distance_pct: number | null;
+  is_near_vwap: boolean;
+  is_high_delivery: boolean;
+  delivery_pct: number | null;
 }
 
 export interface StockDetail {

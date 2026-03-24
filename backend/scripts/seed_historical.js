@@ -1,71 +1,50 @@
 const path = require('path');
+const fs = require('fs');
 const dotenv = require('dotenv');
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const { fetchYahooCandles } = require('../src/services/data_ingestion/yahoo.service');
 const candleModel = require('../src/models/candle.model');
-const { nifty_50_symbols, nifty_index_symbol, india_vix_symbol } = require('../src/utils/symbols.util');
 const { testConnection, gracefulShutdown } = require('../src/config/db');
 const { logger } = require('../src/middlewares/logger.middleware');
-const { formatDate, getDateNYearsAgo } = require('../src/utils/date.util');
 
-const ALL_SYMBOLS = [...nifty_50_symbols, nifty_index_symbol, india_vix_symbol];
-const DELAY_BETWEEN_SYMBOLS_MS = 2000;
-const RATE_LIMIT_COOLDOWN_MS = 60000;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isRateLimited(msg) {
-  return msg.includes('Too Many Requests') || msg.includes('429');
-}
+const DATA_FILE = path.resolve(__dirname, 'yahoo_data.json');
 
 async function seedHistorical() {
   await testConnection();
 
-  const end_date = formatDate(new Date());
-  const start_date = formatDate(getDateNYearsAgo(3));
+  if (!fs.existsSync(DATA_FILE)) {
+    logger.error(`Data file not found: ${DATA_FILE}`);
+    logger.info('Run the download script first: python3 scripts/download_yahoo_data.py');
+    process.exit(1);
+  }
 
-  logger.info(`Seeding historical data from ${start_date} to ${end_date} for ${ALL_SYMBOLS.length} symbols`);
-  logger.info(`Delay between symbols: ${DELAY_BETWEEN_SYMBOLS_MS}ms`);
+  logger.info('Reading downloaded Yahoo data...');
+  const raw = fs.readFileSync(DATA_FILE, 'utf-8');
+  const all_data = JSON.parse(raw);
+
+  const symbols = Object.keys(all_data);
+  logger.info(`Found data for ${symbols.length} symbols`);
 
   let success_count = 0;
-  let fail_count = 0;
-  let consecutive_rate_limits = 0;
+  let total_candles = 0;
 
-  for (let i = 0; i < ALL_SYMBOLS.length; i++) {
-    const symbol = ALL_SYMBOLS[i];
+  for (let i = 0; i < symbols.length; i++) {
+    const symbol = symbols[i];
+    const candles = all_data[symbol];
+
     try {
-      logger.info(`[${i + 1}/${ALL_SYMBOLS.length}] Fetching: ${symbol}`);
-      const candles = await fetchYahooCandles(symbol, start_date, end_date);
-
+      logger.info(`[${i + 1}/${symbols.length}] Inserting ${candles.length} candles for ${symbol}`);
       if (candles.length > 0) {
         await candleModel.bulkUpsert(candles);
-        logger.info(`  Stored ${candles.length} candles for ${symbol}`);
         success_count++;
-        consecutive_rate_limits = 0;
-      } else {
-        logger.warn(`  No candles returned for ${symbol}`);
+        total_candles += candles.length;
       }
     } catch (error) {
       logger.error(`  Failed ${symbol}: ${error.message}`);
-      fail_count++;
-
-      if (isRateLimited(error.message)) {
-        consecutive_rate_limits++;
-        const cooldown = RATE_LIMIT_COOLDOWN_MS * consecutive_rate_limits;
-        logger.warn(`  Rate limited (${consecutive_rate_limits}x in a row). Cooling down ${Math.round(cooldown / 1000)}s...`);
-        await sleep(cooldown);
-      }
-    }
-
-    if (i < ALL_SYMBOLS.length - 1) {
-      await sleep(DELAY_BETWEEN_SYMBOLS_MS);
     }
   }
 
-  logger.info(`Seeding complete. Success: ${success_count}, Failed: ${fail_count}`);
+  logger.info(`Seeding complete. Symbols: ${success_count}/${symbols.length}, Total candles: ${total_candles}`);
   await gracefulShutdown();
 }
 

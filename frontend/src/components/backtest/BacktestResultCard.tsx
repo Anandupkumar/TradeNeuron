@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { formatPct, formatRR } from '../../utils/format';
+import { formatPct, formatRR, toNum } from '../../utils/format';
 import type { BacktestResult } from '../../types';
 
 interface BacktestResultCardProps {
@@ -16,8 +16,10 @@ function metricCell(label: string, value: string, color?: string) {
 }
 
 export function BacktestResultCard({ result }: BacktestResultCardProps) {
-  const win_color = result.win_rate_pct >= 50 ? 'text-emerald-400' : 'text-red-400';
-  const return_color = result.avg_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const win_rate = toNum(result.win_rate_pct) ?? 0;
+  const avg_return = toNum(result.avg_return_pct) ?? 0;
+  const win_color = win_rate >= 50 ? 'text-emerald-400' : 'text-red-400';
+  const return_color = avg_return >= 0 ? 'text-emerald-400' : 'text-red-400';
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
@@ -39,7 +41,7 @@ export function BacktestResultCard({ result }: BacktestResultCardProps) {
         {metricCell('Max Drawdown', formatPct(result.max_drawdown_pct, true), 'text-red-400')}
         {metricCell(
           'Sharpe Ratio',
-          result.sharpe_ratio == null ? '—' : result.sharpe_ratio.toFixed(2),
+          toNum(result.sharpe_ratio)?.toFixed(2) ?? '—',
         )}
       </div>
 
@@ -50,7 +52,7 @@ export function BacktestResultCard({ result }: BacktestResultCardProps) {
         )}
         {metricCell(
           'Avg Holding Days',
-          result.avg_holding_days == null ? '—' : `${result.avg_holding_days.toFixed(1)}d`,
+          (() => { const v = toNum(result.avg_holding_days); return v == null ? '—' : `${v.toFixed(1)}d`; })(),
         )}
       </div>
 

@@ -1,4 +1,4 @@
-const { NSE_HOLIDAYS } = require('../config/constants');
+const NSE_HOLIDAYS = require('../config/nse_holidays.json');
 
 function toIST(date) {
   const d = new Date(date);

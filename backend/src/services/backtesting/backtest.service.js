@@ -15,6 +15,7 @@ const { SCORING_WEIGHTS } = require('../../config/constants');
 const { calculateMetrics } = require('./metrics.service');
 const backtestResultModel = require('../../models/backtest_result.model');
 const { nifty_50_symbols, nifty_index_symbol } = require('../../utils/symbols.util');
+const nifty50CompositionModel = require('../../models/nifty50_composition.model');
 
 function evaluateOutcome(signal, future_candles) {
   const is_short = signal.direction === 'SHORT';
@@ -69,7 +70,17 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
 
   const nifty_candles = await candleModel.findBySymbolAndDateRange(nifty_index_symbol, train_start, test_end);
 
-  for (const symbol of nifty_50_symbols) {
+  let backtest_symbols = nifty_50_symbols;
+  const composition_count = await nifty50CompositionModel.count();
+  if (composition_count > 0) {
+    const historical = await nifty50CompositionModel.getSymbolsForDateRange(test_start, test_end);
+    if (historical.length > 0) {
+      backtest_symbols = historical;
+      logger.info(`Backtest: using historical composition (${historical.length} symbols)`);
+    }
+  }
+
+  for (const symbol of backtest_symbols) {
     const all_candles = await candleModel.findBySymbolAndDateRange(symbol, train_start, test_end);
     if (all_candles.length < 250) continue;
 

@@ -8,6 +8,7 @@ const featureModel = require('../../models/feature.model');
 const candleModel = require('../../models/candle.model');
 const { calculateScore } = require('../scoring/scoring.service');
 const { nifty_50_symbols } = require('../../utils/symbols.util');
+const signalOutcomeModel = require('../../models/signal_outcome.model');
 
 function computePositionSizing(entry_price, stop_loss, direction) {
   const risk_per_share = direction === 'SHORT'
@@ -39,7 +40,7 @@ function computePositionSizing(entry_price, stop_loss, direction) {
   };
 }
 
-async function deduplicateAndGenerate(symbol, date, raw_signals) {
+async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null) {
   if (!raw_signals || raw_signals.length === 0) return null;
 
   const direction = raw_signals[0].direction || 'LONG';
@@ -99,6 +100,23 @@ async function deduplicateAndGenerate(symbol, date, raw_signals) {
     return null;
   }
 
+  if (feature && feature.vwap_distance_pct != null) {
+    const vwap_dist = parseFloat(feature.vwap_distance_pct);
+    if (direction === 'LONG' && vwap_dist > 2.0) {
+      logger.info(`Signal for ${symbol} rejected: price stretched above VWAP (${vwap_dist}%)`);
+      return null;
+    }
+    if (direction === 'SHORT' && vwap_dist < -2.0) {
+      logger.info(`Signal for ${symbol} rejected: price stretched below VWAP (${vwap_dist}%)`);
+      return null;
+    }
+  }
+
+  if (nifty_pcr != null && direction === 'LONG' && nifty_pcr > 1.5) {
+    logger.info(`Signal for ${symbol} rejected: PCR ${nifty_pcr.toFixed(3)} > 1.5 — bearish options sentiment`);
+    return null;
+  }
+
   const confidence = await calculateScore(symbol, date);
   if (confidence < config.min_confidence) {
     logger.info(`Signal for ${symbol} rejected: confidence ${confidence} below ${config.min_confidence}`);
@@ -110,7 +128,9 @@ async function deduplicateAndGenerate(symbol, date, raw_signals) {
     return null;
   }
 
-  const total_active = await signalModel.countAllActive(direction);
+  const total_active_db = await signalModel.countAllActive(direction);
+  const total_active_batch = batch_signals.filter((s) => s.direction === direction).length;
+  const total_active = total_active_db + total_active_batch;
   if (total_active >= config.max_active_signals) {
     logger.info(`Signal for ${symbol} rejected: active ${direction} signal cap reached (${total_active}/${config.max_active_signals})`);
     return null;
@@ -118,7 +138,11 @@ async function deduplicateAndGenerate(symbol, date, raw_signals) {
 
   const sector = getSector(symbol);
   const sector_symbols = nifty_50_symbols.filter((s) => getSector(s) === sector);
-  const sector_active = await signalModel.countActiveBySector(sector_symbols, direction);
+  const sector_active_db = await signalModel.countActiveBySector(sector_symbols, direction);
+  const sector_active_batch = batch_signals.filter(
+    (s) => s.direction === direction && sector_symbols.includes(s.symbol)
+  ).length;
+  const sector_active = sector_active_db + sector_active_batch;
   if (sector_active >= config.max_sector_signals) {
     logger.info(`Signal for ${symbol} rejected: sector ${sector} ${direction} cap reached (${sector_active}/${config.max_sector_signals})`);
     return null;
@@ -149,6 +173,21 @@ async function deduplicateAndGenerate(symbol, date, raw_signals) {
   };
 }
 
+async function recordOutcome(signal, outcome, resolved_at) {
+  try {
+    const feature = await featureModel.findBySymbolAndDate(signal.symbol, formatDate(signal.date));
+    await signalOutcomeModel.create({
+      signal_id: signal.id,
+      outcome,
+      strategy: signal.strategy_source,
+      features_json: feature || null,
+      resolved_at,
+    });
+  } catch (error) {
+    logger.warn(`Failed to record outcome for signal ${signal.id}: ${error.message}`);
+  }
+}
+
 async function updateSignalStatuses() {
   const active_signals = await signalModel.findActive();
   let updated = 0;
@@ -163,39 +202,27 @@ async function updateSignalStatuses() {
     const stop_loss = parseFloat(signal.stop_loss);
     const target_price = parseFloat(signal.target_price);
     const is_short = signal.direction === 'SHORT';
+    let new_status = null;
 
     if (is_short) {
-      if (high >= stop_loss) {
-        await signalModel.updateStatus(signal.id, 'SL_HIT', today);
-        updated++;
-      } else if (low <= target_price) {
-        await signalModel.updateStatus(signal.id, 'TARGET_HIT', today);
-        updated++;
-      } else {
-        const signal_date = new Date(signal.date);
-        const current_date = new Date(candle.date);
-        const days_held = Math.floor((current_date - signal_date) / (1000 * 60 * 60 * 24));
-        if (days_held >= config.holding_period_days) {
-          await signalModel.updateStatus(signal.id, 'EXPIRED', today);
-          updated++;
-        }
-      }
+      if (high >= stop_loss) new_status = 'SL_HIT';
+      else if (low <= target_price) new_status = 'TARGET_HIT';
     } else {
-      if (low <= stop_loss) {
-        await signalModel.updateStatus(signal.id, 'SL_HIT', today);
-        updated++;
-      } else if (high >= target_price) {
-        await signalModel.updateStatus(signal.id, 'TARGET_HIT', today);
-        updated++;
-      } else {
-        const signal_date = new Date(signal.date);
-        const current_date = new Date(candle.date);
-        const days_held = Math.floor((current_date - signal_date) / (1000 * 60 * 60 * 24));
-        if (days_held >= config.holding_period_days) {
-          await signalModel.updateStatus(signal.id, 'EXPIRED', today);
-          updated++;
-        }
-      }
+      if (low <= stop_loss) new_status = 'SL_HIT';
+      else if (high >= target_price) new_status = 'TARGET_HIT';
+    }
+
+    if (!new_status) {
+      const signal_date = new Date(signal.date);
+      const current_date = new Date(candle.date);
+      const days_held = Math.floor((current_date - signal_date) / (1000 * 60 * 60 * 24));
+      if (days_held >= config.holding_period_days) new_status = 'EXPIRED';
+    }
+
+    if (new_status) {
+      await signalModel.updateStatus(signal.id, new_status, today);
+      await recordOutcome(signal, new_status, today);
+      updated++;
     }
   }
 

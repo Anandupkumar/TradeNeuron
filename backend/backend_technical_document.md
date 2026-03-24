@@ -33,7 +33,8 @@ backend/
     config/
       db.js                   # MySQL connection pool
       env.js                  # Environment variable loader and validation
-      constants.js            # App-wide constants (symbol list, thresholds)
+      constants.js            # App-wide constants (symbol list, thresholds, scoring weights)
+      nse_holidays.json       # NSE trading holidays per year (2024-2027+)
     models/
       candle.model.js
       indicator.model.js
@@ -45,10 +46,13 @@ backend/
       sentiment_flag.model.js
       paper_trade.model.js
       adaptive_threshold.model.js
+      signal_outcome.model.js       # Signal outcome snapshots for dynamic weight calibration
+      nifty50_composition.model.js  # Historical NIFTY 50 index composition
     services/
       data_ingestion/
         yahoo.service.js      # Yahoo Finance fetcher
-        bhavcopy.service.js   # NSE Bhavcopy CSV fallback
+        bhavcopy.service.js   # NSE Bhavcopy CSV (fallback + delivery %)
+        fno.service.js        # NSE F&O option chain + PCR computation
         validation.service.js # Data completeness checks
       indicators/
         ema.service.js
@@ -69,7 +73,7 @@ backend/
         breakdown.strategy.js
         index.js              # Runs all strategies, collects raw signals
       scoring/
-        scoring.service.js    # Weight-based scoring + normalization
+        scoring.service.js    # Weight-based scoring + tiered RVOL + adaptive weights
       signals/
         signal.service.js     # Final signal generation + deduplication
       fundamentals/
@@ -77,7 +81,7 @@ backend/
         fundamental.filter.js    # Pass/fail gate logic
       sentiment/
         news.service.js          # Fetches RSS headlines per symbol
-        sentiment.service.js     # Keyword-based sentiment scoring
+        sentiment.service.js     # FinBERT (primary) + keyword-based (fallback) sentiment scoring
       backtesting/
         backtest.service.js   # Walk-forward backtester
         metrics.service.js    # Win rate, Sharpe, drawdown calculations
@@ -99,14 +103,17 @@ backend/
       auth.middleware.js
       rate_limiter.middleware.js
     utils/
-      date.util.js            # IST helpers, trading day checks, holiday calendar
+      date.util.js            # IST helpers, trading day checks (loads nse_holidays.json)
       math.util.js            # Rounding, percentage calculations
       retry.util.js           # Exponential backoff wrapper
       symbols.util.js         # Canonical symbol list + sector mapping
+      notify.util.js          # Telegram pipeline alert notifications
       errors.js               # Custom error classes (AppError, DataFetchError, etc.)
     jobs/
-      daily_pipeline.job.js   # Full daily pipeline orchestration
+      daily_pipeline.job.js   # Full daily pipeline orchestration (with Telegram alerts)
       weekly_fundamentals.job.js  # Weekly fundamental data refresh
+      weekly_weight_calibration.job.js  # Sunday cron: recalibrates scoring weights from outcomes
+      cron.js                 # Registers all cron jobs (daily pipeline, weekly fundamentals, weight calibration)
     validations/
       signal.validation.js
       stock.validation.js
@@ -129,6 +136,11 @@ backend/
     015_add_z_score_to_features.sql
     016_add_sentiment_upgrade_columns.sql
     017_add_sell_signals_and_direction.sql
+    018_add_rvol_to_features.sql
+    019_add_vwap_to_features.sql
+    020_add_delivery_pct.sql
+    021_create_signal_outcomes.sql
+    022_create_nifty50_composition.sql
   tests/
     unit/
       indicators/
@@ -146,9 +158,14 @@ backend/
       fundamentals/             # quoteSummary fixture responses
       rss/                      # RSS XML fixture responses
   scripts/
-    seed_historical.js        # One-time backfill of 3 years data
+    download_yahoo_data.py    # Python script: downloads OHLCV data via yfinance
+    seed_historical.js        # Reads yahoo_data.json and bulk-inserts into MySQL
+    yahoo_data.json           # Downloaded data cache (gitignored)
     run_backtest.js           # Manual backtest trigger
     migrate.js                # Run SQL migrations
+    sentiment_server.py       # FinBERT FastAPI microservice for sentiment analysis
+    requirements.txt          # Python dependencies for sentiment_server.py
+    seed_nifty50_composition.js  # Seeds historical NIFTY 50 composition table
   .env.example
   package.json
   server.js                   # Express entry point
@@ -164,7 +181,7 @@ backend/
 |---------|---------|---------|
 | express | ^4.x | HTTP server and routing |
 | mysql2 | ^3.x | MySQL driver with promise API and connection pooling |
-| yahoo-finance2 | ^2.x | Yahoo Finance historical data fetcher |
+| axios | ^1.x | HTTP client for Yahoo Finance, NSE Bhavcopy, and FinBERT calls |
 | technicalindicators | ^3.x | EMA, RSI, MACD, ATR calculations |
 | node-cron | ^3.x | Cron scheduling for daily pipeline |
 | dotenv | ^16.x | Environment variable management |
@@ -172,11 +189,31 @@ backend/
 | express-rate-limit | ^7.x | API rate limiting |
 | joi | ^17.x | Request/query parameter validation |
 | csv-parse | ^5.x | NSE Bhavcopy CSV parsing |
-| axios | ^1.x | HTTP client for NSE Bhavcopy download |
 | helmet | ^7.x | HTTP security headers |
 | cors | ^2.x | Cross-origin resource sharing |
 | uuid | ^9.x | Unique ID generation for favorites |
 | rss-parser | ^3.x | Google News RSS feed parsing for sentiment layer |
+| tough-cookie | ^6.x | Cookie jar for NSE session handling (F&O option chain) |
+| axios-cookiejar-support | ^6.x | Axios adapter for tough-cookie integration |
+| concurrently | ^9.x | Run Node.js and FinBERT servers in parallel during dev/deploy |
+
+### Python Dependencies (FinBERT Microservice)
+
+| Package | Purpose |
+|---------|---------|
+| fastapi | HTTP server for FinBERT sentiment endpoint |
+| uvicorn | ASGI server to run FastAPI |
+| transformers | HuggingFace library for ProsusAI/finbert model |
+| torch (CPU) | PyTorch backend for transformer inference |
+
+`scripts/requirements.txt` includes `--extra-index-url https://download.pytorch.org/whl/cpu` to install the CPU-only build of torch (~200 MB instead of the full GPU build at ~2 GB).
+
+Install via:
+```bash
+pip3 install --user --break-system-packages -r scripts/requirements.txt
+```
+
+The `--break-system-packages` flag is required on Debian/Ubuntu systems with PEP 668 externally-managed Python. On systems with a virtual environment, use `pip install -r scripts/requirements.txt` instead.
 
 ### Dev Dependencies
 
@@ -257,6 +294,13 @@ MAX_POSITION_PCT_SHORT=5
 
 # ─── Finnhub (Optional) ───
 FINNHUB_API_KEY=
+
+# ─── Telegram Pipeline Alerts (Optional, fail-open) ───
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+
+# ─── FinBERT Sentiment Microservice (Optional, falls back to keyword scoring) ───
+FINBERT_URL=http://127.0.0.1:8765
 
 # ─── Logging ───
 LOG_LEVEL=info
@@ -347,6 +391,7 @@ CREATE TABLE candles (
 - `adjusted_close` stores the split/dividend-adjusted price from Yahoo's `adjClose` field. All indicator calculations use this column, not `close`.
 - `source` tracks data provenance for audit and debugging.
 - `UNIQUE(symbol, date)` prevents duplicates during re-ingestion or fallback recovery.
+- `delivery_pct` (added in migration 020) stores NSE delivery percentage from Bhavcopy CSV. NULL if Bhavcopy data is unavailable for that date.
 
 ### 4.2 indicators
 
@@ -407,6 +452,9 @@ CREATE TABLE features (
 - Boolean features stored as `TINYINT(1)` for MySQL compatibility.
 - `rsi_zone` is an ENUM because the thresholds are fixed at calculation time and strategies query by zone name.
 - Features are persisted (not ephemeral) so backtesting can replay exact historical feature state without recalculation.
+- `rvol` and `volume_tier` (migration 018) provide continuous relative volume scoring replacing binary `is_volume_spike`.
+- `vwap`, `vwap_distance_pct`, `is_near_vwap` (migration 019) enable VWAP-based signal quality filtering.
+- `is_high_delivery` (migration 020) flags high delivery percentage (>50%) from NSE Bhavcopy data.
 
 ### 4.4 signals
 
@@ -653,16 +701,88 @@ ALTER TABLE signals ADD COLUMN direction ENUM('LONG', 'SHORT') NOT NULL DEFAULT 
 
 **Key decision:** `direction` is `LONG` for BUY signals, `SHORT` for SELL signals. Existing signals default to LONG.
 
+### 4.18 RVOL and volume tier (migration 018)
+
+```sql
+ALTER TABLE features
+  ADD COLUMN rvol DECIMAL(5,2) DEFAULT NULL,
+  ADD COLUMN volume_tier ENUM('normal','elevated','high','extreme') DEFAULT 'normal';
+```
+
+**Key decision:** `rvol = volume / volume_sma_20`. `volume_tier` classifies: extreme (>=3.0), high (>=2.0), elevated (>=1.3), normal. Replaces the flat `is_volume_spike` weight in scoring with tiered scores.
+
+### 4.19 VWAP columns (migration 019)
+
+```sql
+ALTER TABLE features
+  ADD COLUMN vwap DECIMAL(10,2) DEFAULT NULL,
+  ADD COLUMN vwap_distance_pct DECIMAL(5,2) DEFAULT NULL,
+  ADD COLUMN is_near_vwap BOOLEAN DEFAULT NULL;
+```
+
+**Key decision:** `vwap_distance_pct = ((close - vwap) / vwap) * 100`. Signals where price is stretched >2% from VWAP are filtered out in `signal.service.js`.
+
+### 4.20 Delivery percentage (migration 020)
+
+```sql
+ALTER TABLE candles ADD COLUMN delivery_pct DECIMAL(5,2) DEFAULT NULL;
+ALTER TABLE features ADD COLUMN is_high_delivery BOOLEAN DEFAULT NULL;
+```
+
+**Key decision:** `is_high_delivery = delivery_pct > 50`. Fail-open (NULL treated as unknown). Adds +10 score for breakout strategies when delivery is high.
+
+### 4.21 Signal outcomes and adaptive weights (migration 021)
+
+```sql
+CREATE TABLE IF NOT EXISTS signal_outcomes (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    signal_id   BIGINT UNSIGNED NOT NULL,
+    outcome     ENUM('TARGET_HIT','SL_HIT','EXPIRED') NOT NULL,
+    strategy    VARCHAR(100),
+    features_json JSON,
+    resolved_at DATE NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE INDEX uq_signal_id (signal_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE adaptive_thresholds
+  ADD COLUMN weight_trend    DECIMAL(5,2) DEFAULT NULL,
+  ADD COLUMN weight_rsi      DECIMAL(5,2) DEFAULT NULL,
+  ADD COLUMN weight_volume   DECIMAL(5,2) DEFAULT NULL,
+  ADD COLUMN weight_breakout DECIMAL(5,2) DEFAULT NULL;
+```
+
+**Key decision:** `signal_outcomes` snapshots the feature state when a signal resolves, enabling the weekly weight calibration job to compute win rates per feature and adjust scoring weights dynamically. Weight columns on `adaptive_thresholds` store the calibrated weights (NULL = use static defaults from `constants.js`).
+
+### 4.22 NIFTY 50 historical composition (migration 022)
+
+```sql
+CREATE TABLE IF NOT EXISTS nifty50_composition (
+    id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    symbol       VARCHAR(20) NOT NULL,
+    added_date   DATE NOT NULL,
+    removed_date DATE DEFAULT NULL,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_symbol (symbol),
+    INDEX idx_dates (added_date, removed_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**Key decision:** Tracks which stocks were in the NIFTY 50 index at any point in time. Used by the backtesting engine to include historically removed stocks (survivorship-bias-free backtesting). `removed_date = NULL` means the stock is currently in the index.
+
 ### ER Diagram
 
 ```
-candles 1──* indicators       (symbol + date)
-candles 1──* features         (symbol + date)
-candles 1──* signals          (symbol + date)
-signals 1──* paper_trades     (signal_id)
-favorites *──1 candles        (symbol, logical reference)
-fundamentals *──1 candles     (symbol, logical reference)
-sentiment_flags *──1 candles  (symbol, logical reference)
+candles 1──* indicators            (symbol + date)
+candles 1──* features              (symbol + date)
+candles 1──* signals               (symbol + date)
+signals 1──* paper_trades          (signal_id)
+signals 1──1 signal_outcomes       (signal_id)
+favorites *──1 candles             (symbol, logical reference)
+fundamentals *──1 candles          (symbol, logical reference)
+sentiment_flags *──1 candles       (symbol, logical reference)
+nifty50_composition                (standalone, referenced by backtest.service.js)
+adaptive_thresholds                (stores adaptive RSI/volume thresholds + scoring weights)
 ```
 
 ### Migration Strategy
@@ -684,20 +804,31 @@ FUNCTION runMigrations()
     CREATE _migrations table IF NOT EXISTS
 
     applied = SELECT filename FROM _migrations
-    pending = LIST files in migrations/ sorted alphabetically
+    pending = LIST .sql files in migrations/ sorted alphabetically
               FILTER OUT any already in applied set
 
     FOR each file in pending:
-        content = READ file
-        up_sql  = EXTRACT everything before "-- DOWN" marker (or entire file if no marker)
-        EXECUTE up_sql inside a transaction
-        INSERT INTO _migrations (filename) VALUES (file.name)
-        LOG info: "Applied migration: {file.name}"
+        sql = READ entire file
+        BEGIN TRANSACTION
+        TRY
+            EXECUTE sql
+            INSERT INTO _migrations (filename) VALUES (file.name)
+            COMMIT
+            LOG "Applied: {file.name}"
+        CATCH error
+            ROLLBACK
+            IF error.errno IN (1050, 1060, 1061)
+                // Table/column/key already exists — treat as already applied
+                INSERT INTO _migrations (filename) VALUES (file.name)
+                LOG "Skipped: {file.name} (already applied)"
+            ELSE
+                LOG "FAILED: {file.name}"
+                THROW error
 
-    LOG info: "Migrations complete. {pending.length} applied, {applied.length} already up to date."
+    LOG "All migrations applied successfully."
 ```
 
-- Each migration file may include a `-- DOWN` section for rollback SQL. A separate `scripts/rollback.js` can parse and execute the DOWN section.
+- **Idempotent handling:** MySQL errors 1050 (table exists), 1060 (duplicate column), and 1061 (duplicate key) are treated as "already applied". The migration is recorded in `_migrations` and the runner continues. This handles cases where schema changes were applied manually or in a previous session without being tracked.
 - Migrations run inside transactions so a failed migration does not leave the DB in a partial state.
 - The app does NOT auto-run migrations on startup. Migrations are always triggered manually via `node scripts/migrate.js`.
 
@@ -801,7 +932,7 @@ The `&` character in `M&M.NS` is a reserved character in URLs and query strings.
 The symbol list is maintained as a constant in code. When NIFTY 50 rebalances (typically in March and September):
 
 1. Update the list in `symbols.util.js`.
-2. Run `scripts/seed_historical.js` for any newly added symbols.
+2. Run `npm run download` then `npm run seed` for any newly added symbols.
 3. Removed symbols retain their historical data in the database but stop receiving new candles.
 4. Backtest runs should specify the constituent list that was active during the test period.
 
@@ -813,26 +944,60 @@ The symbol list is maintained as a constant in code. When NIFTY 50 rebalances (t
 
 **File:** `src/services/data_ingestion/yahoo.service.js`
 
+The Yahoo service uses **direct Axios HTTP calls** to the Yahoo Finance v8 API (not the `yahoo-finance2` npm library, which has cookie/crumb authentication issues and frequent rate-limit failures). A custom Axios instance sends a browser-like `User-Agent` header for reliability.
+
 ```
 FUNCTION fetchYahooCandles(symbol, start_date, end_date)
     RETRY up to YAHOO_MAX_RETRIES with exponential backoff:
-        result = yahooFinance.historical(symbol, { period1: start_date, period2: end_date, interval: '1d' })
+        GET /v8/finance/chart/{symbol}?interval=1d&period1={unix}&period2={unix}
         WAIT YAHOO_THROTTLE_MS between requests
+    PARSE chart_result.indicators.quote[0] for OHLCV + adjclose
     RETURN array of { date, open, high, low, close, adjusted_close, volume }
+
+FUNCTION fetchQuoteSummary(symbol)
+    GET /v10/finance/quoteSummary/{symbol}?modules=defaultKeyStatistics,financialData,...
+    RETURN summary object (used by weekly fundamentals job)
+
+FUNCTION probeYahooApi()
+    GET /v8/finance/spark?symbols=TCS.NS&range=1d&interval=1d  (lightweight, not rate-limited)
+    RETURN true if HTTP 200, false otherwise
 ```
+
+**Probe function:** `probeYahooApi()` uses the `/v8/finance/spark` endpoint (which has different rate limits than `/v8/finance/chart`) to check whether Yahoo is reachable before attempting bulk downloads. The daily pipeline uses this probe in Step 1.
 
 **Per-symbol processing:**
 1. Determine `start_date`: latest date in candles table for this symbol + 1 day (or 3 years ago if first run).
 2. Determine `end_date`: today.
-3. Fetch from Yahoo.
-4. For each candle row, map: `adjusted_close` = Yahoo's `adjClose` field.
+3. Fetch from Yahoo via direct HTTP.
+4. Map `chart_result.indicators.quote[0]` fields to OHLCV.
 5. Upsert into `candles` table using `INSERT ... ON DUPLICATE KEY UPDATE`.
 
 **Throttling:** 300ms delay between symbol fetches to avoid Yahoo rate limits.
 
-**Retry logic:** on HTTP error or timeout, retry up to 3 times with backoff: 1s, 2s, 4s.
+**Retry logic:** On HTTP error or timeout, retry up to 3 times with backoff: 1s, 2s, 4s. On HTTP 429 (rate limit), backoff increases to 30s+ and scales per attempt.
 
-### 6.2 NSE Bhavcopy (Fallback)
+### 6.1.1 Historical Data Download (Python)
+
+**File:** `scripts/download_yahoo_data.py`
+
+For initial data seeding, a **Python script using `yfinance`** is used instead of the Node.js Yahoo service. The Python `yfinance` library handles Yahoo's cookie/crumb authentication more robustly and is not subject to the same rate-limiting issues.
+
+```
+WORKFLOW:
+1. npm run download    →  python3 scripts/download_yahoo_data.py
+                           Downloads 3 years of daily OHLCV for all 52 symbols
+                           Saves to scripts/yahoo_data.json (~38K candles)
+                           Takes ~90 seconds
+
+2. npm run seed        →  node scripts/seed_historical.js
+                           Reads yahoo_data.json
+                           Bulk-upserts all candles into MySQL
+                           Takes ~1 second
+```
+
+**Why two steps?** Yahoo aggressively rate-limits the v8/finance/chart API. The Python `yfinance` library uses a different authentication flow (cookie consent + crumb extraction) that bypasses these limits. The downloaded JSON file is a portable snapshot that can be re-seeded without re-downloading.
+
+### 6.2 NSE Bhavcopy (Fallback + Delivery Percentage)
 
 **File:** `src/services/data_ingestion/bhavcopy.service.js`
 
@@ -840,15 +1005,49 @@ FUNCTION fetchYahooCandles(symbol, start_date, end_date)
 - Yahoo returns 0 rows for a symbol.
 - Yahoo returns data with > 5% missing candles (compared to expected trading days).
 - Yahoo fetch fails after all retries.
+- Called as pipeline Step 1b to enrich candles with delivery percentage data.
 
 **Process:**
 1. Download the EOD bhavcopy CSV from NSE for the target date.
-   - URL pattern: `https://nsearchives.nseindia.com/content/cm/BhsecYYMMDD.csv` (format varies; handle both old and new NSE archive formats).
+   - URL pattern: `https://archives.nseindia.com/products/content/sec_bhavdata_full_{DDMMYYYY}.csv`
 2. Parse CSV using `csv-parse`.
 3. Filter rows to only NIFTY 50 symbols.
-4. Map columns: `OPEN`, `HIGH`, `LOW`, `CLOSE`, `TOTTRDQTY` -> `volume`.
+4. Map columns: `OPEN`, `HIGH`, `LOW`, `CLOSE`, `TOTTRDQTY` -> `volume`, `DELIV_PER` -> `delivery_pct`.
 5. Bhavcopy does not provide adjusted close -- set `adjusted_close = close` and flag with `source = 'BHAVCOPY'`.
-6. Upsert into candles table.
+6. Upsert into candles table (uses `COALESCE` for `delivery_pct` to avoid overwriting Yahoo OHLCV data when used as enrichment).
+
+**Delivery percentage enrichment:** When called as pipeline Step 1b (after Yahoo fetch), the primary goal is to extract the `DELIV_PER` column and update the `delivery_pct` field on existing candle rows. This data powers the `is_high_delivery` feature.
+
+### 6.4 NSE F&O Option Chain (PCR)
+
+**File:** `src/services/data_ingestion/fno.service.js`
+
+**Purpose:** Fetch the NIFTY option chain from NSE and compute the Put-Call Ratio (PCR). Used as a macro sentiment filter in signal generation.
+
+**Process:**
+1. Create an Axios client with `tough-cookie` cookie jar support.
+2. Fetch `https://www.nseindia.com` first to acquire session cookies (NSE requires valid cookies).
+3. Hit the option chain endpoint: `https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY`.
+4. Parse the response to extract total Put OI and total Call OI.
+5. Compute `PCR = totalPutOI / totalCallOI`.
+
+```
+FUNCTION fetchPCR(symbol = 'NIFTY')
+    TRY:
+        option_chain = await fetchOptionChain(symbol)
+        pcr = computePCR(option_chain)
+        RETURN pcr
+    CATCH:
+        LOG warn: "PCR fetch failed"
+        RETURN null       // fail-open
+
+FUNCTION computePCR(option_chain_data)
+    total_put_oi  = SUM(row.PE.openInterest) for all rows
+    total_call_oi = SUM(row.CE.openInterest) for all rows
+    RETURN total_call_oi > 0 ? total_put_oi / total_call_oi : null
+```
+
+**PCR interpretation:** PCR > 1.5 indicates heavy put buying (bearish options sentiment). Bullish (LONG) signals are suppressed when NIFTY PCR exceeds this threshold. The filter is fail-open — if NSE is unavailable, PCR is null and no signals are suppressed.
 
 ### 6.3 Data Validation
 
@@ -856,32 +1055,22 @@ FUNCTION fetchYahooCandles(symbol, start_date, end_date)
 
 **NSE Holiday Calendar:**
 
-`countTradingDays()` depends on an accurate NSE holiday list. Holidays are defined in `src/config/constants.js`:
+`countTradingDays()` depends on an accurate NSE holiday list. Holidays are stored in a standalone JSON file at `src/config/nse_holidays.json`, keyed by year (2024-2027+). This makes annual updates simpler — edit a single JSON file each January from the NSE official circular.
 
-```javascript
-const nse_holidays_2026 = [
-  '2026-01-26',  // Republic Day
-  '2026-03-10',  // Maha Shivaratri
-  '2026-03-17',  // Holi
-  '2026-03-30',  // Id-Ul-Fitr (tentative)
-  '2026-04-02',  // Ram Navami
-  '2026-04-03',  // Good Friday
-  '2026-04-14',  // Dr. Ambedkar Jayanti
-  '2026-05-01',  // Maharashtra Day
-  '2026-06-05',  // Id-Ul-Adha (tentative)
-  '2026-07-06',  // Muharram
-  '2026-08-15',  // Independence Day
-  '2026-08-16',  // Parsi New Year
-  '2026-09-04',  // Milad-Un-Nabi
-  '2026-10-02',  // Mahatma Gandhi Jayanti
-  '2026-10-20',  // Diwali (Laxmi Pujan)
-  '2026-10-21',  // Diwali Balipratipada
-  '2026-11-04',  // Guru Nanak Jayanti
-  '2026-12-25',  // Christmas
-];
+```json
+{
+  "2026": [
+    "2026-01-26", "2026-03-10", "2026-03-17", "2026-03-30",
+    "2026-04-02", "2026-04-03", "2026-04-14", "2026-05-01",
+    "2026-06-05", "2026-07-06", "2026-08-15", "2026-08-16",
+    "2026-09-04", "2026-10-02", "2026-10-20", "2026-10-21",
+    "2026-11-04", "2026-12-25"
+  ],
+  "2027": []
+}
 ```
 
-This list must be updated annually (NSE publishes the calendar each December for the next year). Past-year holidays for backtesting are stored in a multi-year map keyed by year. `src/utils/date.util.js` exposes:
+Both `src/utils/date.util.js` and `src/config/constants.js` import from this JSON file. `src/utils/date.util.js` exposes:
 
 ```
 FUNCTION isTradingDay(date)
@@ -1002,6 +1191,23 @@ volume_change = (today_volume - volume_sma_20) / volume_sma_20
 
 A `volume_change` of 0.5 means today's volume is 50% above the 20-day average.
 
+### 7.6 Rolling VWAP (Volume Weighted Average Price)
+
+**Calculated manually** in `src/services/indicators/volume.service.js`:
+
+```
+FUNCTION computeRollingVWAP(candles, period = 20)
+    FOR each candle at index i:
+        window = candles[max(0, i-period+1) .. i]
+        TP = (high + low + close) / 3     // Typical Price
+        sum_tpv = SUM(TP * volume) for window
+        sum_vol = SUM(volume) for window
+        vwap = sum_vol > 0 ? sum_tpv / sum_vol : close
+    RETURN array of { date, vwap }
+```
+
+VWAP is not stored in the `indicators` table — it is computed inline during feature extraction and stored as `vwap`, `vwap_distance_pct`, and `is_near_vwap` in the `features` table.
+
 ### Indicator Calculation Order
 
 All indicators are independent and can be calculated in parallel per symbol. The orchestrator:
@@ -1025,7 +1231,9 @@ Features are derived from indicators and candle data. Computed per symbol per da
 |---------|--------|------|-------|
 | Uptrend | `is_uptrend` | boolean | `adjusted_close > ema_50` |
 | RSI Zone | `rsi_zone` | enum | RSI < 30 = OVERSOLD, 30-45 = PULLBACK, 45-65 = NEUTRAL, > 65 = OVERBOUGHT |
-| Volume Spike | `is_volume_spike` | boolean | `volume > 1.5 * volume_sma_20` |
+| Volume Spike | `is_volume_spike` | boolean | `volume > 1.5 * volume_sma_20` (legacy, kept for backward compat) |
+| RVOL | `rvol` | decimal | `volume / volume_sma_20` — continuous relative volume ratio |
+| Volume Tier | `volume_tier` | enum | `extreme` (>=3.0), `high` (>=2.0), `elevated` (>=1.3), `normal` |
 | Breakout | `is_breakout` | boolean | `adjusted_close > MAX(high) of last 20 candles` (excluding current) |
 | Near Support | `near_support` | boolean | see below |
 | Distance from 52w High | `distance_from_52w_high_pct` | decimal | `(max_high_252d - adjusted_close) / max_high_252d * 100` |
@@ -1033,6 +1241,10 @@ Features are derived from indicators and candle data. Computed per symbol per da
 | Liquidity | `is_liquid` | boolean | `volume_sma_20 >= MIN_LIQUIDITY_VOLUME` (default: 500,000) |
 | Ranging | `is_ranging` | boolean | `(price_range_20d / (atr_20d * 20)) < 1.5 AND NOT is_breakout AND rsi_zone IN ('NEUTRAL', 'PULLBACK')` |
 | Z-Score | `z_score_20d` | decimal | `(adjusted_close - mean_20d) / stddev_20d` — distance from 20-day mean in standard deviations |
+| VWAP | `vwap` | decimal | 20-period rolling VWAP (see Section 7.6) |
+| VWAP Distance | `vwap_distance_pct` | decimal | `((close - vwap) / vwap) * 100` — positive = above VWAP |
+| Near VWAP | `is_near_vwap` | boolean | `ABS(vwap_distance_pct) < 2.0` |
+| High Delivery | `is_high_delivery` | boolean | `delivery_pct > 50` (from NSE Bhavcopy, fail-open if null) |
 
 ### Near Support Calculation
 
@@ -1112,13 +1324,47 @@ z_score_20d = (adjusted_close - mean_20d) / stddev_20d
 
 Positive z-score means price is above mean. Negative means below. A z-score of -2.0 means the stock is 2 standard deviations below its 20-day mean.
 
+### RVOL and Volume Tier
+
+```
+rvol = (volume_sma_20 > 0) ? volume / volume_sma_20 : null
+
+volume_tier =
+    rvol >= 3.0 ? 'extreme' :
+    rvol >= 2.0 ? 'high'    :
+    rvol >= 1.3 ? 'elevated': 'normal'
+```
+
+RVOL provides a continuous measure of volume intensity. The tiered label maps to proportional scoring weights (see Section 12). The legacy `is_volume_spike` is still computed and stored for backward compatibility.
+
+### VWAP Distance
+
+```
+vwap_data = computeRollingVWAP(candles, 20)    // returns array of { date, vwap }
+vwap = vwap_data[i].vwap
+vwap_distance_pct = ((adjusted_close - vwap) / vwap) * 100
+is_near_vwap = ABS(vwap_distance_pct) < 2.0
+```
+
+Used as a signal quality filter in `signal.service.js` — signals where price is stretched beyond 2% from VWAP are rejected.
+
+### High Delivery
+
+```
+delivery_pct = candle.delivery_pct    // from NSE Bhavcopy CSV (may be null)
+is_high_delivery = (delivery_pct != null) ? delivery_pct > 50 : null
+```
+
+Delivery percentage above 50% indicates genuine institutional buying rather than intraday speculation. Adds a scoring bonus for breakout strategies.
+
 ### Computation Flow
 
 ```
 FOR each symbol:
     FETCH latest candles + indicators for symbol
     FETCH NIFTY index candles (for relative strength)
-    COMPUTE all features
+    COMPUTE rolling VWAP from candle data
+    COMPUTE all features (including RVOL, volume_tier, VWAP distance, is_high_delivery)
     UPSERT into features table
 ```
 
@@ -1406,7 +1652,7 @@ The fundamental filter is a **pass/fail gate** that rejects technically valid si
 
 ### Data Source
 
-`yahoo-finance2` already supports `quoteSummary()` which returns financial statements, key statistics, and ownership data. No new dependency is needed.
+The Yahoo service uses a direct Axios call to `/v10/finance/quoteSummary/{symbol}` which returns financial statements, key statistics, and ownership data. No additional dependency is needed.
 
 ```
 FUNCTION fetchFundamentals(symbol)
@@ -1548,7 +1794,51 @@ FUNCTION scoreSentiment(symbol, headlines)
     RETURN { sentiment: 'NEUTRAL', headline: null, confidence: 'HIGH', source: 'GOOGLE_NEWS_RSS' }
 ```
 
-### Tier 2: Finnhub Confirmation (Optional)
+### Tier 2: FinBERT Sentiment Analysis (Primary, Optional)
+
+**File:** `scripts/sentiment_server.py` (Python FastAPI microservice)
+
+When the FinBERT microservice is running (configured via `FINBERT_URL` in `.env`, default `http://127.0.0.1:8765`), it replaces keyword-based sentiment as the primary analysis method. The Node.js `sentiment.service.js` sends headlines to `POST /sentiment` and receives per-headline sentiment labels with confidence scores.
+
+```
+FUNCTION queryFinBERT(headlines)
+    TRY:
+        response = POST FINBERT_URL/sentiment { headlines }
+        IF any result has label == 'negative' AND score > 0.7
+            RETURN 'NEGATIVE'
+        RETURN 'NEUTRAL'
+    CATCH:
+        LOG warn: "FinBERT unavailable, falling back to keyword scoring"
+        RETURN null   // triggers keyword-based fallback
+
+FUNCTION filterBySentiment(symbol, headlines)
+    finbert_result = queryFinBERT(headlines)
+    IF finbert_result != null
+        // FinBERT is the primary source
+        sentiment = finbert_result
+        source = 'FINBERT'
+    ELSE
+        // Fallback to keyword-based scoring
+        sentiment = scoreSentiment(symbol, headlines)
+        source = 'GOOGLE_NEWS_RSS'
+    UPSERT sentiment_flag with source
+    RETURN sentiment
+```
+
+**Starting the FinBERT server:**
+
+The FinBERT server is started automatically alongside the Node.js server when using `npm run dev` or `./deploy.sh`. To start it manually:
+
+```bash
+cd backend
+python3 scripts/sentiment_server.py     # listens on port 8765 (FINBERT_PORT env var)
+```
+
+The first run downloads the ProsusAI/finbert model (~500 MB, cached in `~/.cache/huggingface/` after that). The server exposes `POST /sentiment` and `GET /health` endpoints.
+
+If the FinBERT server is unavailable, the backend falls back to keyword-based sentiment scoring automatically. The `FINBERT_URL` env var (default `http://127.0.0.1:8765`) controls the connection target.
+
+### Tier 3: Finnhub Confirmation (Optional)
 
 When `FINNHUB_API_KEY` is set in `.env`, RSS NEGATIVE results are verified against Finnhub's pre-classified sentiment before suppressing a signal:
 
@@ -1601,37 +1891,77 @@ FOR each [symbol, signals] in raw_signals:
 
 ### Weight Configuration
 
-| Factor | Weight | Condition to Score |
+**Static base weights** (stored in `src/config/constants.js`):
+
+| Factor | Base Weight | Condition to Score |
 |--------|--------|--------------------|
 | Trend Alignment | +30 | `is_uptrend = true` AND `ema_20 > ema_50` |
 | RSI Pullback | +20 | `rsi_zone = 'PULLBACK'` |
-| Volume Spike | +30 | `is_volume_spike = true` |
+| Volume (tiered) | 0-30 | Based on `volume_tier`: extreme=30, high=20, elevated=10, normal=0 |
 | Breakout | +20 | `is_breakout = true` |
+| High Delivery Bonus | +10 | `is_high_delivery = true` AND `is_breakout = true` |
 
-These weights are stored in `src/config/constants.js` and can be adjusted based on backtest results.
+**Volume tier scores** replace the flat `is_volume_spike = +30`:
 
-**Weight-Gate Implication:** With the current weights summing to 100 and `MIN_CONFIDENCE` set to 70, a signal must score at least 70 points to pass the gate. In practice this means at least 3 of the 4 factors must be true (the minimum 3-factor combination scores 70: Trend 30 + RSI 20 + Breakout 20 = 70). If weights are retuned, verify that the gate threshold is still achievable -- for example, if Trend is reduced to 20, the max 3-factor score drops to 60, making the 70 gate impossible without all 4 factors.
+| Volume Tier | RVOL Range | Score |
+|-------------|-----------|-------|
+| extreme | >= 3.0 | +30 |
+| high | >= 2.0 | +20 |
+| elevated | >= 1.3 | +10 |
+| normal | < 1.3 | +0 |
+
+**Delivery bonus:** When a breakout signal has high delivery percentage (>50%), an additional +10 points are added, rewarding confirmed institutional buying.
+
+### Dynamic Weight Calibration (Adaptive Scoring)
+
+At pipeline start, the scoring engine loads weights from the `adaptive_thresholds` table (symbol `_GLOBAL_`). If adaptive weights exist (populated by the weekly calibration job), they replace the static base weights. If not available, static defaults are used.
+
+```
+FUNCTION loadAdaptiveWeights()
+    query adaptive_thresholds WHERE symbol = '_GLOBAL_' AND weight_trend IS NOT NULL
+    IF found: return { trend, rsi, volume, breakout } from weight columns
+    ELSE: return null (use static SCORING_WEIGHTS)
+```
+
+The **weekly weight calibration job** (`weekly_weight_calibration.job.js`, runs Sunday 2 AM IST) queries the last 90 days of `signal_outcomes`, computes win rates per feature, and adjusts weights using the formula: `adjusted_weight = BASE_WEIGHT * (0.5 + winRate)`. This makes the scoring engine self-calibrating based on actual signal performance. Requires at least 30 resolved outcomes to activate.
 
 ### Scoring Algorithm
 
 ```
-FUNCTION calculateScore(symbol, date, raw_signal)
-    features = FETCH features for symbol, date
+FUNCTION calculateScore(symbol, date)
+    features  = FETCH features for symbol, date
+    indicator = FETCH indicators for symbol, date
+    IF NOT features OR NOT indicator: RETURN 0
+
+    adaptive = loadAdaptiveWeights()
+    w_trend    = adaptive ? adaptive.trend    : SCORING_WEIGHTS.TREND        // 30
+    w_rsi      = adaptive ? adaptive.rsi      : SCORING_WEIGHTS.RSI_PULLBACK // 20
+    w_breakout = adaptive ? adaptive.breakout : SCORING_WEIGHTS.BREAKOUT     // 20
+
     score = 0
 
-    IF features.is_uptrend AND indicators.ema_20 > indicators.ema_50
-        score += WEIGHT_TREND           // +30
+    IF features.is_uptrend AND indicator.ema_20 > indicator.ema_50
+        score += w_trend
 
     IF features.rsi_zone == 'PULLBACK'
-        score += WEIGHT_RSI_PULLBACK    // +20
+        score += w_rsi
 
-    IF features.is_volume_spike
-        score += WEIGHT_VOLUME_SPIKE    // +30
+    // Tiered volume scoring (replaces flat is_volume_spike weight)
+    volume_tier = features.volume_tier OR 'normal'
+    IF adaptive:
+        tier_multiplier = { extreme: 1.0, high: 0.67, elevated: 0.33, normal: 0 }
+        score += adaptive.volume * tier_multiplier[volume_tier]
+    ELSE:
+        score += VOLUME_TIER_SCORES[volume_tier]    // 30/20/10/0
 
     IF features.is_breakout
-        score += WEIGHT_BREAKOUT        // +20
+        score += w_breakout
 
-    RETURN score                        // Range: 0 to 100
+    // High delivery bonus for breakout strategies
+    IF features.is_high_delivery AND features.is_breakout
+        score += 10
+
+    RETURN CLAMP(score, 0, 100)
 ```
 
 ### Normalization for Merged Signals
@@ -1704,7 +2034,28 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
         LOG: "Signal for {symbol} rejected: insufficient liquidity (volume_sma_20 < MIN_LIQUIDITY_VOLUME)"
         RETURN null
 
-    confidence = calculateScore(symbol, date, signal)
+    // VWAP distance filter (Improvement 5)
+    IF features.vwap_distance_pct != null
+        IF signal.direction == 'LONG' AND features.vwap_distance_pct > 2.0
+            LOG: "LONG signal for {symbol} rejected: price stretched {vwap_distance_pct}% above VWAP"
+            RETURN null
+        IF signal.direction == 'SHORT' AND features.vwap_distance_pct < -2.0
+            LOG: "SHORT signal for {symbol} rejected: price stretched {vwap_distance_pct}% below VWAP"
+            RETURN null
+
+    // PCR filter (Improvement 2) — passed in from pipeline
+    IF nifty_pcr != null AND nifty_pcr > 1.5 AND signal.direction == 'LONG'
+        LOG: "LONG signal for {symbol} suppressed: NIFTY PCR {nifty_pcr} > 1.5 (bearish options)"
+        RETURN null
+
+    // Sector correlation gate (Improvement 6) — enhanced with intra-batch counting
+    sector = getSector(symbol)
+    active_sector_count = countActiveBySector(sector) + batch_sector_count
+    IF active_sector_count >= MAX_SIGNALS_PER_SECTOR
+        LOG: "Signal for {symbol} suppressed: sector {sector} at limit"
+        RETURN null
+
+    confidence = calculateScore(symbol, date)
 
     IF confidence < MIN_CONFIDENCE
         LOG: "Signal for {symbol} rejected: confidence {confidence} below threshold"
@@ -1798,19 +2149,32 @@ FUNCTION updateSignalStatuses()
         IF signal.direction == 'LONG'
             IF today_candle.low <= signal.stop_loss
                 UPDATE signal SET status = 'SL_HIT', closed_at = today
+                recordOutcome(signal, 'SL_HIT', today)
             ELSE IF today_candle.high >= signal.target_price
                 UPDATE signal SET status = 'TARGET_HIT', closed_at = today
+                recordOutcome(signal, 'TARGET_HIT', today)
             ELSE IF DATEDIFF(today, signal.date) >= HOLDING_PERIOD_DAYS
                 UPDATE signal SET status = 'EXPIRED', closed_at = today
+                recordOutcome(signal, 'EXPIRED', today)
 
         // For SHORT (SELL) signals (inverted):
         ELSE IF signal.direction == 'SHORT'
             IF today_candle.high >= signal.stop_loss
                 UPDATE signal SET status = 'SL_HIT', closed_at = today
+                recordOutcome(signal, 'SL_HIT', today)
             ELSE IF today_candle.low <= signal.target_price
                 UPDATE signal SET status = 'TARGET_HIT', closed_at = today
+                recordOutcome(signal, 'TARGET_HIT', today)
             ELSE IF DATEDIFF(today, signal.date) >= HOLDING_PERIOD_DAYS
                 UPDATE signal SET status = 'EXPIRED', closed_at = today
+                recordOutcome(signal, 'EXPIRED', today)
+
+FUNCTION recordOutcome(signal, outcome, resolved_at)
+    // Snapshot the feature state for this signal's date
+    features = FETCH features for signal.symbol, signal.date
+    INSERT INTO signal_outcomes (signal_id, outcome, strategy, features_json, resolved_at)
+        VALUES (signal.id, outcome, signal.strategy_source, JSON(features), resolved_at)
+    // This data feeds the weekly weight calibration job (Section 18)
 ```
 
 ---
@@ -1832,6 +2196,20 @@ Example periods:
   Run 3: Train 2024-01 to 2024-12, Test 2025-01 to 2025-06
   Run 4: Train 2024-07 to 2025-06, Test 2025-07 to 2025-12
 ```
+
+### Survivorship-Bias-Free Symbol Selection
+
+The backtester checks the `nifty50_composition` table before selecting symbols. If the table contains data, it queries `getSymbolsForDateRange(test_start, test_end)` to include all stocks that were in the NIFTY 50 index at any point during the test period — including stocks that were later removed from the index. This prevents survivorship bias, which can inflate backtest win rates by 3-8 percentage points.
+
+```
+symbols_for_backtest =
+    IF nifty50_composition has data:
+        getSymbolsForDateRange(test_start, test_end)   // includes historically removed stocks
+    ELSE:
+        nifty_50_symbols                               // fallback to current composition
+```
+
+The `nifty50_composition` table is seeded via `scripts/seed_nifty50_composition.js` and should be expanded over time with historical data from NSE index factsheets.
 
 ### Look-Ahead Bias Prevention
 
@@ -2643,12 +3021,38 @@ FUNCTION runDailyPipeline()
     TRY:
         // ── DATA LAYER ──
 
-        // Step 1: Fetch Candles
-        LOG info: "Step 1/13: Fetching candles (NIFTY 50 + NIFTY index + India VIX)"
-        all_symbols = [...nifty_50_symbols, nifty_index_symbol, india_vix_symbol]
-        FOR each symbol in all_symbols:
-            fetchAndStoreCandles(symbol)
-        LOG info: "Step 1 complete: {count} candles upserted"
+        // Step 1: Fetch Candles (with Yahoo API probe)
+        LOG info: "Step 1/13: Fetching candles"
+        yahoo_available = probeYahooApi()   // uses /v8/finance/spark (lightweight)
+        IF NOT yahoo_available
+            LOG warn: "Yahoo API unreachable or rate-limited — skipping live fetch, using existing data"
+        ELSE
+            all_symbols = [...nifty_50_symbols, nifty_index_symbol, india_vix_symbol]
+            FOR each symbol in all_symbols:
+                fetchAndStoreCandles(symbol)
+            LOG info: "Step 1 complete: {count} candles upserted"
+
+        // Step 1b: Fetch NSE Bhavcopy for delivery percentage (fail-open)
+        TRY:
+            bhavcopy_candles = fetchBhavcopy(today)
+            IF bhavcopy_candles.length > 0
+                // Enriches candles with delivery_pct from NSE CSV
+                LOG info: "Step 1b: Bhavcopy enriched {count} candles with delivery data"
+        CATCH:
+            LOG warn: "Step 1b: Bhavcopy fetch skipped — {error}"
+
+        // Step 1c: Fetch NIFTY PCR from NSE option chain (fail-open)
+        nifty_pcr = null
+        TRY:
+            nifty_pcr = fetchPCR('NIFTY')
+        CATCH:
+            LOG warn: "Step 1c: PCR fetch skipped — {error}"
+
+        // Determine reference date (latest candle date, may differ from today)
+        data_date = formatDate(candleModel.findLatestBySymbol(nifty_50_symbols[0]).date)
+        IF data_date != today
+            LOG info: "Using latest data date: {data_date} (today: {today})"
+        // All downstream steps (strategies, scoring, signal generation) use data_date, not today
 
         // Step 2: Validate Data
         LOG info: "Step 2/13: Validating data completeness"
@@ -2664,8 +3068,8 @@ FUNCTION runDailyPipeline()
             calculateAndStoreIndicators(symbol)
         LOG info: "Step 3 complete"
 
-        // Step 4: Extract Features (includes: is_ranging, z_score_20d, adaptive RSI/volume)
-        LOG info: "Step 4/13: Extracting features (including is_liquid, is_ranging, z_score_20d)"
+        // Step 4: Extract Features (includes: RVOL, volume_tier, VWAP, delivery %, is_ranging, z_score_20d)
+        LOG info: "Step 4/13: Extracting features (RVOL, VWAP, delivery, is_liquid, is_ranging, z_score_20d)"
         FOR each symbol in nifty_50_symbols:
             calculateAndStoreFeatures(symbol)
         LOG info: "Step 4 complete"
@@ -2690,7 +3094,7 @@ FUNCTION runDailyPipeline()
         LOG info: "Step 7/13: Running strategies for regime={regime}"
         raw_signals = {}
         FOR each symbol in nifty_50_symbols:
-            result = runStrategies(symbol, TODAY, regime)
+            result = runStrategies(symbol, data_date, regime)
             IF result.length > 0
                 raw_signals[symbol] = result
         LOG info: "Step 7 complete: {count} raw signals for {symbols_count} symbols"
@@ -2719,10 +3123,11 @@ FUNCTION runDailyPipeline()
         LOG info: "Step 9 complete: {rejected_sentiment} suppressed"
 
         // Step 10: Score, Deduplicate, Position Size, and Generate Signals
+        // Passes nifty_pcr (from Step 1c) and batch_signals for intra-batch sector correlation
         LOG info: "Step 10/13: Scoring, deduplicating, position sizing, and generating signals"
         final_signals = []
         FOR each [symbol, signals] in raw_signals:
-            signal = deduplicateAndGenerate(symbol, TODAY, signals)
+            signal = deduplicateAndGenerate(symbol, data_date, signals, final_signals, nifty_pcr)
             IF signal != null
                 computePositionSizing(signal)
                 final_signals.PUSH(signal)
@@ -2758,8 +3163,19 @@ FUNCTION runDailyPipeline()
                   "Suppressed (sentiment): {rejected_sentiment}, " +
                   "Paper trades: {final_signals.length}"
 
+        // Telegram notification on success (Improvement 7)
+        sendTelegramAlert(
+            "✅ TradeNeuron pipeline complete\n" +
+            "Signals: {final_signals.length}, Regime: {regime}, Duration: {pipeline_duration}ms"
+        )
+
+        // Zero-signal warning
+        IF final_signals.length == 0 AND regime != 'HIGH_VOLATILITY'
+            sendTelegramAlert("⚠️ Pipeline ran but generated 0 signals. Regime: {regime}")
+
     CATCH error:
         LOG error: "Pipeline failed at step: {error.message}"
+        sendTelegramAlert("❌ TradeNeuron pipeline FAILED: {error.message}")
         // Pipeline stops on failure -- no partial signal generation
 ```
 
@@ -2773,18 +3189,20 @@ FUNCTION runDailyPipeline()
 
 | Step | Name | Layer |
 |------|------|-------|
-| 1 | Fetch Candles | Data |
+| 1 | Fetch Candles (Yahoo) | Data |
+| 1b | Fetch NSE Bhavcopy (delivery %, fail-open) | Data |
+| 1c | Fetch NIFTY PCR (NSE option chain, fail-open) | Data |
 | 2 | Validate Data | Data |
 | 3 | Compute Indicators | Computation |
-| 4 | Extract Features (is_ranging, z_score_20d, adaptive RSI/volume) | Computation |
+| 4 | Extract Features (RVOL, VWAP, delivery, is_ranging, z_score_20d) | Computation |
 | 5 | Compute Adaptive Thresholds | Computation |
 | 6 | Check Market Regime (BULLISH / SIDEWAYS / BEARISH / HIGH_VOLATILITY) | Signal Generation |
 | 7 | Run Strategies (regime-dependent) | Signal Generation |
 | 8 | Apply Fundamental Filter | Signal Generation |
-| 9 | Apply Sentiment Filter (negation-aware + optional Finnhub) | Signal Generation |
-| 10 | Score + Deduplicate + Position Sizing | Signal Generation |
+| 9 | Apply Sentiment Filter (FinBERT primary, keyword fallback, optional Finnhub) | Signal Generation |
+| 10 | Score + Deduplicate + VWAP/PCR filters + Sector Gate + Position Sizing | Signal Generation |
 | 11 | Store Signals + Paper Trades | Storage |
-| 12 | Update Signal Statuses | Status Update |
+| 12 | Update Signal Statuses + Record Outcomes (for weight calibration) | Status Update |
 | 13 | Update Paper Trade Statuses | Status Update |
 
 ### Weekly Fundamentals Job
@@ -2813,6 +3231,61 @@ FUNCTION refreshAllFundamentals()
             LOG warn: "Failed to fetch fundamentals for {symbol}: {error.message}"
     LOG info: "Weekly fundamentals refresh complete"
 ```
+
+### Weekly Weight Calibration Job
+
+**File:** `src/jobs/weekly_weight_calibration.job.js`
+
+Runs every Sunday at 2:00 AM IST to recalibrate scoring weights from signal outcome history:
+
+```javascript
+cron.schedule('0 2 * * 0', calibrateWeights, {
+    timezone: "Asia/Kolkata"
+});
+```
+
+```
+FUNCTION calibrateWeights()
+    outcomes = QUERY signal_outcomes WHERE resolved_at >= 90 days ago
+    IF outcomes.length < 30
+        LOG info: "Insufficient outcomes ({count}/30) — skipping calibration"
+        RETURN
+
+    FOR each feature_key IN ['is_uptrend', 'rsi_zone=PULLBACK', 'volume_tier', 'is_breakout']:
+        with_feature = outcomes where feature was active
+        wins = with_feature where outcome = 'TARGET_HIT'
+        win_rate = wins / with_feature.length
+        adjusted_weight = BASE_WEIGHT * (0.5 + win_rate)
+
+    UPSERT INTO adaptive_thresholds (symbol='_GLOBAL_')
+        SET weight_trend, weight_rsi, weight_volume, weight_breakout
+    LOG info: "Weights calibrated from {outcomes.length} outcomes"
+```
+
+### Cron Job Registry
+
+**File:** `src/jobs/cron.js`
+
+All scheduled jobs are registered in a single file:
+
+| Schedule | Job | Description |
+|----------|-----|-------------|
+| `30 16 * * 1-5` | `runDailyPipeline()` | Daily pipeline (4:30 PM IST, Mon-Fri) |
+| `0 18 * * 6` | `runWeeklyFundamentals()` | Weekly fundamentals refresh (Saturday 6 PM IST) |
+| `0 2 * * 0` | `calibrateWeights()` | Weekly weight calibration (Sunday 2 AM IST) |
+
+### Telegram Pipeline Alerts
+
+**File:** `src/utils/notify.util.js`
+
+Sends notifications via Telegram Bot API when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are configured in `.env`. Completely optional — if tokens are not set, the function is a no-op (fail-open).
+
+| Event | Message |
+|-------|---------|
+| Pipeline success | Signal count, market regime, duration |
+| Pipeline failure | Error message and failing step |
+| Zero signals (non-volatile) | Warning when regime is not HIGH_VOLATILITY |
+| HIGH_VOLATILITY early exit | Notification that pipeline skipped signal generation |
 
 ### SLA
 
@@ -2905,14 +3378,13 @@ Logs every API request with: method, path, status code, response time, user_iden
 
 ### External Service Mocking
 
-**Yahoo Finance:** `yahoo-finance2` must be mocked in all tests. Live API calls in tests are forbidden -- they are slow (~300ms+ per symbol), flaky (rate limits, network errors), and non-deterministic (data changes daily).
+**Yahoo Finance:** The Yahoo service (which uses direct Axios calls) must be mocked in all tests. Live API calls in tests are forbidden -- they are slow (~300ms+ per symbol), flaky (rate limits, network errors), and non-deterministic (data changes daily).
 
-**Approach:** Create fixture files in `tests/fixtures/` containing known OHLCV data for a small set of symbols (e.g., RELIANCE.NS, INFY.NS, SBIN.NS) covering various scenarios (splits, gaps, volume spikes). In tests, mock `yahoo-finance2` to return fixture data:
+**Approach:** Create fixture files in `tests/fixtures/` containing known OHLCV data for a small set of symbols (e.g., RELIANCE.NS, INFY.NS, SBIN.NS) covering various scenarios (splits, gaps, volume spikes). In tests, mock the yahoo service module to return fixture data:
 
 ```javascript
-jest.mock('yahoo-finance2', () => ({
-    default: class {
-        async historical(symbol, options) {
+jest.mock('../src/services/data_ingestion/yahoo.service', () => ({
+    fetchYahooCandles: async (symbol, start, end) => {
             return loadFixture(symbol, options.period1, options.period2);
         }
     }
@@ -2923,7 +3395,7 @@ jest.mock('yahoo-finance2', () => ({
 
 **Google News RSS:** Mock `rss-parser` to return fixture RSS XML from `tests/fixtures/rss/`. Include fixtures with negative keywords and clean headlines.
 
-**Yahoo quoteSummary():** Mock the `quoteSummary` method alongside `historical` in the yahoo-finance2 mock. Fixture files in `tests/fixtures/fundamentals/` contain known D/E ratios, EPS growth, etc.
+**Yahoo quoteSummary():** Mock `fetchQuoteSummary` alongside `fetchYahooCandles` in the yahoo service mock. Fixture files in `tests/fixtures/fundamentals/` contain known D/E ratios, EPS growth, etc.
 
 ### Unit Tests
 
@@ -2977,3 +3449,64 @@ npm run test:coverage       # Coverage report
 ```
 
 Target: 80%+ line coverage for services and utils.
+
+---
+
+## 21. NPM Scripts Reference
+
+All available scripts in `package.json`:
+
+| Script | Command | Purpose |
+|--------|---------|---------|
+| `dev` | `concurrently ... nodemon + sentiment_server.py` | Start Node.js (with hot reload) and FinBERT server in parallel. FinBERT crash does not kill Node.js. |
+| `dev:node` | `nodemon server.js` | Start only the Node.js server with hot reload (no FinBERT). |
+| `dev:finbert` | `python3 scripts/sentiment_server.py` | Start only the FinBERT sentiment server on port 8765. |
+| `start` | `node server.js` | Start Node.js server without hot reload (production). |
+| `migrate` | `node scripts/migrate.js` | Run pending database migrations. |
+| `download` | `python3 scripts/download_yahoo_data.py` | Download 3 years of Yahoo Finance OHLCV data. |
+| `seed` | `node scripts/seed_historical.js` | Seed downloaded data into MySQL. |
+| `pipeline` | `node scripts/run_pipeline.js` | Run the daily pipeline manually. |
+| `backtest` | `node scripts/run_backtest.js` | Run the backtesting engine. |
+| `test` | `jest` | Run unit tests. |
+| `test:integration` | `jest (integration config)` | Run integration tests (requires test DB). |
+| `test:coverage` | `jest --coverage` | Generate coverage report. |
+
+The `dev` script uses `concurrently` (a runtime dependency) with colour-coded output: `[node]` in cyan, `[finbert]` in magenta. If the FinBERT process exits (e.g. missing Python deps), the Node.js server continues running and falls back to keyword-based sentiment.
+
+---
+
+## 22. Deployment Scripts
+
+### `backend/deploy.sh`
+
+Production-ready deployment script for the backend. Runs 7 steps:
+
+```
+Step 1: Check .env file exists (copies .env.example if missing)
+Step 2: Install Node dependencies (npm install --omit=dev)
+Step 3: Check Python dependencies — if all present, skips install;
+        otherwise runs pip3 install --user --break-system-packages
+Step 4: Run database migrations (node scripts/migrate.js)
+Step 5: Check and free port 3000 (Node.js API)
+Step 6: Check and free port 8765 (FinBERT API)
+Step 7: Start both services via concurrently
+```
+
+If FinBERT crashes or Python is unavailable, the Node.js server continues running. The backend falls back to keyword-based sentiment automatically.
+
+### Root `deploy.sh`
+
+Full-stack deployment script at the project root. Supports two modes:
+
+**`./deploy.sh dev` (default):**
+1. Installs backend Node + Python deps, runs migrations
+2. Starts Node.js server and FinBERT server in background
+3. Waits for backend health check
+4. Installs frontend deps, starts Vite dev server
+5. Ctrl+C cleanly shuts down all processes via `trap`
+
+**`./deploy.sh prod`:**
+1. Builds frontend (`npm run build` → `dist/`)
+2. Installs backend deps, runs migrations
+3. Starts Node.js + FinBERT via `concurrently`
+4. Frontend `dist/` should be served by nginx or similar

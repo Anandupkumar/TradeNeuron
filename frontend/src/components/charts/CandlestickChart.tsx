@@ -3,6 +3,15 @@ import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi } from 'lightweight-charts';
 import type { CandleWithIndicators } from '../../types';
 import { cn } from '@/lib/utils';
+import { toNum } from '../../utils/format';
+
+function toDateStr(raw: unknown): string {
+  if (raw instanceof Date) return raw.toISOString().slice(0, 10);
+  const s = String(raw);
+  if (s.length >= 10 && s[4] === '-' && s[7] === '-') return s.slice(0, 10);
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? '1970-01-01' : d.toISOString().slice(0, 10);
+}
 
 interface CandlestickChartProps {
   candles: CandleWithIndicators[];
@@ -21,11 +30,11 @@ export function CandlestickChart({ candles, height = 400 }: CandlestickChartProp
   const candlestick_data = useMemo(
     () =>
       capped_candles.map((c) => ({
-        time: c.date as string,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.adjusted_close,
+        time: toDateStr(c.date),
+        open: toNum(c.open) ?? 0,
+        high: toNum(c.high) ?? 0,
+        low: toNum(c.low) ?? 0,
+        close: toNum(c.adjusted_close) ?? 0,
       })),
     [capped_candles],
   );
@@ -34,7 +43,7 @@ export function CandlestickChart({ candles, height = 400 }: CandlestickChartProp
     () =>
       capped_candles
         .filter((c) => c.indicators?.ema_20 != null)
-        .map((c) => ({ time: c.date as string, value: c.indicators!.ema_20! })),
+        .map((c) => ({ time: toDateStr(c.date), value: toNum(c.indicators!.ema_20)! })),
     [capped_candles],
   );
 
@@ -42,7 +51,7 @@ export function CandlestickChart({ candles, height = 400 }: CandlestickChartProp
     () =>
       capped_candles
         .filter((c) => c.indicators?.ema_50 != null)
-        .map((c) => ({ time: c.date as string, value: c.indicators!.ema_50! })),
+        .map((c) => ({ time: toDateStr(c.date), value: toNum(c.indicators!.ema_50)! })),
     [capped_candles],
   );
 
@@ -50,7 +59,7 @@ export function CandlestickChart({ candles, height = 400 }: CandlestickChartProp
     () =>
       capped_candles
         .filter((c) => c.indicators?.ema_200 != null)
-        .map((c) => ({ time: c.date as string, value: c.indicators!.ema_200! })),
+        .map((c) => ({ time: toDateStr(c.date), value: toNum(c.indicators!.ema_200)! })),
     [capped_candles],
   );
 

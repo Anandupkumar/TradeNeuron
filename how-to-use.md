@@ -156,7 +156,7 @@ If a signal has a risk-reward of **2.0x**, it means:
 
 ### What is Confidence?
 
-A number from 0 to 100 showing how strongly the system believes in the signal. Higher is better. The system requires a minimum confidence (default: 70) before publishing a signal.
+A number from 0 to 100 showing how strongly the system believes in the signal. Higher is better. The system requires a minimum confidence (default: 20) before publishing a signal.
 
 ---
 
@@ -178,6 +178,7 @@ If the system hasn't been set up yet, here's what you need:
 ### Prerequisites
 - Node.js (v18 or higher)
 - MySQL 8 database
+- Python 3 (for downloading stock data)
 
 ### Start the Backend
 
@@ -200,23 +201,46 @@ npm install                    # Install dependencies
 npm run dev                    # Start on port 5173
 ```
 
-### Seed Historical Data (Optional but Recommended)
+### Seed Historical Data (Required for First Run)
 
 To populate the system with historical stock data so it can start generating signals:
 
 ```bash
+# Step 1: Install Python dependency (one-time)
+pip3 install --user yfinance
+
+# Step 2: Download 3 years of stock data (takes ~90 seconds)
 cd backend
-node scripts/seed_historical.js
+npm run download
+
+# Step 3: Load the data into the database (takes ~1 second)
+npm run seed
+
+# Step 4: Run the analysis pipeline to generate signals
+npm run pipeline
 ```
 
-This downloads several months of price data from Yahoo Finance. It may take 10-15 minutes.
+The download step fetches price data for all 50 NIFTY stocks from Yahoo Finance. The data is saved to a JSON file, which is then loaded into the database by the seed step.
+
+### Using deploy.sh (Simplified)
+
+You can also use the included deploy scripts:
+
+```bash
+# Start everything in dev mode (hot reload)
+./deploy.sh dev
+
+# Or start backend and frontend separately
+cd backend && ./deploy.sh
+cd frontend && ./deploy.sh
+```
 
 ---
 
 ## Common Questions
 
 **Q: Why is the dashboard empty?**
-The system needs historical data to generate signals. Run `node scripts/seed_historical.js` in the backend, then wait for the daily pipeline to run (4:30 PM IST on weekdays) or trigger it manually.
+The system needs historical data to generate signals. Run `npm run download` then `npm run seed` then `npm run pipeline` in the backend folder. After that, refresh the frontend.
 
 **Q: What does "Market is closed" mean on the dashboard?**
 The Indian stock market (NSE) operates Monday-Friday, 9:15 AM to 3:30 PM IST. Outside those hours, this message appears. The system generates signals after market close.

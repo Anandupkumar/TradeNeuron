@@ -1,42 +1,76 @@
 ---
 alwaysApply: true
 ---
-## 2. ABSOLUTE RULES — NEVER VIOLATE
 
-1. **Never hardcode secrets.** All config comes from `src/config/env.js`. Never read
+# TradeNeuron — Cursor AI Rules
+# Covers: backend (Node.js/Express) + frontend (React/TypeScript)
+# Source of truth: backend_technical_document.md + frontend_technical_document.md
+# Read this entire file before every task. Never deviate without explicit instruction.
+
+---
+
+## SCOPE DETECTION
+
+Before writing any code, identify which codebase the task belongs to:
+
+- Files inside `backend/` or touching `server.js`, `src/config/`, `src/services/`,
+  `src/models/`, `src/routes/`, `migrations/`, `scripts/` → apply BACKEND rules (Sections 1–19)
+- Files inside `frontend/` or touching `src/api/`, `src/components/`, `src/hooks/`,
+  `src/pages/`, `src/store/`, `src/types/`, `src/utils/format.ts` → apply FRONTEND rules (Sections 20–38)
+- Tasks that touch both (e.g., "add a new API field and display it in the UI") → apply ALL rules
+
+When ambiguous, ask which codebase before writing code.
+
+---
+
+# ═══════════════════════════════════════════
+# BACKEND RULES  (Sections 1–19)
+# ═══════════════════════════════════════════
+
+## 1. BACKEND IDENTITY
+
+This is the TradeNeuron backend — a Node.js/Express financial signal system for NSE NIFTY 50.
+Runtime: Node.js with CommonJS (require()). Database: MySQL 8+. Timezone: Asia/Kolkata always.
+Every backend decision has risk implications. Precision matters more than speed.
+
+---
+
+## 2. BACKEND ABSOLUTE RULES — NEVER VIOLATE
+
+1. Never hardcode secrets. All config comes from `src/config/env.js`. Never read
    `process.env` directly outside that file.
 
-2. **Never use `close` for calculations.** Always use `adjusted_close`. Corporate actions
+2. Never use `close` for calculations. Always use `adjusted_close`. Corporate actions
    (splits, dividends) make raw close prices unreliable for indicator maths.
 
-3. **Never skip the risk <= 0 guard** in any strategy or deduplication logic. A signal
+3. Never skip the risk <= 0 guard in any strategy or deduplication logic. A signal
    with non-positive risk must be discarded, never emitted.
 
-4. **Never run migrations on app startup.** Migrations are manual only:
+4. Never run migrations on app startup. Migrations are manual only:
    `node scripts/migrate.js`. The app boots and checks DB connectivity but never alters schema.
 
-5. **Never call Yahoo Finance or Google News RSS in tests.** All external services must be
+5. Never call Yahoo Finance or Google News RSS in tests. All external services must be
    mocked using fixtures in `tests/fixtures/`. Live API calls in tests are forbidden.
 
-6. **Never use `Date.now()` or `new Date()` without converting to IST.** Use helpers from
-   `src/utils/date.util.js` (`toIST`, `isTradingDay`, `countTradingDays`).
+6. Never use `Date.now()` or `new Date()` without converting to IST. Use helpers from
+   `src/utils/date.util.js` (toIST, isTradingDay, countTradingDays).
 
-7. **Never emit a BUY signal when `market_regime` is not `'BULLISH'`.** The regime check
-   (NIFTY EMA200 + India VIX) is a global gate. If it fails, skip strategy execution entirely.
+7. Never emit a BUY signal when market_regime is not 'BULLISH' or 'SIDEWAYS'.
+   The regime check (NIFTY EMA200 + India VIX) is a global gate. If it fails, skip
+   strategy execution entirely.
 
-8. **Never suppress a signal error silently.** All rejections must be logged with symbol,
+8. Never suppress a signal error silently. All rejections must be logged with symbol,
    reason, and relevant values (e.g., confidence score, VIX level, D/E ratio).
 
-9. **The `M&M.NS` symbol contains `&`.** Always URL-encode it as `M%26M.NS` in query
-   strings. Express decodes it automatically on the server side — no extra handling needed
-   in route handlers.
+9. The M&M.NS symbol contains &. Always URL-encode it as M%26M.NS in query
+   strings. Express decodes it automatically on the server side.
 
-10. **`node-cron` must always use `timezone: "Asia/Kolkata"`.** Never schedule a cron job
+10. node-cron must always use timezone: "Asia/Kolkata". Never schedule a cron job
     without an explicit timezone. Default UTC will fire at wrong times on cloud servers.
 
 ---
 
-## 3. PROJECT STRUCTURE
+## 3. BACKEND PROJECT STRUCTURE
 
 Respect this layout exactly. Never create files outside it without instruction.
 
@@ -48,8 +82,9 @@ backend/
     services/
       data_ingestion/   # yahoo.service.js, bhavcopy.service.js, validation.service.js
       indicators/       # ema, rsi, macd, atr, volume services + index.js orchestrator
-      features/         # feature.service.js
-      strategies/       # trend_pullback.strategy.js, breakout.strategy.js, index.js
+      features/         # feature.service.js, adaptive_threshold.service.js
+      strategies/       # trend_pullback, breakout, range, mean_reversion,
+                        # trend_pullback_short, breakdown strategies + index.js
       scoring/          # scoring.service.js
       signals/          # signal.service.js
       fundamentals/     # fundamental.service.js, fundamental.filter.js
@@ -62,7 +97,7 @@ backend/
     utils/           # date.util.js, math.util.js, retry.util.js, symbols.util.js, errors.js
     jobs/            # daily_pipeline.job.js, weekly_fundamentals.job.js
     validations/     # Joi schemas only
-  migrations/        # 001_*.sql through 010_*.sql — SQL files, never JS
+  migrations/        # 001-017 numbered .sql files — never JS
   tests/
     unit/            # Per-module, fully mocked
     integration/     # Requires test DB
@@ -73,32 +108,33 @@ backend/
 
 ---
 
-## 4. TECH STACK — APPROVED PACKAGES ONLY
+## 4. BACKEND TECH STACK — APPROVED PACKAGES ONLY
 
 Do not install any package not listed here without explicit approval.
 
-**Runtime:**
+Runtime:
 express ^4.x | mysql2 ^3.x | yahoo-finance2 ^2.x | technicalindicators ^3.x |
 node-cron ^3.x | dotenv ^16.x | winston ^3.x | express-rate-limit ^7.x |
 joi ^17.x | csv-parse ^5.x | axios ^1.x | helmet ^7.x | cors ^2.x |
 uuid ^9.x | rss-parser ^3.x
 
-**Dev:**
+Dev:
 jest ^29.x | supertest ^6.x | nodemon ^3.x
 
 ---
 
-## 5. ENVIRONMENT VARIABLES
+## 5. BACKEND ENVIRONMENT VARIABLES
 
 All env vars are defined in `.env.example` and loaded/validated in `src/config/env.js`.
 
-**Required at startup (fail fast if missing):**
+Required at startup (fail fast if missing):
 PORT, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, API_KEY,
 CRON_SCHEDULE, CRON_TIMEZONE, FUNDAMENTAL_CRON_SCHEDULE,
-VIX_THRESHOLD, MIN_LIQUIDITY_VOLUME, MIN_CONFIDENCE, MIN_RISK_REWARD
+VIX_THRESHOLD, MIN_LIQUIDITY_VOLUME, MIN_CONFIDENCE, MIN_RISK_REWARD,
+TOTAL_CAPITAL_INR, RISK_PCT_PER_TRADE
 
-**Key defaults:**
-CRON_SCHEDULE=30 16 * * 1-5   (4:30 PM IST Mon–Fri)
+Key defaults:
+CRON_SCHEDULE=30 16 * * 1-5   (4:30 PM IST Mon-Fri)
 CRON_TIMEZONE=Asia/Kolkata
 VIX_THRESHOLD=20
 MIN_CONFIDENCE=70
@@ -109,57 +145,62 @@ HOLDING_PERIOD_DAYS=10
 SLIPPAGE_PCT=0.1
 BROKERAGE_PCT=0.05
 MIN_LIQUIDITY_VOLUME=500000
+TOTAL_CAPITAL_INR=1000000
+RISK_PCT_PER_TRADE=1.0
+MAX_POSITION_PCT=10
+MAX_POSITION_PCT_SHORT=5
+ADAPTIVE_THRESHOLDS_ENABLED=true
+ADAPTIVE_MIN_DATA_POINTS=30
 
 When adding a new configurable value, always:
-1. Add it to `.env.example` with a comment
-2. Add it to the required list in `env.js` if it has no safe default
-3. Export it from `env.js` — never read `process.env` elsewhere
+1. Add it to .env.example with a comment
+2. Add it to the required list in env.js if it has no safe default
+3. Export it from env.js — never read process.env elsewhere
 
 ---
 
 ## 6. DATABASE RULES
 
 - Engine: InnoDB. Charset: utf8mb4. All prices: DECIMAL(12,2). Timestamps: IST.
-- All queries use parameterised statements (`?` placeholders). Never interpolate user input.
-- Use `INSERT ... ON DUPLICATE KEY UPDATE` for upserts — never DELETE then INSERT.
-- Connection pool is in `src/config/db.js`. Import `pool` from there. Never create
-  a new connection directly.
-- On startup (`server.js`): run `SELECT 1` ping. If it fails, `process.exit(1)`.
-- Pool error handler: log and exit on fatal errors, warn on `PROTOCOL_CONNECTION_LOST`.
-- Graceful shutdown: call `pool.end()` on SIGTERM/SIGINT.
+- All queries use parameterised statements (? placeholders). Never interpolate user input.
+- Use INSERT ... ON DUPLICATE KEY UPDATE for upserts — never DELETE then INSERT.
+- Connection pool is in src/config/db.js. Import pool from there. Never create a new connection directly.
+- On startup (server.js): run SELECT 1 ping. If it fails, process.exit(1).
+- Pool error handler: log and exit on fatal errors, warn on PROTOCOL_CONNECTION_LOST.
+- Graceful shutdown: call pool.end() on SIGTERM/SIGINT.
 
-**Tables (do not rename or add columns without a migration file):**
-candles | indicators | features (+ is_liquid) | signals | backtest_results |
-favorites | fundamentals | sentiment_flags | paper_trades | _migrations
+Tables (never rename or add columns without a numbered migration file):
+candles | indicators | features | signals | backtest_results |
+favorites | fundamentals | sentiment_flags | paper_trades | adaptive_thresholds | _migrations
 
-**`is_liquid` lives in the features table, added by migration 010.**
-The features table schema does NOT include it in the base CREATE — migration 010 adds it.
+Migration numbering: Currently at 017. Next migration must be 018_*.sql.
 
 ---
 
-## 7. PIPELINE ARCHITECTURE — 12 STEPS
+## 7. PIPELINE ARCHITECTURE — 13 STEPS
 
 The daily pipeline runs in this exact order. Never reorder steps.
 
-```
 Step 1:  Fetch candles        — NIFTY50 + ^NSEI + ^INDIAVIX
 Step 2:  Validate data        — gap detection using NSE holiday calendar
 Step 3:  Compute indicators   — NIFTY50 + ^NSEI only (not ^INDIAVIX)
-Step 4:  Extract features     — NIFTY50 only (includes is_liquid)
-Step 5:  Market regime check  — NIFTY EMA200 AND VIX < threshold
-         → IF not BULLISH: GOTO Step 11 (skip signal generation)
-Step 6:  Run strategies       — TREND_PULLBACK + BREAKOUT per symbol
-Step 7:  Fundamental filter   — pass/fail gate, fail-open if no data
-Step 8:  Sentiment filter     — RSS fetch only for symbols with raw signals
-Step 9:  Score + deduplicate  — includes is_liquid gate
-Step 10: Store signals + create paper trades
-Step 11: Update signal statuses
-Step 12: Update paper trade statuses
-```
+Step 4:  Extract features     — NIFTY50 only (is_liquid, is_ranging, z_score_20d, adaptive RSI/volume)
+Step 5:  Compute adaptive thresholds — if ADAPTIVE_THRESHOLDS_ENABLED
+Step 6:  Market regime check  — returns BULLISH / SIDEWAYS / BEARISH / HIGH_VOLATILITY
+         IF HIGH_VOLATILITY: GOTO Step 12 (skip all signal generation)
+Step 7:  Run strategies       — BULLISH/SIDEWAYS: 4 long strategies; BEARISH: 2 short strategies
+Step 8:  Fundamental filter   — pass/fail gate, fail-open if no data
+Step 9:  Sentiment filter     — RSS fetch only for symbols still in raw_signals
+Step 10: Score + deduplicate + position sizing
+Step 11: Store signals + create paper trades
+Step 12: Update signal statuses (LONG and SHORT lifecycle differ)
+Step 13: Update paper trade statuses
 
-If market_regime != 'BULLISH' at Step 5, jump to Step 11.
-Signal generation (Steps 6–10) is skipped entirely.
-Status updates (Steps 11–12) always run regardless of regime.
+Market regime routing:
+- BULLISH       => Trend Pullback, Breakout, Range, Mean Reversion (BUY/LONG)
+- SIDEWAYS      => Range, Mean Reversion only (BUY/LONG)
+- BEARISH       => Trend Pullback SHORT, Breakdown SHORT (SELL/SHORT)
+- HIGH_VOLATILITY => No signals at all
 
 SLA: full pipeline must complete within 7 minutes.
 Per-symbol timeout: 10 seconds — log warning and skip, do not abort pipeline.
@@ -168,224 +209,636 @@ Per-symbol timeout: 10 seconds — log warning and skip, do not abort pipeline.
 
 ## 8. SIGNAL LOGIC RULES
 
-### Stop Loss direction (BUY signals)
-- Higher SL = closer to entry = tighter (less breathing room).
-- When merging multiple strategies, we use `MAX(all SL values)` — the closest SL to entry.
-- This is an intentional aggressive choice. Comment must say so in code.
-- `MIN()` gives more breathing room — the code must make the current choice visible.
+Stop Loss direction (BUY/LONG):
+- Higher SL = closer to entry = tighter. When merging, use MAX(all SL values).
+- This is intentionally aggressive. Comment must say so in code.
 
-### Risk guard (both strategies)
-```js
-const risk = entryPrice - stopLoss;
-if (risk <= 0) {
-  // Discard. Log symbol, stopLoss, entryPrice, ATR.
-  return null;
-}
-```
+Stop Loss direction (SELL/SHORT):
+- SL is ABOVE entry price. When merging, use MIN(all SL values).
+- risk = stop_loss - entry_price
+
+Risk guard (all strategies):
+  // LONG:  const risk = entryPrice - stopLoss;
+  // SHORT: const risk = stopLoss - entryPrice;
+  if (risk <= 0) { discard — log symbol, stopLoss, entryPrice, ATR, direction }
 This guard is mandatory. Never remove it.
 
-### Same-candle SL/Target conflict
-When `candle.low <= stopLoss` AND `candle.high >= targetPrice` on the same candle:
-SL takes priority (conservative assumption). This intentionally understates win rate.
-Both signal lifecycle and paper trading use this same rule.
+Same-candle SL/Target conflict:
+- LONG:  SL when candle.low <= stopLoss; Target when candle.high >= target.
+- SHORT: SL when candle.high >= stopLoss; Target when candle.low <= target.
+- When both trigger on same candle: SL takes priority (conservative assumption).
+- Signal lifecycle and paper trading both use this same rule.
 
-### Gate order in `deduplicateAndGenerate`:
-1. Merge signals (if multiple)
-2. Risk guard (risk <= 0 → discard)
-3. Liquidity gate (is_liquid = false → reject)
-4. Confidence gate (< MIN_CONFIDENCE → reject)
-5. Risk/reward gate (< MIN_RISK_REWARD → reject)
-6. Active signal cap (>= MAX_ACTIVE_SIGNALS → reject)
-7. Sector cap (>= MAX_SECTOR_SIGNALS → reject)
+Gate order in deduplicateAndGenerate:
+1. Merge signals (if multiple for same symbol)
+2. Risk guard (risk <= 0 => discard)
+3. Liquidity gate (is_liquid = false => reject)
+4. Confidence gate (< MIN_CONFIDENCE => reject)
+5. Risk/reward gate (< MIN_RISK_REWARD => reject)
+6. Active signal cap (>= MAX_ACTIVE_SIGNALS => reject)
+7. Sector cap (>= MAX_SECTOR_SIGNALS per direction => reject)
 
 ---
 
-## 9. SCORING ENGINE
+## 9. POSITION SIZING
+
+ATR-based risk sizing. Applied after all gates pass, before storing the signal.
+
+// LONG:
+risk_per_share     = entry_price - stop_loss
+risk_per_trade_inr = TOTAL_CAPITAL_INR * (RISK_PCT_PER_TRADE / 100)
+shares_to_buy      = FLOOR(risk_per_trade_inr / risk_per_share)
+position_value     = shares_to_buy * entry_price
+// Cap at MAX_POSITION_PCT of total capital
+// SHORT: cap at MAX_POSITION_PCT_SHORT (half of long cap)
+
+Fields stored on signal: shares_to_buy, position_value, capital_risk_inr.
+Fields stored on paper_trade: shares_to_buy, gross_pnl_inr (absolute rupee PnL).
+
+---
+
+## 10. SCORING ENGINE
 
 Weights (sum = 100):
-- Trend Alignment:  +30  (is_uptrend AND ema_20 > ema_50)
-- RSI Pullback:     +20  (rsi_zone = 'PULLBACK')
-- Volume Spike:     +30  (is_volume_spike)
-- Breakout:         +20  (is_breakout)
+- Trend Alignment: +30 (is_uptrend AND ema_20 > ema_50)
+- RSI Pullback:    +20 (rsi_zone = 'PULLBACK')
+- Volume Spike:    +30 (is_volume_spike)
+- Breakout:        +20 (is_breakout)
 
-MIN_CONFIDENCE default = 70. This requires at least 3 of 4 factors.
+MIN_CONFIDENCE default = 70. Requires at least 3 of 4 factors.
 Minimum passing 3-factor combo: Trend(30) + RSI(20) + Breakout(20) = 70.
-
-If weights are ever changed, re-verify the gate is still achievable.
-Add a comment to constants.js documenting the implication.
+If weights change, re-verify the gate is achievable and add a comment to constants.js.
 
 ---
 
-## 10. FUNDAMENTAL FILTER
+## 11. FUNDAMENTAL FILTER
 
-- Data source: `yahoo-finance2` `quoteSummary()` — no new package needed.
+- Data source: yahoo-finance2 quoteSummary() — no new package needed.
 - Rejection criteria (all configurable via .env):
-  - D/E ratio > MAX_DEBT_TO_EQUITY (default 2.0)
-  - EPS growth negative for >= MIN_EPS_GROWTH_CONSECUTIVE_NEGATIVE quarters (default 2)
-  - Revenue growth negative for >= MIN_REVENUE_GROWTH_CONSECUTIVE_NEGATIVE quarters (default 2)
-  - Promoter pledge > MAX_PROMOTER_PLEDGE_PCT (default 50%)
-- `is_healthy` is precomputed and stored in the fundamentals table.
-- Daily pipeline does a simple lookup — never recomputes health on every run.
-- Fail-open: if no fundamental row exists for a symbol, allow signal through + warn.
+  D/E ratio > MAX_DEBT_TO_EQUITY (default 2.0)
+  EPS growth negative for >= MIN_EPS_GROWTH_CONSECUTIVE_NEGATIVE quarters (default 2)
+  Revenue growth negative for >= MIN_REVENUE_GROWTH_CONSECUTIVE_NEGATIVE quarters (default 2)
+  Promoter pledge > MAX_PROMOTER_PLEDGE_PCT (default 50%)
+- is_healthy is precomputed and stored. Daily pipeline does a simple lookup.
+- Fail-open: if no fundamental row exists, allow signal through + warn.
 - Weekly refresh job: Saturday 6:00 PM IST. 500ms throttle between symbols.
 
 ---
 
-## 11. SENTIMENT LAYER
+## 12. SENTIMENT LAYER
 
-- Source: Google News RSS (free, no API key).
-- Only fetch for symbols that generated raw signals — not all 50.
-- Strip `.NS` suffix before building the RSS URL.
-- 500ms delay between fetches.
-- Fail-open on RSS fetch failure (fallback to NEUTRAL).
-- `sentiment_flags` table = **audit log only**. Pipeline always does a fresh fetch.
+- Source: Google News RSS (free, no API key). Tier 2: Finnhub (optional).
+- Only fetch for symbols that generated raw signals — never all 50.
+- Strip .NS suffix before building the RSS URL.
+- 500ms delay between fetches. Fail-open on fetch failure (fallback to NEUTRAL).
+- Negation-aware keyword matching: "probe clears company" => not negative.
+- sentiment_flags table = audit log only. Pipeline always does a fresh fetch.
   Never read stale sentiment from DB to make a gating decision.
-- False positives (e.g., "probe" in "probe clears company") are acceptable in MVP.
-  They suppress signals conservatively, not generate bad ones.
 
 ---
 
-## 12. PAPER TRADING
+## 13. PAPER TRADING
 
-- PnL formula uses **net returns** (after slippage + brokerage), identical to backtesting.
+- PnL uses net returns (after slippage + brokerage), identical to backtesting.
 - Same SL-priority conservative assumption as signal lifecycle.
-- `paper_trades.pnl_pct` = net return, not gross. Schema comment must say this.
+- LONG  PnL: gross_pnl_inr = shares * (exit_price - entry_price)
+- SHORT PnL: gross_pnl_inr = shares * (entry_price - exit_price)
+- pnl_pct = net return after costs. Schema comment must say this.
 
-```
 effective_entry = entry_price * (1 + (SLIPPAGE_PCT + BROKERAGE_PCT) / 100)
 effective_exit  = exit_price  * (1 - (SLIPPAGE_PCT + BROKERAGE_PCT) / 100)
 pnl_pct = ((effective_exit - effective_entry) / effective_entry) * 100
-```
 
 ---
 
-## 13. API CONVENTIONS
+## 14. BACKEND API CONVENTIONS
 
-Base URL: `/api/v1`
+Base URL: /api/v1
 
 All responses use this envelope:
-```json
 { "success": true/false, "data": {...} | null, "error": null | "message" }
-```
 
-Authentication: `X-API-Key` header required on all routes except `GET /health`.
-Favorites routes also require `X-User-Id` header (max 64 chars).
+Authentication: X-API-Key header on all routes except GET /health.
+Favorites routes also require X-User-Id header (max 64 chars).
 
-Pagination: all list endpoints support `page`, `limit` (max 100), `sort_by`, `sort_order`.
+Pagination: all list endpoints support page, limit (max 100), sort_by, sort_order.
 
 HTTP status codes:
 200 OK | 201 Created | 400 Bad Request | 401 Unauthorized |
 404 Not Found | 409 Conflict | 500 Internal Server Error | 502 Bad Gateway
 
-Rate limits:
-- Global: 100 req/min per IP
-- `GET /history/:symbol`: 30 req/min
+Rate limits: Global 100 req/min per IP. GET /history/:symbol 30 req/min.
 
-Error class hierarchy (`src/utils/errors.js`):
-AppError(500) → DataFetchError(502) | ValidationError(400) | NotFoundError(404) |
+Error class hierarchy (src/utils/errors.js):
+AppError(500) -> DataFetchError(502) | ValidationError(400) | NotFoundError(404) |
 AuthError(401) | ConflictError(409) | FundamentalError(502, non-blocking)
 
-All errors go through the centralized `error_handler.middleware.js`.
-In production: return generic message. In development: return err.message.
-Stack traces only in development.
+All errors go through error_handler.middleware.js.
+In production: generic message. In development: err.message. Stack traces dev-only.
 
 ---
 
-## 14. LOGGING RULES
+## 15. BACKEND LOGGING RULES
 
-Library: winston. Format: JSON. All pipeline logs include `pipeline_run_id`.
+Library: winston. Format: JSON. All pipeline logs include pipeline_run_id.
 
 Log structure:
-```json
 {
   "timestamp": "ISO8601",
   "level": "info|warn|error|debug",
-  "message": "Step N/12: ...",
+  "message": "Step N/13: ...",
   "service": "daily_pipeline",
   "pipeline_run_id": "run_YYYYMMDD_HHMM",
   "meta": { "symbols_processed": 51, "duration_ms": 1234 }
 }
-```
 
-- Every signal rejection must be logged at `info` level with symbol + reason + values.
-- Every pipeline step must log start and completion with counts.
+- Every signal rejection logged at info level with symbol + reason + values.
+- Every pipeline step logs start and completion with counts.
 - Never log sensitive data (DB passwords, API keys).
-- Pipeline log file: `logs/pipeline.log` (separate from combined.log).
+- Pipeline log file: logs/pipeline.log (separate from combined.log).
 
 ---
 
-## 15. TESTING RULES
+## 16. BACKEND TESTING RULES
 
-- Unit tests: `tests/unit/`. Run: `npm test`. Coverage target: 80%+ on services + utils.
-- Integration tests: `tests/integration/`. Run: `npm run test:integration`. Requires test DB.
+- Unit tests: tests/unit/. Run: npm test. Coverage target: 80%+ on services + utils.
+- Integration tests: tests/integration/. Run: npm run test:integration. Requires test DB.
 - ALL external services must be mocked:
-  - `yahoo-finance2` (`historical` AND `quoteSummary`) → fixtures in `tests/fixtures/candles/` and `tests/fixtures/fundamentals/`
-  - `axios` (Bhavcopy) → fixture CSV strings
-  - `rss-parser` → fixture XML in `tests/fixtures/rss/`
+  yahoo-finance2 (historical + quoteSummary) => fixtures
+  axios (Bhavcopy) => fixture CSV strings
+  rss-parser => fixture XML in tests/fixtures/rss/
 - Never call live APIs in any test.
 - Integration tests use a separate test database — never the development DB.
-- Backtest regression: re-run after any strategy/scoring change. Fail if win rate drops > 5pp.
+- Backtest regression: fail if win rate drops > 5pp from stored baseline.
 
 ---
 
-## 16. NSE-SPECIFIC RULES
+## 17. NSE-SPECIFIC RULES
 
-Symbol list: 50 stocks in `src/utils/symbols.util.js`. Do not add/remove without instruction.
-Index symbols: `^NSEI` (NIFTY 50) and `^INDIAVIX` (India VIX).
+Symbol list: 50 stocks in src/utils/symbols.util.js. Do not add/remove without instruction.
+Index symbols: ^NSEI (NIFTY 50) and ^INDIAVIX (India VIX).
+^INDIAVIX: stored in candles table only — no indicators, no features computed.
 
-`M&M.NS` — the `&` in the symbol:
-- In URLs/query params: must be `M%26M.NS` (URL-encoded).
-- Express auto-decodes it in `req.query`/`req.params`. No manual decoding needed in handlers.
-- In DB queries: use parameterised query with raw value `'M&M.NS'`.
+M&M.NS — the & in the symbol:
+- In URLs/query params: must be M%26M.NS.
+- Express auto-decodes in req.query/req.params. No manual decoding needed in handlers.
+- In DB queries: use parameterised query with raw value 'M&M.NS'.
 
-Holiday calendar: defined in `src/config/constants.js` as `nse_holidays_YYYY`.
+Holiday calendar: defined in src/config/constants.js as nse_holidays_YYYY.
 Must be updated every December for the next year.
-`countTradingDays()` and `isTradingDay()` in `date.util.js` use this calendar.
-Without it, data validation fires false-positive "missing candle" warnings for every NSE holiday.
 
 ---
 
-## 17. CODE STYLE
+## 18. BACKEND CODE STYLE
 
-- All async functions use `async/await`. No raw `.then()` chains.
-- All DB queries and external calls are wrapped in `try/catch`. Never swallow errors.
-- Use the custom error classes from `src/utils/errors.js`. Never `throw new Error(...)` directly.
-- Functions are named clearly for what they do: `fetchAndStoreCandles`, `computeHealthFlag`,
-  `deduplicateAndGenerate`. No vague names like `process` or `handle`.
-- No magic numbers. All thresholds come from `src/config/env.js` or `constants.js`.
-- Comments are required for non-obvious financial logic (e.g., why MAX not MIN for SL merge).
-- Use `DECIMAL` arithmetic carefully — JavaScript floats. Round with `math.util.js` helpers.
+- All async functions use async/await. No raw .then() chains.
+- All DB queries and external calls wrapped in try/catch. Never swallow errors.
+- Use custom error classes from src/utils/errors.js. Never throw new Error() directly.
+- Functions named clearly: fetchAndStoreCandles, computeHealthFlag, deduplicateAndGenerate.
+- No magic numbers. All thresholds come from src/config/env.js or constants.js.
+- Comments required for non-obvious financial logic.
+- Use DECIMAL arithmetic carefully. Round with math.util.js helpers.
+- Never console.log — use the winston logger.
 
 ---
 
-## 18. DOCUMENT SYNC RULE
+## 19. BACKEND WHAT NOT TO DO
 
-**The technical document (`backend_technical_document.md`) is the source of truth.**
+- Do not add a new npm package without noting it in the document and getting approval.
+- Do not create a new DB table without a numbered migration SQL file.
+- Do not read process.env outside src/config/env.js.
+- Do not write raw SQL strings with user input — always parameterise.
+- Do not store ^INDIAVIX indicators or features — candles only.
+- Do not run the fundamental filter for all 50 stocks — only for symbols with raw signals.
+- Do not run the sentiment RSS fetch for all 50 stocks — same restriction.
+- Do not auto-run migrations on server boot.
+- Do not change SL-priority conflict resolution without updating signal lifecycle,
+  paper trading, AND backtesting to match, and documenting the change.
+- Do not change the pipeline step count or order without updating the pipeline job
+  and the backend document.
 
-When any of the following change in code, the document must be updated in the same session:
-- DB schema (table, column, index)
+---
+
+# ═══════════════════════════════════════════
+# FRONTEND RULES  (Sections 20–38)
+# ═══════════════════════════════════════════
+
+## 20. FRONTEND IDENTITY
+
+This is the TradeNeuron frontend — a React/TypeScript single-page trading dashboard.
+Stack: React 18 + TypeScript 5 + Vite + TanStack Query + Zustand + Tailwind CSS.
+It is an internal tool. Density and accuracy outweigh aesthetics.
+Default theme: dark. IST timezone everywhere.
+
+---
+
+## 21. FRONTEND ABSOLUTE RULES — NEVER VIOLATE
+
+1. No any. Use unknown and narrow explicitly. noImplicitAny: true in tsconfig.
+   If the shape is genuinely unknown, define a type for what you do know.
+
+2. No console.log. Use logger.debug/info/warn/error from src/utils/logger.ts.
+   ESLint enforces this with "no-console": "error".
+
+3. Never access import.meta.env.VITE_* directly in components.
+   Always use the constants exported from src/utils/constants.ts.
+
+4. Never format numbers inline in components.
+   All price, percentage, date, and share formatting goes through src/utils/format.ts.
+
+5. Every data-fetching component must handle all three states: loading, error, success.
+   Pattern: if (isLoading) => skeleton | if (isError) => ErrorState | if (empty) => EmptyState | data.
+   Never render a blank panel during loading.
+
+6. Every page must be wrapped in PageErrorBoundary.
+   Every chart must be wrapped in ChartErrorBoundary.
+   A crash in one component must never blank the whole app.
+
+7. M&M.NS must always be URL-encoded when used in URL segments or query strings.
+   Call encodeURIComponent(symbol) in every apiClient.get() call and every navigate() call.
+   Decode with decodeURIComponent() when reading from useParams().
+
+8. Never call API functions directly from components.
+   All API calls go through React Query hooks in src/hooks/. Components use hooks only.
+
+9. Never hardcode strings that the backend also defines.
+   Signal types, statuses, directions, strategy names — import from src/types/.
+
+10. Filter state on list pages must be synced to URL query params.
+    Filters must survive page refresh and support shareable URLs.
+    Use useFilterUrlSync for all filter state management.
+
+11. Text inputs and sliders that trigger API calls must be debounced at 300ms.
+    Use useDebounce from src/hooks/useDebounce.ts. Never fire a query on every keystroke.
+
+12. Feature flags control both routing AND UI rendering.
+    When FEATURES.shortSignals is false, the Direction column, Direction filter, and
+    SHORT-related labels must not appear anywhere in the UI — not disabled, not greyed, absent.
+
+---
+
+## 22. FRONTEND PROJECT STRUCTURE
+
+Respect this layout exactly. Never create files outside it without instruction.
+
+```
+frontend/
+  src/
+    api/            # client.ts + one file per resource (signals, stocks, favorites, etc.)
+    components/
+      layout/       # AppShell, Sidebar, Topbar, PipelineStatusBar
+      errors/       # RootErrorBoundary, PageErrorBoundary, ChartErrorBoundary
+      auth/         # ApiKeySetupScreen, ApiKeyModal, AuthGuard
+      signals/      # SignalCard, SignalTable, SignalBadge, SignalFilters, SignalDetailDrawer
+      charts/       # CandlestickChart, EquityCurveChart, DrawdownChart, VolumeChart
+      stocks/       # StockHeader, IndicatorGrid, FeatureGrid, SectorBadge
+      paper_trading/ # PaperSummaryCards, PaperTradeTable, PnLCurveChart
+      backtest/     # BacktestResultCard, MetricsComparisonTable, WalkForwardChart
+      favorites/    # FavoritesList, FavoriteCard, AddFavoriteDialog
+      common/       # DataTable, StatCard, EmptyState, ErrorState, LoadingSkeleton,
+                    # ConfidenceBar, RiskRewardBadge, MarketRegimeBadge, PriceChange, Pagination
+    hooks/          # useSignals, useStockDetail, useHealth, useMarketStatus,
+                    # useFavorites, usePaperTrading, useBacktest,
+                    # useDebounce, useFilterUrlSync, useKeyboardShortcuts
+    pages/          # Dashboard, Signals, StockDetail, PaperTrading, Backtest, Watchlist, Settings
+    store/          # identity.store.ts (userId + apiKey), theme.store.ts, ui.store.ts
+    types/          # api.types.ts, signal.types.ts, stock.types.ts,
+                    # paperTrade.types.ts, backtest.types.ts, health.types.ts
+    utils/          # format.ts, symbols.ts, constants.ts, logger.ts, featureFlags.ts
+    mocks/          # handlers.ts (MSW) + fixtures/
+    styles/         # globals.css
+    App.tsx
+    main.tsx
+```
+
+---
+
+## 23. FRONTEND TECH STACK — APPROVED PACKAGES ONLY
+
+Do not install any package not listed here without explicit approval.
+
+Runtime:
+react ^18.x | react-dom ^18.x | typescript ^5.x | vite ^5.x |
+react-router-dom ^6.x | @tanstack/react-query ^5.x | zustand ^4.x | axios ^1.x |
+tailwindcss ^3.x | @shadcn/ui (latest) | lucide-react ^0.4xx | clsx ^2.x |
+lightweight-charts ^4.x | recharts ^2.x |
+date-fns ^3.x | date-fns-tz ^2.x | react-hot-toast ^2.x | use-debounce ^10.x
+
+Dev:
+vitest ^1.x | @testing-library/react ^14.x | msw ^2.x | eslint ^8.x | prettier ^3.x
+
+---
+
+## 24. FRONTEND ENVIRONMENT VARIABLES
+
+All frontend env vars are prefixed VITE_ and only accessed through src/utils/constants.ts.
+
+VITE_API_BASE_URL         — backend base URL
+VITE_API_KEY              — default API key (overridden by user entry)
+VITE_APP_NAME             — "TradeNeuron"
+VITE_APP_VERSION          — semver
+VITE_ENABLE_SHORT_SIGNALS — "true"/"false"
+VITE_ENABLE_PAPER_TRADING — "true"/"false"
+VITE_ENABLE_BACKTEST      — "true"/"false"
+VITE_DEBUG_MODE           — "true"/"false" (enables logger.debug in production)
+
+---
+
+## 25. TYPE SYSTEM RULES
+
+- All API response shapes are defined in src/types/. Types are manually maintained
+  and must stay in sync with the backend. The TypeScript compiler is the enforcement.
+- tsconfig.json must include: "strict": true, "noImplicitAny": true,
+  "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true.
+- Nullable fields from the backend are T | null. Never T | undefined for API fields.
+- When the backend adds a field: add to the type first, then consume in the component.
+- When the backend removes a field: let the compiler list every broken consumer. Fix all.
+- String literal unions for all backend enums:
+  signal_type: 'BUY' | 'SELL'
+  direction:   'LONG' | 'SHORT'
+  status:      'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED'
+  rsi_zone:    'OVERSOLD' | 'PULLBACK' | 'NEUTRAL' | 'OVERBOUGHT'
+  regime:      'BULLISH' | 'SIDEWAYS' | 'BEARISH' | 'HIGH_VOLATILITY'
+  exit_reason: 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'MANUAL' | null
+  trade_status: 'OPEN' | 'CLOSED'
+  All nullable indicator/feature fields: number | null (never number | undefined)
+
+---
+
+## 26. AUTHENTICATION AND ONBOARDING FLOW
+
+First visit (no API key in localStorage):
+1. App.tsx renders ApiKeySetupScreen — full page, no sidebar/topbar.
+2. User enters key => frontend calls GET /api/v1/health to validate.
+3. On 200: saves key to identity store, navigates to /.
+4. On 401: shows inline error "Invalid key". On network error: shows server URL.
+
+Mid-session 401 (key rotated in backend):
+1. Axios response interceptor dispatches tn:auth-failure custom event.
+2. AppShell opens ApiKeyModal — full-screen, not dismissible, no backdrop click.
+3. User re-enters valid key => modal closes, app continues.
+
+AuthGuard wraps all routes inside AppShell.
+If apiKey === '', redirects to /setup.
+
+The user UUID (userId) is auto-generated once on first visit and never shown to the user.
+It is sent as X-User-Id with every request.
+
+---
+
+## 27. API CLIENT RULES
+
+src/api/client.ts is the single Axios instance. Rules:
+- Request interceptor injects X-API-Key and X-User-Id on every request.
+- Response interceptor unwraps the { success, data, error } envelope.
+  Downstream code receives only data.
+- On success: false from backend: rejects with the error message string.
+- On HTTP 401: dispatches tn:auth-failure event.
+- Never create a second Axios instance. All API calls use this one.
+- Timeout: 15 seconds.
+
+API module files wrap one resource each. They return typed promises.
+Never call apiClient from components directly — always through a React Query hook.
+
+encodeURIComponent(symbol) must appear in every stocksApi.detail(),
+stocksApi.history(), and favoritesApi.remove() call. Never skip it.
+
+---
+
+## 28. STATE MANAGEMENT RULES
+
+TanStack Query — all server state. Never store server data in Zustand.
+Zustand — all client-only state (apiKey, userId, theme, UI flags). Never fetch data in Zustand.
+
+Cache stale times:
+- Active signals: 5min | Signal list: 2min | Stock detail: 5min
+- History/candles: 30min | Favorites: 30sec | Paper trading: 5min
+- Backtest: 10min | Health check: 60sec (polling)
+
+refetchOnWindowFocus: false on all queries except favorites and health.
+Traders switch tabs constantly — surprise re-fetches during the trading day are disruptive.
+
+Mutations must use optimistic updates for favorites add/remove:
+1. onMutate: cancel queries, snapshot previous data, apply optimistic change.
+2. onError: roll back to snapshot.
+3. onSettled: invalidate to sync with server truth.
+
+placeholderData: (prev) => prev on all paginated queries.
+Prevents content flash when changing pages.
+
+---
+
+## 29. ROUTING RULES
+
+- /setup — ApiKeySetupScreen. No auth guard. No app shell.
+- All other routes — wrapped in AuthGuard inside AppShell.
+- Feature-flagged routes redirect to / when flag is off: never render disabled.
+- Symbol in StockDetail URL: always URL-encoded in navigate(), always decoded with
+  decodeURIComponent(params.symbol) before use.
+
+---
+
+## 30. ERROR BOUNDARY HIERARCHY
+
+Three levels. Must not be collapsed or removed.
+
+RootErrorBoundary       <- full-page fallback, "Reload app" button
+  AppShell
+    PageErrorBoundary   <- per route, keeps sidebar/topbar alive
+      PageComponent
+        ChartErrorBoundary  <- chart only, keeps rest of page alive
+          CandlestickChart
+
+Every Route element in App.tsx must be wrapped in PageErrorBoundary.
+Every chart component must be wrapped in ChartErrorBoundary at its call site.
+
+---
+
+## 31. LOADING STATE STANDARDS
+
+Follow this table without exception:
+
+Scenario                             | Component
+First load, no cached data           | LoadingSkeleton — matches layout of expected content
+Background refetch, cached data      | Subtle spinner in topbar corner only
+Table page change                    | Row skeletons via placeholderData — existing data stays
+Chart loading                        | LoadingSkeleton height="300px"
+Mutation in progress                 | Button disabled + spinner + text changes ("Adding...")
+Empty results (after load complete)  | EmptyState — only when !isLoading && data.length === 0
+
+The universal pattern — use in every data-dependent component:
+  if (isLoading) return <LoadingSkeleton variant="table-row" rows={5} />;
+  if (isError)   return <ErrorState message={friendlyError(error.message)} onRetry={refetch} />;
+  if (!data?.items.length) return <EmptyState message="..." />;
+  return <DataComponent data={data.items} />;
+
+---
+
+## 32. FILTER AND PAGINATION RULES
+
+Debounce timing:
+- Text inputs, symbol search, confidence slider => 300ms via useDebounce
+- Date pickers, multi-select pills, toggles => no debounce
+
+URL sync (all filter state on list pages):
+Use useFilterUrlSync hook. Write every filter to URL query params on change.
+Delete param when value is default/empty (keep URLs clean).
+Always reset page to 1 when any non-page filter changes.
+
+Pagination defaults:
+- Default page size: 20 (matches PAGINATION.defaultPageSize in constants)
+- Available sizes: 20, 50, 100
+- Page size persisted in URL (?limit=50)
+
+---
+
+## 33. FEATURE FLAG RULES
+
+All flag decisions go through src/utils/featureFlags.ts. Never check FEATURES.* directly
+in component JSX — always call the named function from featureFlags.
+
+When a flag is off:
+- Route: redirect to /, never render disabled/greyed page
+- Sidebar item: absent entirely
+- Table column: filtered out of the columns array, never rendered as hidden
+- Filter option: not in the dropdown/pills list
+
+Correct pattern — filter from array:
+  const columns = [
+    ...baseColumns,
+    featureFlags.showShortDirection() && directionColumn,
+  ].filter(Boolean);
+
+Wrong pattern — never do this:
+  {FEATURES.shortSignals && <DirectionColumn />}
+
+---
+
+## 34. CHART RULES
+
+CandlestickChart:
+- Data limit: cap at 500 candles before passing to chart (via useMemo + slice(-500)).
+- Memoize chartData with useMemo([candles]). Re-render only when candles reference changes.
+- Destroy chart instance in useEffect cleanup on unmount.
+- Chart theme follows app theme (dark/light).
+- Wrap in ChartErrorBoundary.
+
+EMA colours (immutable):
+- EMA 20: #3B82F6 (blue)
+- EMA 50: #F97316 (orange)
+- EMA 200: #A855F7 (purple)
+
+EquityCurveChart:
+- Only closed paper trades (status === 'CLOSED'). Open trades excluded.
+- Sort by exit_date ascending before computing running sum.
+- Memoize with useMemo([closedTrades]).
+
+---
+
+## 35. FORMATTING RULES
+
+All formatting through src/utils/format.ts. Never inline in components.
+
+formatINR(2450)           => "Rs.2,450.00"   (Indian numbering, en-IN locale)
+formatPct(78)             => "78.00%"
+formatPct(2.45, true)     => "+2.45%"         (showSign=true for PnL)
+formatPct(-8.20, true)    => "-8.20%"
+formatRR(2.14)            => "2.14x"
+formatConfidence(78.5)    => "79"             (integer, no decimals)
+formatDate('2026-03-23')  => "23 Mar 2026"
+formatDateTime(isoStr)    => "23 Mar 2026, 10:15 PM IST"  (always IST)
+formatShares(28)          => "28 shares"
+
+PriceChange component rules:
+- Positive value => green text + up arrow
+- Negative value => red text + down arrow
+- Zero => grey text + dash
+
+ConfidenceBar colour thresholds:
+- 70-79: amber | 80-89: light green | 90-100: green | below 70: grey (defensive)
+
+---
+
+## 36. FRONTEND LOGGING RULES
+
+src/utils/logger.ts — four methods with environment-aware behaviour:
+- logger.debug / logger.info — no-ops in production (unless VITE_DEBUG_MODE=true)
+- logger.warn / logger.error — always fire in all environments
+
+The Axios interceptors use logger.debug for every request/response in development.
+Never call console.* directly anywhere — ESLint rule "no-console": "error" enforces this.
+
+---
+
+## 37. FRONTEND TESTING RULES
+
+- Unit tests: colocated as *.test.tsx or in __tests__/ subfolders.
+- Integration tests: full page renders inside QueryClientProvider + MemoryRouter + RootErrorBoundary.
+- ALL API calls mocked with MSW (src/mocks/handlers.ts). Never hit a live backend in tests.
+- Chart libraries (lightweight-charts, recharts) are mocked in tests.
+  Test the data transformation, not the library rendering.
+- localStorage persistence: test the store logic, not the storage mechanism.
+
+Must test:
+- format.ts — all functions with edge cases (zero, negative, large INR values)
+- useMarketStatus — IST timezone logic, weekend, pipeline run detection
+- useFilterUrlSync — URL read/write, page reset on filter change
+- featureFlags — all flags off => correct absence in UI
+- SignalBadge — all signal_type + direction combinations + flag interaction
+- Chart data transforms — 500-candle cap, equity curve running sum
+- ApiKeySetupScreen — empty key => stays on screen; 401 => inline error; 200 => enters app
+- PageErrorBoundary — component crash shows ErrorState, not blank page
+
+---
+
+## 38. FRONTEND WHAT NOT TO DO
+
+- Do not use any. Use unknown and narrow.
+- Do not call console.log — use logger.
+- Do not access import.meta.env outside constants.ts.
+- Do not format numbers in JSX — use format.ts.
+- Do not call API functions from components — use hooks.
+- Do not store server state in Zustand — use TanStack Query.
+- Do not render feature-flagged content as greyed-out or disabled — remove it entirely.
+- Do not skip encodeURIComponent on symbol values in URLs.
+- Do not skip error boundaries on pages or charts.
+- Do not render EmptyState before loading is complete.
+- Do not fire API calls on every keystroke — debounce text inputs and sliders at 300ms.
+- Do not add a new npm package without updating the frontend document.
+- Do not add a new page without wrapping it in PageErrorBoundary and an AuthGuard route.
+- Do not call useIdentityStore to read the API key in components — the Axios interceptor
+  handles injection. Components never touch the raw key.
+
+---
+
+# ═══════════════════════════════════════════
+# SHARED RULES  (Section 39)
+# ═══════════════════════════════════════════
+
+## 39. DOCUMENT SYNC RULE
+
+Both technical documents are sources of truth. They must stay in sync with the code.
+
+When a change touches the backend, update backend_technical_document.md in the same session.
+When a change touches the frontend, update frontend_technical_document.md in the same session.
+When a change touches both (new API field shown in UI), update both documents.
+
+Changes that require a backend document update:
+- DB schema (table, column, index) + new migration file
 - Pipeline step sequence or count
 - API endpoint (path, params, response shape)
-- Environment variable (added, renamed, removed)
+- Backend environment variable (added, renamed, removed)
 - Scoring weights or gate thresholds
 - Strategy entry conditions or signal calculation
 - Error class hierarchy
 
-Do not mark a task complete if the code and document are out of sync.
+Changes that require a frontend document update:
+- New component added to the component library
+- New page added
+- New hook with non-obvious caching behaviour
+- New environment variable (VITE_*)
+- Feature flag added or removed
+- Type changed to match a backend API change
+- Formatting rule changed
 
----
-
-## 19. WHAT NOT TO DO
-
-- Do not add a new npm package without noting it in the document and getting approval.
-- Do not create a new DB table without a numbered migration SQL file.
-- Do not read `process.env` outside `src/config/env.js`.
-- Do not use `console.log` — use the winston logger.
-- Do not write raw SQL strings with user input — always parameterise.
-- Do not store `^INDIAVIX` indicators or features — candles only.
-- Do not run the fundamental filter for all 50 stocks in the pipeline — only for symbols
-  that have raw signals after the strategy engine.
-- Do not run the sentiment RSS fetch for all 50 stocks — same restriction as above.
-- Do not auto-run migrations on server boot.
-- Do not change the SL-priority conflict resolution without updating both signal lifecycle
-  and paper trading to match, and documenting the change.
+Do not mark a task complete if the code and any document are out of sync.

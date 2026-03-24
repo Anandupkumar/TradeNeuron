@@ -1,10 +1,12 @@
 import { cn } from '@/lib/utils';
+import { toNum } from '../../utils/format';
 
 interface RiskRewardBadgeProps {
-  value: number;
+  value: number | string;
 }
 
-export function RiskRewardBadge({ value }: RiskRewardBadgeProps) {
+export function RiskRewardBadge({ value: raw_value }: RiskRewardBadgeProps) {
+  const value = toNum(raw_value) ?? 0;
   const color_classes =
     value < 1
       ? 'bg-red-500/10 text-red-400'

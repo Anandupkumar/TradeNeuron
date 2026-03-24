@@ -8,6 +8,7 @@ const indicatorModel = require('../../models/indicator.model');
 const featureModel = require('../../models/feature.model');
 const { nifty_index_symbol } = require('../../utils/symbols.util');
 const { getThresholds } = require('./adaptive_threshold.service');
+const { computeRollingVWAP } = require('../indicators/volume.service');
 
 function classifyRsiZone(rsi, adaptive) {
   if (rsi == null) return 'NEUTRAL';
@@ -103,6 +104,8 @@ async function computeFeatures(symbol, candles, indicators, nifty_candles) {
     ind && ind.atr != null ? parseFloat(ind.atr) : null
   );
 
+  const vwap_data = computeRollingVWAP(candles, 20);
+
   const features = [];
   for (let i = 0; i < candles.length; i++) {
     const candle = candles[i];
@@ -148,6 +151,27 @@ async function computeFeatures(symbol, candles, indicators, nifty_candles) {
     const is_ranging = computeIsRanging(candles, i, atr_values, breakout, rsi_zone);
     const z_score_20d = computeZScore(candles, i);
 
+    const delivery_pct = candle.delivery_pct != null ? parseFloat(candle.delivery_pct) : null;
+    const is_high_delivery = delivery_pct != null ? delivery_pct > 50 : null;
+
+    const vwap_entry = vwap_data[i];
+    const vwap = vwap_entry ? roundDecimal(vwap_entry.vwap, 2) : null;
+    const vwap_distance_pct = (vwap != null && vwap > 0)
+      ? roundDecimal(((adjusted_close - vwap) / vwap) * 100, 2)
+      : null;
+    const is_near_vwap = vwap_distance_pct != null ? Math.abs(vwap_distance_pct) < 2.0 : null;
+
+    const rvol = (vol_sma_20 != null && vol_sma_20 > 0)
+      ? roundDecimal(volume / vol_sma_20, 2)
+      : null;
+
+    let volume_tier = 'normal';
+    if (rvol != null) {
+      if (rvol >= 3.0) volume_tier = 'extreme';
+      else if (rvol >= 2.0) volume_tier = 'high';
+      else if (rvol >= 1.3) volume_tier = 'elevated';
+    }
+
     features.push({
       symbol,
       date: formatDate(candle.date),
@@ -161,6 +185,12 @@ async function computeFeatures(symbol, candles, indicators, nifty_candles) {
       is_liquid,
       is_ranging,
       z_score_20d,
+      rvol,
+      volume_tier,
+      vwap,
+      vwap_distance_pct,
+      is_near_vwap,
+      is_high_delivery,
     });
   }
 
