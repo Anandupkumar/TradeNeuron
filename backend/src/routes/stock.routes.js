@@ -8,6 +8,16 @@ const { NotFoundError } = require('../utils/errors');
 const { getSector } = require('../utils/symbols.util');
 const { isFavorite } = require('../services/favorites/favorite.service');
 
+function parseSignalJson(s) {
+  if (!s) return null;
+  return {
+    ...s,
+    reasons: typeof s.reasons === 'string' ? JSON.parse(s.reasons) : s.reasons,
+    explanation: typeof s.explanation === 'string' ? JSON.parse(s.explanation) : (s.explanation || null),
+    confidence_breakdown: typeof s.confidence_breakdown === 'string' ? JSON.parse(s.confidence_breakdown) : (s.confidence_breakdown || null),
+  };
+}
+
 router.get('/stock/:symbol', async (req, res, next) => {
   try {
     const { symbol } = req.params;
@@ -23,6 +33,12 @@ router.get('/stock/:symbol', async (req, res, next) => {
 
     const user_id = req.headers['x-user-id'];
     const is_favorite_flag = user_id ? await isFavorite(user_id, symbol) : undefined;
+
+    const raw_signal = active_signals.length > 0 ? active_signals[0] : null;
+    const active_signal = raw_signal ? {
+      ...parseSignalJson(raw_signal),
+      sector: getSector(raw_signal.symbol),
+    } : null;
 
     res.json({
       success: true,
@@ -57,10 +73,19 @@ router.get('/stock/:symbol', async (req, res, next) => {
           is_breakout: !!feature.is_breakout,
           near_support: !!feature.near_support,
           is_liquid: !!feature.is_liquid,
+          is_ranging: !!feature.is_ranging,
+          z_score_20d: feature.z_score_20d ?? null,
           distance_from_52w_high_pct: feature.distance_from_52w_high_pct,
           relative_strength_vs_nifty: feature.relative_strength_vs_nifty,
+          rvol: feature.rvol ?? null,
+          volume_tier: feature.volume_tier ?? null,
+          vwap: feature.vwap ?? null,
+          vwap_distance_pct: feature.vwap_distance_pct ?? null,
+          is_near_vwap: !!feature.is_near_vwap,
+          is_high_delivery: !!feature.is_high_delivery,
+          delivery_pct: feature.delivery_pct ?? null,
         } : null,
-        active_signal: active_signals.length > 0 ? active_signals[0] : null,
+        active_signal,
       },
       error: null,
     });

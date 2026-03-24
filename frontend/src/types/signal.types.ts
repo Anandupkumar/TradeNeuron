@@ -12,6 +12,13 @@ export type StrategySource =
   | 'BREAKDOWN'
   | string;
 
+export interface ConfidenceBreakdown {
+  technical: number;
+  momentum: number;
+  volume: number;
+  quality: number;
+}
+
 export interface Signal {
   id: number;
   symbol: string;
@@ -29,8 +36,12 @@ export interface Signal {
   reasons: string[];
   status: SignalStatus;
   strategy_source: StrategySource;
+  sector: string | null;
   is_favorite: boolean;
   created_at: string;
+  closed_at: string | null;
+  explanation: string[] | null;
+  confidence_breakdown: ConfidenceBreakdown | null;
 }
 
 export interface SignalFilters {
@@ -43,7 +54,7 @@ export interface SignalFilters {
   favorites_only?: boolean;
   page?: number;
   limit?: number;
-  sort_by?: 'date' | 'confidence' | 'symbol';
+  sort_by?: 'date' | 'confidence' | 'risk_reward' | 'symbol';
   sort_order?: 'asc' | 'desc';
 }
 

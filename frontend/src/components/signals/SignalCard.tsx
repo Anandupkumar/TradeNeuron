@@ -20,12 +20,12 @@ export function SignalCard({ signal, className }: SignalCardProps) {
   return (
     <div
       className={cn(
-        'rounded-lg border border-zinc-800 bg-zinc-900 p-4 transition-colors hover:border-zinc-700',
+        'flex h-full flex-col rounded-lg border border-zinc-800 bg-zinc-900 p-4 transition-colors hover:border-zinc-700',
         className,
       )}
     >
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Link
             to={`/stock/${encodeSymbol(signal.symbol)}`}
             className="text-base font-bold text-zinc-50 hover:text-emerald-400 transition-colors"
@@ -73,14 +73,14 @@ export function SignalCard({ signal, className }: SignalCardProps) {
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-zinc-400">
+      <div className="mt-auto flex items-center justify-between pt-3 text-xs text-zinc-400">
         <div className="flex items-center gap-2">
           <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-medium text-zinc-300">
             R:R {formatRR(signal.risk_reward)}
           </span>
-          <span>{signal.strategy_source.replaceAll('_', ' ')}</span>
+          <span className="truncate">{signal.strategy_source.replaceAll('_', ' ')}</span>
         </div>
-        <span>{formatDate(signal.date)}</span>
+        <span className="shrink-0">{formatDate(signal.date)}</span>
       </div>
     </div>
   );

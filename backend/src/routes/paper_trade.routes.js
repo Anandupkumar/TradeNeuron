@@ -33,7 +33,7 @@ router.get('/paper-trading/trades', async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        trades: result.rows,
+        items: result.rows,
         pagination: {
           page: result.page,
           limit: result.limit,

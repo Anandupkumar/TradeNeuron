@@ -37,6 +37,7 @@ router.get('/history/:symbol', async (req, res, next) => {
         close: c.close,
         adjusted_close: c.adjusted_close,
         volume: c.volume,
+        delivery_pct: c.delivery_pct ?? null,
       };
 
       if (value.include_indicators) {

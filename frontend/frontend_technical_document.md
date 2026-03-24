@@ -111,12 +111,13 @@ frontend/
   src/
     api/
       client.ts              # Axios instance with interceptors
-      signals.api.ts
+      signals.api.ts         # Includes rejected() method
       stocks.api.ts
       favorites.api.ts
       paperTrading.api.ts
       backtest.api.ts
       health.api.ts
+      tradeDecision.api.ts   # get, upsert, history for manual trade decisions
     components/
       layout/
         AppShell.tsx          # Sidebar + topbar + error boundary wrapper
@@ -136,6 +137,10 @@ frontend/
         SignalBadge.tsx
         SignalFilters.tsx
         SignalDetailDrawer.tsx
+        ConfidenceBreakdownBar.tsx
+        ExplainabilityPanel.tsx
+        TradeChecklist.tsx
+        DecisionOverridePanel.tsx
       charts/
         CandlestickChart.tsx
         EquityCurveChart.tsx
@@ -183,6 +188,7 @@ frontend/
       useDebounce.ts         # Re-export from use-debounce for uniformity
       useKeyboardShortcuts.ts
       useFilterUrlSync.ts    # Syncs filter state to/from URL query params
+      useTradeDecisions.ts   # Query + mutation hooks for trade decisions
     pages/
       Dashboard.tsx
       Signals.tsx
@@ -203,12 +209,14 @@ frontend/
       featureFlags.ts        # Feature flag resolution
     types/
       api.types.ts           # Generic API envelope + pagination
-      signal.types.ts
+      signal.types.ts        # Includes ConfidenceBreakdown interface
       stock.types.ts
       paperTrade.types.ts
       backtest.types.ts
       health.types.ts
       favorite.types.ts
+      rejectedSignal.types.ts  # RejectStage, RejectedSignal, RejectedSignalsResponse
+      tradeDecision.types.ts   # DecisionType, TradeDecision, DecisionHistoryItem
     mocks/
       handlers.ts            # MSW request handlers
       fixtures/              # Static mock data for tests
@@ -345,6 +353,13 @@ export type StrategySource  =
   | 'BREAKDOWN'
   | string;   // combined: "TREND_PULLBACK+BREAKOUT"
 
+export interface ConfidenceBreakdown {
+  technical: number;
+  momentum: number;
+  volume: number;
+  quality: number;
+}
+
 export interface Signal {
   id: number;
   symbol: string;
@@ -364,6 +379,8 @@ export interface Signal {
   strategy_source: StrategySource;
   is_favorite: boolean;
   created_at: string;              // ISO timestamp
+  explanation: string[] | null;
+  confidence_breakdown: ConfidenceBreakdown | null;
 }
 
 export interface SignalFilters {
@@ -577,6 +594,70 @@ export interface FavoritesResponse {
 }
 ```
 
+### Rejected signal type
+
+```typescript
+// src/types/rejectedSignal.types.ts
+
+export type RejectStage =
+  | 'FUNDAMENTAL_FILTER' | 'SENTIMENT_FILTER'
+  | 'VWAP_FILTER' | 'PCR_FILTER' | 'SECTOR_GATE'
+  | 'CONFIDENCE_GATE' | 'RR_GATE' | 'LIQUIDITY_GATE'
+  | 'MERGED_RISK_ZERO' | 'ACTIVE_CAP' | 'POSITION_SIZING';
+
+export interface RejectedSignal {
+  id: number;
+  symbol: string;
+  date: string;
+  strategy_source: string;
+  reject_stage: RejectStage;
+  reject_reason: string;
+  raw_confidence: number | null;
+  raw_rr: number | null;
+  created_at: string;
+}
+
+export interface RejectedSignalsResponse {
+  rejected: RejectedSignal[];
+}
+```
+
+### Trade decision type
+
+```typescript
+// src/types/tradeDecision.types.ts
+
+export type DecisionType = 'TAKEN' | 'SKIPPED' | 'MODIFIED';
+
+export interface TradeDecision {
+  signal_id: number;
+  user_identifier: string;
+  decision: DecisionType;
+  notes: string | null;
+  actual_entry: number | null;
+  actual_qty: number | null;
+  decided_at: string;
+  updated_at: string;
+}
+
+export interface DecisionHistoryItem extends TradeDecision {
+  symbol: string;
+  signal_type: SignalType;
+  confidence: number;
+  status: SignalStatus;
+}
+
+export interface DecisionHistoryResponse {
+  decisions: DecisionHistoryItem[];
+}
+```
+
+> **Backend contract notes:**
+> - `explanation` is a JSON array of human-readable sentences. The backend sets it to NULL for signals generated before migration 023.
+> - `confidence_breakdown` decomposes the overall confidence score into technical, momentum, volume, and quality buckets. NULL for pre-migration signals.
+> - `rejected_signals` provides full pipeline transparency — every rejected candidate is logged with its `reject_stage` and `reject_reason`.
+> - `trade_decisions` supports one decision per signal per user. The backend upserts using `INSERT ON DUPLICATE KEY UPDATE`.
+
 ### Type discipline rules
 
 These rules are absolute. No exceptions.
@@ -737,13 +818,39 @@ Each module wraps one resource. They are called only from React Query hooks — 
 
 ```typescript
 import apiClient from './client';
-import type { SignalListResponse, ActiveSignalsResponse, SignalFilters } from '../types';
+import type {
+  SignalListResponse, ActiveSignalsResponse, SignalFilters,
+  RejectedSignalsResponse,
+} from '../types';
 
 export const signalsApi = {
-  list:   (filters: SignalFilters): Promise<SignalListResponse> =>
+  list:     (filters: SignalFilters): Promise<SignalListResponse> =>
     apiClient.get('/signals', { params: filters }),
-  active: (): Promise<ActiveSignalsResponse> =>
+  active:   (): Promise<ActiveSignalsResponse> =>
     apiClient.get('/signals/active'),
+  rejected: (date?: string): Promise<RejectedSignalsResponse> =>
+    apiClient.get('/signals/rejected', { params: date ? { date } : {} }),
+};
+```
+
+**`src/api/tradeDecision.api.ts`**
+
+```typescript
+import apiClient from './client';
+import type { TradeDecision, DecisionHistoryResponse } from '../types';
+
+export const tradeDecisionApi = {
+  get:     (signalId: number): Promise<TradeDecision | null> =>
+    apiClient.get(`/signals/${signalId}/decision`),
+  upsert:  (signalId: number, body: {
+    decision: 'TAKEN' | 'SKIPPED' | 'MODIFIED';
+    notes?: string;
+    actual_entry?: number;
+    actual_qty?: number;
+  }): Promise<TradeDecision> =>
+    apiClient.post(`/signals/${signalId}/decision`, body),
+  history: (limit?: number): Promise<DecisionHistoryResponse> =>
+    apiClient.get('/decisions', { params: limit ? { limit } : {} }),
 };
 ```
 
@@ -916,6 +1023,32 @@ export function useMarketStatus(lastPipelineRun?: string | null): MarketStatus {
   const dataIsStale = isWeekday && istTime >= '17:00' && !pipelineRanToday;
 
   return { marketOpen, pipelineRanToday, dataIsStale, isWeekday };
+}
+```
+
+**`src/hooks/useTradeDecisions.ts`**
+
+```typescript
+export function useDecision(signalId: number) {
+  return useQuery({
+    queryKey: ['decisions', signalId],
+    queryFn:  () => tradeDecisionApi.get(signalId),
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useUpsertDecision(signalId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { decision: DecisionType; notes?: string; actual_entry?: number; actual_qty?: number }) =>
+      tradeDecisionApi.upsert(signalId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['decisions', signalId] });
+      toast.success('Decision saved');
+    },
+    onError: () => toast.error('Failed to save decision'),
+  });
 }
 ```
 
@@ -1111,10 +1244,16 @@ See Section 17 for filter debouncing and URL sync implementation.
 Clicking any row opens a `SignalDetailDrawer`.
 
 **Signal Detail Drawer:**
+- Confidence breakdown bar (segmented by technical / momentum / volume / quality)
+- Explainability panel with human-readable sentences
 - All price levels with visual price bar (entry / SL / target relative to each other)
 - Position sizing: Shares · Position value · Capital at risk
-- Reasons as badge pills
+- Trade checklist with pass/warn/fail status for key attributes
+- Decision override panel for logging TAKEN / SKIPPED / MODIFIED with notes
 - Link to stock detail page
+
+**Rejected Signals Section:**
+Below the active and all signals sections, a collapsible "Rejected Signals" panel shows candidates that were filtered out by the pipeline. This fetches from `GET /api/v1/signals/rejected` and displays a table with columns: Symbol, Strategy, Reject Stage, Reason, Confidence, R:R.
 
 **Pagination:** Page size = 20 (default). User can change to 50 or 100 using a dropdown. See Section 17.
 
@@ -1307,6 +1446,67 @@ HIGH_VOLATILITY → red "⚠ High Volatility"
 ```
 
 **Feature flag interaction:** If `!FEATURES.shortSignals`, BEARISH regime is shown as "● Market Caution" rather than mentioning short signals.
+
+### ConfidenceBreakdownBar
+
+```typescript
+type ConfidenceBreakdownBarProps = {
+  breakdown: ConfidenceBreakdown | null;
+  confidence: number;
+};
+
+// Renders a segmented horizontal bar showing contribution from each scoring bucket.
+// Segments: Technical (blue), Momentum (amber), Volume (teal), Quality (purple).
+// Falls back to a simple single-colour ConfidenceBar if breakdown is null (pre-migration signals).
+// Each segment width is proportional to its value out of the total.
+// Legend shows bucket names and values below the bar.
+```
+
+### ExplainabilityPanel
+
+```typescript
+type ExplainabilityPanelProps = {
+  explanation: string[] | null;
+  reasons: string[];
+};
+
+// Renders a list of human-readable sentences from the explanation array.
+// Each sentence appears with a checkmark icon.
+// Falls back to rendering the legacy reasons array as badge pills if explanation is null.
+```
+
+### TradeChecklist
+
+```typescript
+type TradeChecklistProps = {
+  signal: Signal;
+};
+
+// Derives a checklist from signal attributes with pass/warn/fail status:
+// - Confidence: pass (>=80), warn (70-79), fail (<70)
+// - Risk:Reward: pass (>=2.5), warn (2.0-2.5), fail (<2.0)
+// - Direction: pass if LONG and regime BULLISH, warn if SIDEWAYS
+// - Status: pass (ACTIVE), info (TARGET_HIT/SL_HIT), grey (EXPIRED)
+// - Position Size: pass (shares > 0), fail (0)
+// - Volume: pass (reasons include volume keywords)
+// Each row shows icon (circle-check, alert-triangle, x-circle) + label + status text.
+```
+
+### DecisionOverridePanel
+
+```typescript
+type DecisionOverridePanelProps = {
+  signalId: number;
+};
+
+// Allows the trader to record their decision on a signal:
+// - Three buttons: TAKEN / SKIPPED / MODIFIED
+// - Notes textarea (optional)
+// - Actual entry price and quantity fields (shown only for MODIFIED)
+// - Save button triggers upsert mutation
+// - If a decision already exists, pre-fills all fields
+// Uses useDecision and useUpsertDecision hooks.
+```
 
 ### DataTable
 
@@ -2148,6 +2348,11 @@ Located in `src/**/__tests__/` or colocated as `*.test.tsx`.
 | `logger` | debug/info no-ops in production, warn/error always fire |
 | Chart data transforms | `chartData` memoization, 500-candle cap, `equityData` running sum |
 | `friendlyError` | All mapped errors, fallback for unknown errors |
+| `ConfidenceBreakdownBar` | Renders segmented bar with breakdown; falls back when breakdown is null |
+| `ExplainabilityPanel` | Renders explanation sentences; falls back to reasons when null |
+| `TradeChecklist` | Correct pass/warn/fail derivation for all signal attribute combinations |
+| `DecisionOverridePanel` | Pre-fills existing decision; saves new decision; shows modified fields |
+| `useTradeDecisions` | Query returns existing decision; mutation upserts and invalidates |
 
 ### API mock (MSW)
 
@@ -2162,6 +2367,10 @@ export const handlers = [
   http.get('/api/v1/signals',        () => HttpResponse.json({ success: true, data: { signals: mockActiveSignals, pagination: mockPagination }, error: null })),
   http.post('/api/v1/favorites',     () => HttpResponse.json({ success: true, data: mockFavorite, error: null }, { status: 201 })),
   http.delete('/api/v1/favorites/:symbol', () => HttpResponse.json({ success: true, data: { removed: true }, error: null })),
+  http.get('/api/v1/signals/rejected',    () => HttpResponse.json({ success: true, data: { rejected: mockRejectedSignals }, error: null })),
+  http.get('/api/v1/signals/:id/decision', () => HttpResponse.json({ success: true, data: null, error: null })),
+  http.post('/api/v1/signals/:id/decision', () => HttpResponse.json({ success: true, data: mockDecision, error: null })),
+  http.get('/api/v1/decisions',            () => HttpResponse.json({ success: true, data: { decisions: [] }, error: null })),
   // ... all endpoints
   // 401 handler for auth flow tests:
   http.get('/api/v1/health', ({ request }) => {
@@ -2188,6 +2397,8 @@ Each page test:
 - `PaperTrading`: equity curve sorted correctly; feature flag off → redirects to `/`
 - `Watchlist`: optimistic star toggle; 409 shows inline error; remove works
 - Error Boundary: chart crash shows "Chart unavailable" without breaking rest of page
+- `SignalDetailDrawer`: ConfidenceBreakdownBar renders breakdown; ExplainabilityPanel shows explanation; TradeChecklist derives correct statuses; DecisionOverridePanel saves decision
+- `Signals` page rejected section: collapsible section shows rejected signals from API; displays reject stage and reason
 
 ### What not to test
 
@@ -2342,6 +2553,31 @@ export const decodeSymbol = (s: string) => decodeURIComponent(s);
 | `strategy_source` | `string` | display name map | Text |
 | `is_favorite` | `boolean` | — | Star icon |
 | `created_at` | `string` (ISO) | `formatDateTime()` | Text |
+| `explanation` | `string[] \| null` | rendered as-is | `ExplainabilityPanel` sentences |
+| `confidence_breakdown` | `ConfidenceBreakdown \| null` | — | `ConfidenceBreakdownBar` segmented bar |
+
+### Rejected signal object
+
+| API field | TypeScript type | Format | Display component |
+|-----------|----------------|--------|------------------|
+| `symbol` | `string` | — | Text |
+| `date` | `string` | `formatDate()` | Text |
+| `strategy_source` | `string` | display name map | Text |
+| `reject_stage` | `RejectStage` | underscore to title case | Coloured pill |
+| `reject_reason` | `string` | rendered as-is | Text |
+| `raw_confidence` | `number \| null` | `formatConfidence()` | Text |
+| `raw_rr` | `number \| null` | `formatRR()` | Text |
+
+### Trade decision object
+
+| API field | TypeScript type | Format | Display component |
+|-----------|----------------|--------|------------------|
+| `signal_id` | `number` | — | Internal |
+| `decision` | `DecisionType` | — | Coloured pill (TAKEN=green, SKIPPED=grey, MODIFIED=amber) |
+| `notes` | `string \| null` | rendered as-is | Text area |
+| `actual_entry` | `number \| null` | `formatINR()` | Input field |
+| `actual_qty` | `number \| null` | integer | Input field |
+| `decided_at` | `string` | `formatDateTime()` | Text |
 
 ### Stock detail object
 
