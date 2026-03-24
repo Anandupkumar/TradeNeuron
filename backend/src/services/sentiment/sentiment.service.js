@@ -1,9 +1,12 @@
+const axios = require('axios');
 const { logger } = require('../../middlewares/logger.middleware');
 const { NEGATIVE_KEYWORDS, NEGATION_WORDS } = require('../../config/constants');
 const { formatDate } = require('../../utils/date.util');
 const config = require('../../config/env');
 const { fetchHeadlines } = require('./news.service');
 const sentimentFlagModel = require('../../models/sentiment_flag.model');
+
+const FINBERT_URL = process.env.FINBERT_URL || 'http://127.0.0.1:8765';
 
 function hasNearbyNegation(text, keyword) {
   const keyword_idx = text.indexOf(keyword);
@@ -35,11 +38,26 @@ function scoreSentiment(symbol, headlines) {
   return { sentiment: 'NEUTRAL', headline: null, confidence: 'HIGH', source: 'GOOGLE_NEWS_RSS' };
 }
 
+async function queryFinBERT(headlines) {
+  try {
+    const titles = headlines.map((h) => h.title).filter(Boolean);
+    if (titles.length === 0) return null;
+
+    const response = await axios.post(`${FINBERT_URL}/sentiment`, {
+      headlines: titles,
+    }, { timeout: 10000 });
+
+    return response.data;
+  } catch (error) {
+    logger.warn(`FinBERT microservice unavailable: ${error.message}`);
+    return null;
+  }
+}
+
 async function fetchFinnhubSentiment(symbol) {
   if (!config.finnhub_api_key) return null;
 
   try {
-    const axios = require('axios');
     const to_date = new Date();
     const from_date = new Date(Date.now() - 7 * 86400000);
     const from_str = formatDate(from_date);
@@ -71,18 +89,38 @@ async function filterBySentiment(signal_map) {
 
   for (const [symbol, signals] of Object.entries(signal_map)) {
     const headlines = await fetchHeadlines(symbol);
-    const result = scoreSentiment(symbol, headlines);
 
-    let final_sentiment = result.sentiment;
+    let final_sentiment = 'NEUTRAL';
+    let matched_headline = null;
+    let source = 'GOOGLE_NEWS_RSS';
+    let confidence = 'HIGH';
     let finnhub_score = null;
     let overridden = false;
 
-    if (result.sentiment === 'NEGATIVE' && config.finnhub_api_key) {
+    const finbert_result = await queryFinBERT(headlines);
+    if (finbert_result) {
+      source = 'FINBERT';
+      if (finbert_result.aggregate_score < -0.3) {
+        final_sentiment = 'NEGATIVE';
+        const worst = finbert_result.results
+          .filter((r) => r.label === 'negative')
+          .sort((a, b) => a.score - b.score)[0];
+        matched_headline = worst ? worst.text : null;
+      }
+    } else {
+      const keyword_result = scoreSentiment(symbol, headlines);
+      final_sentiment = keyword_result.sentiment;
+      matched_headline = keyword_result.headline;
+      source = keyword_result.source;
+      confidence = keyword_result.confidence;
+    }
+
+    if (final_sentiment === 'NEGATIVE' && config.finnhub_api_key) {
       finnhub_score = await fetchFinnhubSentiment(symbol);
       if (finnhub_score != null && finnhub_score > -0.2) {
         final_sentiment = 'NEUTRAL';
         overridden = true;
-        logger.info(`RSS false positive overridden by Finnhub for ${symbol} (score: ${finnhub_score})`);
+        logger.info(`Negative sentiment overridden by Finnhub for ${symbol} (score: ${finnhub_score})`);
       }
     }
 
@@ -90,15 +128,15 @@ async function filterBySentiment(signal_map) {
       symbol,
       flag_date: today,
       sentiment: final_sentiment,
-      headline: result.headline,
-      source: result.source,
-      confidence: result.confidence,
+      headline: matched_headline,
+      source,
+      confidence,
       finnhub_score,
       overridden,
     });
 
     if (final_sentiment === 'NEGATIVE') {
-      logger.info(`Signal for ${symbol} suppressed: negative news - ${result.headline}`);
+      logger.info(`Signal for ${symbol} suppressed: negative news — ${matched_headline}`);
     } else {
       passed[symbol] = signals;
     }
@@ -107,4 +145,4 @@ async function filterBySentiment(signal_map) {
   return passed;
 }
 
-module.exports = { scoreSentiment, filterBySentiment, hasNearbyNegation, fetchFinnhubSentiment };
+module.exports = { scoreSentiment, filterBySentiment, hasNearbyNegation, fetchFinnhubSentiment, queryFinBERT };

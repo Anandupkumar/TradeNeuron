@@ -1,7 +1,7 @@
 const { logger } = require('../middlewares/logger.middleware');
 const { formatDate } = require('../utils/date.util');
 const { nifty_50_symbols, nifty_index_symbol, india_vix_symbol } = require('../utils/symbols.util');
-const { fetchYahooCandles } = require('../services/data_ingestion/yahoo.service');
+const { fetchYahooCandles, probeYahooApi } = require('../services/data_ingestion/yahoo.service');
 const { validateData } = require('../services/data_ingestion/validation.service');
 const { computeAndStoreIndicators } = require('../services/indicators/index');
 const { computeAndStoreFeatures } = require('../services/features/feature.service');
@@ -9,11 +9,14 @@ const { computeAndStoreThresholds } = require('../services/features/adaptive_thr
 const { checkMarketRegime, runStrategies } = require('../services/strategies/index');
 const { filterByFundamentals } = require('../services/fundamentals/fundamental.filter');
 const { filterBySentiment } = require('../services/sentiment/sentiment.service');
+const { fetchBhavcopy } = require('../services/data_ingestion/bhavcopy.service');
+const { fetchPCR } = require('../services/data_ingestion/fno.service');
 const { deduplicateAndGenerate, updateSignalStatuses } = require('../services/signals/signal.service');
 const { createPaperTrades, updatePaperTrades } = require('../services/paper_trading/paper_trade.service');
 const candleModel = require('../models/candle.model');
 const signalModel = require('../models/signal.model');
 const config = require('../config/env');
+const { sendTelegramAlert } = require('../utils/notify.util');
 
 const ALL_FETCH_SYMBOLS = [...nifty_50_symbols, nifty_index_symbol, india_vix_symbol];
 const INDICATOR_SYMBOLS = [...nifty_50_symbols, nifty_index_symbol];
@@ -24,22 +27,55 @@ async function runDailyPipeline() {
   logger.info(`=== Daily Pipeline Start: ${today} (13 steps) ===`);
 
   try {
-    // Step 1: Fetch candles
+    // Step 1: Fetch candles (skip if Yahoo API is unreachable)
     logger.info('Step 1/13: Fetching candles for all symbols');
-    for (const symbol of ALL_FETCH_SYMBOLS) {
-      try {
-        const latest = await candleModel.findLatestBySymbol(symbol);
-        const start_date = latest
-          ? formatDate(new Date(new Date(latest.date).getTime() + 86400000))
-          : formatDate(new Date(Date.now() - 7 * 86400000));
+    const yahoo_available = await probeYahooApi();
+    if (!yahoo_available) {
+      logger.warn('Step 1: Yahoo API is unreachable or rate-limited — skipping live fetch, using existing data');
+    }
 
-        const candles = await fetchYahooCandles(symbol, start_date, today);
-        if (candles.length > 0) {
-          await candleModel.bulkUpsert(candles);
+    if (yahoo_available) {
+      for (const symbol of ALL_FETCH_SYMBOLS) {
+        try {
+          const latest = await candleModel.findLatestBySymbol(symbol);
+          const start_date = latest
+            ? formatDate(new Date(new Date(latest.date).getTime() + 86400000))
+            : formatDate(new Date(Date.now() - 7 * 86400000));
+
+          const candles = await fetchYahooCandles(symbol, start_date, today);
+          if (candles.length > 0) {
+            await candleModel.bulkUpsert(candles);
+          }
+        } catch (error) {
+          logger.error(`Step 1 failed for ${symbol}: ${error.message}`);
         }
-      } catch (error) {
-        logger.error(`Step 1 failed for ${symbol}: ${error.message}`);
       }
+    }
+
+    // Step 1b: Fetch NSE Bhavcopy for delivery percentage (fail-open)
+    try {
+      const bhavcopy_candles = await fetchBhavcopy(today);
+      if (bhavcopy_candles.length > 0) {
+        await candleModel.bulkUpsert(bhavcopy_candles);
+        logger.info(`Step 1b: Bhavcopy enriched ${bhavcopy_candles.length} candles with delivery data`);
+      }
+    } catch (error) {
+      logger.warn(`Step 1b: Bhavcopy fetch skipped — ${error.message}`);
+    }
+
+    // Step 1c: Fetch NIFTY PCR from NSE option chain (fail-open)
+    let nifty_pcr = null;
+    try {
+      nifty_pcr = await fetchPCR('NIFTY');
+    } catch (error) {
+      logger.warn(`Step 1c: PCR fetch skipped — ${error.message}`);
+    }
+
+    // Determine the latest available data date (may differ from today if live fetch was skipped)
+    const ref_candle = await candleModel.findLatestBySymbol(nifty_50_symbols[0]);
+    const data_date = ref_candle ? formatDate(ref_candle.date) : today;
+    if (data_date !== today) {
+      logger.info(`Using latest data date: ${data_date} (today: ${today})`);
     }
 
     // Step 2: Validate data
@@ -47,7 +83,7 @@ async function runDailyPipeline() {
     for (const symbol of nifty_50_symbols) {
       try {
         const seven_days_ago = formatDate(new Date(Date.now() - 7 * 86400000));
-        await validateData(symbol, seven_days_ago, today);
+        await validateData(symbol, seven_days_ago, data_date);
       } catch (error) {
         logger.error(`Step 2 failed for ${symbol}: ${error.message}`);
       }
@@ -104,6 +140,9 @@ async function runDailyPipeline() {
 
       const elapsed = Date.now() - start_time;
       logger.info(`=== Daily Pipeline Complete: ${elapsed}ms (skipped signal generation) ===`);
+      await sendTelegramAlert(
+        `⚠️ <b>TradeNeuron pipeline</b>\n${regime} regime — skipped signal generation.\nDuration: ${(elapsed / 1000).toFixed(1)}s`
+      );
       return;
     }
 
@@ -112,7 +151,7 @@ async function runDailyPipeline() {
     const raw_signal_map = {};
     for (const symbol of nifty_50_symbols) {
       try {
-        const signals = await runStrategies(symbol, today, regime);
+        const signals = await runStrategies(symbol, data_date, regime);
         if (signals.length > 0) {
           raw_signal_map[symbol] = signals;
         }
@@ -141,11 +180,11 @@ async function runDailyPipeline() {
         const short_signals = raw_signals.filter((s) => s.direction === 'SHORT');
 
         if (long_signals.length > 0) {
-          const signal = await deduplicateAndGenerate(symbol, today, long_signals);
+          const signal = await deduplicateAndGenerate(symbol, data_date, long_signals, new_signals, nifty_pcr);
           if (signal) new_signals.push(signal);
         }
         if (short_signals.length > 0) {
-          const signal = await deduplicateAndGenerate(symbol, today, short_signals);
+          const signal = await deduplicateAndGenerate(symbol, data_date, short_signals, new_signals, nifty_pcr);
           if (signal) new_signals.push(signal);
         }
       } catch (error) {
@@ -181,8 +220,21 @@ async function runDailyPipeline() {
 
     const elapsed = Date.now() - start_time;
     logger.info(`=== Daily Pipeline Complete: ${elapsed}ms ===`);
+
+    if (new_signals.length === 0 && regime !== 'HIGH_VOLATILITY') {
+      await sendTelegramAlert(
+        `⚠️ <b>TradeNeuron pipeline</b>\nPipeline ran but generated 0 signals.\nRegime: ${regime}\nDuration: ${(elapsed / 1000).toFixed(1)}s`
+      );
+    } else {
+      await sendTelegramAlert(
+        `✅ <b>TradeNeuron pipeline complete</b>\nSignals generated: ${new_signals.length}\nMarket regime: ${regime}\nDuration: ${(elapsed / 1000).toFixed(1)}s`
+      );
+    }
   } catch (error) {
     logger.error(`Pipeline fatal error: ${error.message}`, { stack: error.stack });
+    await sendTelegramAlert(
+      `❌ <b>TradeNeuron pipeline FAILED</b>\nError: ${error.message}`
+    );
     throw error;
   }
 }

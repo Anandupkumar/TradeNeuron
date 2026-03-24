@@ -2,8 +2,8 @@ const { pool } = require('../config/db');
 
 async function upsert(candle) {
   const sql = `
-    INSERT INTO candles (symbol, date, open, high, low, close, adjusted_close, volume, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO candles (symbol, date, open, high, low, close, adjusted_close, volume, source, delivery_pct)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       open = VALUES(open),
       high = VALUES(high),
@@ -11,12 +11,14 @@ async function upsert(candle) {
       close = VALUES(close),
       adjusted_close = VALUES(adjusted_close),
       volume = VALUES(volume),
-      source = VALUES(source)
+      source = VALUES(source),
+      delivery_pct = COALESCE(VALUES(delivery_pct), delivery_pct)
   `;
   const params = [
     candle.symbol, candle.date, candle.open, candle.high,
     candle.low, candle.close, candle.adjusted_close, candle.volume,
     candle.source || 'YAHOO',
+    candle.delivery_pct != null ? candle.delivery_pct : null,
   ];
   const [result] = await pool.query(sql, params);
   return result;
@@ -25,7 +27,7 @@ async function upsert(candle) {
 async function bulkUpsert(candles) {
   if (candles.length === 0) return;
   const sql = `
-    INSERT INTO candles (symbol, date, open, high, low, close, adjusted_close, volume, source)
+    INSERT INTO candles (symbol, date, open, high, low, close, adjusted_close, volume, source, delivery_pct)
     VALUES ?
     ON DUPLICATE KEY UPDATE
       open = VALUES(open),
@@ -34,12 +36,14 @@ async function bulkUpsert(candles) {
       close = VALUES(close),
       adjusted_close = VALUES(adjusted_close),
       volume = VALUES(volume),
-      source = VALUES(source)
+      source = VALUES(source),
+      delivery_pct = COALESCE(VALUES(delivery_pct), delivery_pct)
   `;
   const values = candles.map((c) => [
     c.symbol, c.date, c.open, c.high,
     c.low, c.close, c.adjusted_close, c.volume,
     c.source || 'YAHOO',
+    c.delivery_pct != null ? c.delivery_pct : null,
   ]);
   const [result] = await pool.query(sql, [values]);
   return result;

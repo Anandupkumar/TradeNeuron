@@ -42,6 +42,12 @@ async function runMigrations() {
 
     console.log(`Found ${pending.length} pending migration(s):`);
 
+    const IDEMPOTENT_ERRORS = new Set([
+      1050, // ER_TABLE_EXISTS_ERROR
+      1060, // ER_DUP_FIELDNAME (duplicate column)
+      1061, // ER_DUP_KEYNAME (duplicate key/index)
+    ]);
+
     for (const filename of pending) {
       const file_path = path.join(MIGRATIONS_DIR, filename);
       const sql = fs.readFileSync(file_path, 'utf-8').trim();
@@ -56,8 +62,13 @@ async function runMigrations() {
         console.log(`  Applied:  ${filename}`);
       } catch (error) {
         await connection.rollback();
-        console.error(`  FAILED:   ${filename} -- ${error.message}`);
-        throw error;
+        if (IDEMPOTENT_ERRORS.has(error.errno)) {
+          console.log(`  Skipped:  ${filename} (already applied — ${error.message})`);
+          await connection.query('INSERT INTO _migrations (filename) VALUES (?)', [filename]);
+        } else {
+          console.error(`  FAILED:   ${filename} -- ${error.message}`);
+          throw error;
+        }
       }
     }
 

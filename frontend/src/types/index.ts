@@ -12,6 +12,7 @@ export type {
 export type {
   RsiZone,
   MarketRegime,
+  VolumeTier,
   Candle,
   CandleWithIndicators,
   StockIndicators,

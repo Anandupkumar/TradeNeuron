@@ -2,8 +2,8 @@ const { pool } = require('../config/db');
 
 async function upsert(feature) {
   const sql = `
-    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       is_uptrend = VALUES(is_uptrend),
       rsi_zone = VALUES(rsi_zone),
@@ -14,7 +14,13 @@ async function upsert(feature) {
       relative_strength_vs_nifty = VALUES(relative_strength_vs_nifty),
       is_liquid = VALUES(is_liquid),
       is_ranging = VALUES(is_ranging),
-      z_score_20d = VALUES(z_score_20d)
+      z_score_20d = VALUES(z_score_20d),
+      rvol = VALUES(rvol),
+      volume_tier = VALUES(volume_tier),
+      vwap = VALUES(vwap),
+      vwap_distance_pct = VALUES(vwap_distance_pct),
+      is_near_vwap = VALUES(is_near_vwap),
+      is_high_delivery = VALUES(is_high_delivery)
   `;
   const params = [
     feature.symbol, feature.date,
@@ -25,6 +31,12 @@ async function upsert(feature) {
     feature.is_liquid ? 1 : 0,
     feature.is_ranging ? 1 : 0,
     feature.z_score_20d != null ? feature.z_score_20d : null,
+    feature.rvol != null ? feature.rvol : null,
+    feature.volume_tier || 'normal',
+    feature.vwap != null ? feature.vwap : null,
+    feature.vwap_distance_pct != null ? feature.vwap_distance_pct : null,
+    feature.is_near_vwap != null ? (feature.is_near_vwap ? 1 : 0) : null,
+    feature.is_high_delivery != null ? (feature.is_high_delivery ? 1 : 0) : null,
   ];
   const [result] = await pool.query(sql, params);
   return result;
@@ -33,7 +45,7 @@ async function upsert(feature) {
 async function bulkUpsert(features) {
   if (features.length === 0) return;
   const sql = `
-    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d)
+    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
     VALUES ?
     ON DUPLICATE KEY UPDATE
       is_uptrend = VALUES(is_uptrend),
@@ -45,7 +57,13 @@ async function bulkUpsert(features) {
       relative_strength_vs_nifty = VALUES(relative_strength_vs_nifty),
       is_liquid = VALUES(is_liquid),
       is_ranging = VALUES(is_ranging),
-      z_score_20d = VALUES(z_score_20d)
+      z_score_20d = VALUES(z_score_20d),
+      rvol = VALUES(rvol),
+      volume_tier = VALUES(volume_tier),
+      vwap = VALUES(vwap),
+      vwap_distance_pct = VALUES(vwap_distance_pct),
+      is_near_vwap = VALUES(is_near_vwap),
+      is_high_delivery = VALUES(is_high_delivery)
   `;
   const values = features.map((f) => [
     f.symbol, f.date,
@@ -56,6 +74,12 @@ async function bulkUpsert(features) {
     f.is_liquid ? 1 : 0,
     f.is_ranging ? 1 : 0,
     f.z_score_20d != null ? f.z_score_20d : null,
+    f.rvol != null ? f.rvol : null,
+    f.volume_tier || 'normal',
+    f.vwap != null ? f.vwap : null,
+    f.vwap_distance_pct != null ? f.vwap_distance_pct : null,
+    f.is_near_vwap != null ? (f.is_near_vwap ? 1 : 0) : null,
+    f.is_high_delivery != null ? (f.is_high_delivery ? 1 : 0) : null,
   ]);
   const [result] = await pool.query(sql, [values]);
   return result;

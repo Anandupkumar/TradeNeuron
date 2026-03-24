@@ -21,4 +21,22 @@ function calculateVolumeChange(volumes, volume_sma_20s) {
   });
 }
 
-module.exports = { calculateVolumeSma20, calculateVolumeChange };
+function computeRollingVWAP(candles, period = 20) {
+  return candles.map((c, i) => {
+    const start = Math.max(0, i - period + 1);
+    const window = candles.slice(start, i + 1);
+    let sum_tpv = 0;
+    let sum_vol = 0;
+    for (const x of window) {
+      const h = parseFloat(x.high);
+      const l = parseFloat(x.low);
+      const cl = parseFloat(x.close);
+      const v = parseInt(x.volume, 10) || 0;
+      sum_tpv += ((h + l + cl) / 3) * v;
+      sum_vol += v;
+    }
+    return { date: c.date, vwap: sum_vol > 0 ? sum_tpv / sum_vol : parseFloat(c.close) };
+  });
+}
+
+module.exports = { calculateVolumeSma20, calculateVolumeChange, computeRollingVWAP };

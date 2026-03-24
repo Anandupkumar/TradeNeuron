@@ -19,7 +19,7 @@ const strategy_options = [
   { value: 'BREAKDOWN', label: 'Breakdown' },
 ] as const;
 
-export default function backtestPage() {
+export default function BacktestPage() {
   const [strategy_filter, set_strategy_filter] = useState('');
 
   const results_query = useBacktestResults({
@@ -34,10 +34,10 @@ export default function backtestPage() {
   if (results_query.isError) {
     return (
       <div className="p-6">
-        {ErrorState({
-          message: 'Failed to load backtest results',
-          onRetry: () => results_query.refetch(),
-        })}
+        <ErrorState
+          message="Failed to load backtest results"
+          onRetry={() => results_query.refetch()}
+        />
       </div>
     );
   }
@@ -78,36 +78,39 @@ export default function backtestPage() {
 
       {results_query.isLoading && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {LoadingSkeleton({ variant: 'card', count: 3 })}
+          <LoadingSkeleton variant="card" count={3} />
         </div>
       )}
-      {!results_query.isLoading && results.length === 0 &&
-        EmptyState({
-          icon: <FlaskConical className="h-8 w-8" />,
-          title: 'No backtest results',
-          description: strategy_filter
-            ? 'No results found for this strategy. Try selecting a different one.'
-            : 'Run a backtest to see performance metrics here.',
-        })}
+      {!results_query.isLoading && results.length === 0 && (
+        <EmptyState
+          icon={<FlaskConical className="h-8 w-8" />}
+          title="No backtest results"
+          description={
+            strategy_filter
+              ? 'No results found for this strategy. Try selecting a different one.'
+              : 'Run a backtest to see performance metrics here.'
+          }
+        />
+      )}
       {!results_query.isLoading && results.length > 0 && (
         <>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {results.map((result) => (
               <div key={`${result.strategy_name}-${result.run_date}`}>
-                {BacktestResultCard({ result })}
+                <BacktestResultCard result={result} />
               </div>
             ))}
           </div>
 
           <div>
             <h2 className="mb-3 text-lg font-semibold text-zinc-100">Metrics Comparison</h2>
-            {MetricsComparisonTable({ results })}
+            <MetricsComparisonTable results={results} />
           </div>
 
           {all_results.length > 0 && (
             <div>
               <h2 className="mb-3 text-lg font-semibold text-zinc-100">Walk-Forward Analysis</h2>
-              {WalkForwardChart({ results: all_results })}
+              <WalkForwardChart results={all_results} />
             </div>
           )}
         </>

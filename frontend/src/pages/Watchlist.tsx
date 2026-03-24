@@ -6,7 +6,7 @@ import { AddFavoriteDialog } from '../components/favorites/AddFavoriteDialog';
 import { LoadingSkeleton } from '../components/common/LoadingSkeleton';
 import { ErrorState } from '../components/common/ErrorState';
 
-export default function watchlistPage() {
+export default function WatchlistPage() {
   const [dialog_open, set_dialog_open] = useState(false);
 
   const favorites_query = useFavorites();
@@ -43,22 +43,24 @@ export default function watchlistPage() {
         </button>
       </div>
 
-      {favorites_query.isLoading && LoadingSkeleton({ variant: 'card', count: 6 })}
+      {favorites_query.isLoading && <LoadingSkeleton variant="card" count={6} />}
 
-      {favorites_query.isError &&
-        ErrorState({
-          message: 'Failed to load watchlist',
-          onRetry: () => favorites_query.refetch(),
-        })}
+      {favorites_query.isError && (
+        <ErrorState
+          message="Failed to load watchlist"
+          onRetry={() => favorites_query.refetch()}
+        />
+      )}
 
-      {favorites_query.isSuccess &&
-        FavoritesList({ favorites, on_remove: handleRemove })}
+      {favorites_query.isSuccess && (
+        <FavoritesList favorites={favorites} on_remove={handleRemove} />
+      )}
 
-      {AddFavoriteDialog({
-        open: dialog_open,
-        on_close: () => set_dialog_open(false),
-        on_add: handleAdd,
-      })}
+      <AddFavoriteDialog
+        open={dialog_open}
+        on_close={() => set_dialog_open(false)}
+        on_add={handleAdd}
+      />
     </div>
   );
 }

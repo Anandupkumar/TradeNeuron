@@ -17,70 +17,92 @@ import { formatPct } from '../utils/format';
 import { featureFlags } from '../utils/featureFlags';
 import type { MarketRegime, PaperTradingSummary, HealthData, Signal } from '../types';
 
-function thirdStatCard(
-  paper_enabled: boolean,
-  paper_summary: PaperTradingSummary | undefined,
-  favorites_count: number,
-) {
+function ThirdStatCard({
+  paper_enabled,
+  paper_summary,
+  favorites_count,
+}: {
+  paper_enabled: boolean;
+  paper_summary: PaperTradingSummary | undefined;
+  favorites_count: number;
+}) {
   if (paper_enabled && paper_summary) {
-    return StatCard({
-      label: 'Open Paper Trades',
-      value: paper_summary.open_trades,
-      sub_text: `${paper_summary.total_trades} total trades`,
-    });
+    return (
+      <StatCard
+        label="Open Paper Trades"
+        value={paper_summary.open_trades}
+        sub_text={`${paper_summary.total_trades} total trades`}
+      />
+    );
   }
-  return StatCard({ label: 'Watchlist', value: favorites_count, sub_text: 'symbols tracked' });
+  return <StatCard label="Watchlist" value={favorites_count} sub_text="symbols tracked" />;
 }
 
-function fourthStatCard(
-  paper_enabled: boolean,
-  paper_summary: PaperTradingSummary | undefined,
-  health: HealthData | undefined,
-) {
+function FourthStatCard({
+  paper_enabled,
+  paper_summary,
+  health,
+}: {
+  paper_enabled: boolean;
+  paper_summary: PaperTradingSummary | undefined;
+  health: HealthData | undefined;
+}) {
   if (paper_enabled && paper_summary) {
     const pnl = paper_summary.total_pnl_pct ?? 0;
-    return StatCard({
-      label: 'Total PnL',
-      value: formatPct(pnl, true),
-      trend: pnl >= 0 ? 'up' : 'down',
-      sub_text: `Win rate: ${formatPct(paper_summary.win_rate_pct)}`,
-    });
+    return (
+      <StatCard
+        label="Total PnL"
+        value={formatPct(pnl, true)}
+        trend={pnl >= 0 ? 'up' : 'down'}
+        sub_text={`Win rate: ${formatPct(paper_summary.win_rate_pct)}`}
+      />
+    );
   }
-  return StatCard({
-    label: 'System Status',
-    value: health?.status === 'ok' ? 'Healthy' : 'Degraded',
-    sub_text: health?.db === 'connected' ? 'DB connected' : 'DB issue',
-  });
+  return (
+    <StatCard
+      label="System Status"
+      value={health?.status === 'ok' ? 'Healthy' : 'Degraded'}
+      sub_text={health?.db === 'connected' ? 'DB connected' : 'DB issue'}
+    />
+  );
 }
 
-function signalSection(
-  is_loading: boolean,
-  active_signals: Signal[],
-  active_count: number,
-) {
-  if (is_loading) return LoadingSkeleton({ variant: 'table-row', count: 3 });
+function SignalSection({
+  is_loading,
+  active_signals,
+  active_count,
+}: {
+  is_loading: boolean;
+  active_signals: Signal[];
+  active_count: number;
+}) {
+  if (is_loading) return <LoadingSkeleton variant="table-row" count={3} />;
 
   if (active_signals.length === 0) {
-    return EmptyState({
-      icon: <Activity className="h-8 w-8" />,
-      title: 'No active signals',
-      description: 'Signals will appear here after the daily pipeline runs.',
-      action: (
-        <Link
-          to="/signals"
-          className="rounded-md bg-zinc-800 px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-700"
-        >
-          View Signal History
-        </Link>
-      ),
-    });
+    return (
+      <EmptyState
+        icon={<Activity className="h-8 w-8" />}
+        title="No active signals"
+        description="Signals will appear here after the daily pipeline runs."
+        action={
+          <Link
+            to="/signals"
+            className="rounded-md bg-zinc-800 px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-700"
+          >
+            View Signal History
+          </Link>
+        }
+      />
+    );
   }
 
   return (
     <>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {active_signals.slice(0, 5).map((signal) => (
-          <div key={signal.id}>{SignalCard({ signal })}</div>
+          <div key={signal.id}>
+            <SignalCard signal={signal} />
+          </div>
         ))}
       </div>
       {active_signals.length > 5 && (
@@ -95,7 +117,7 @@ function signalSection(
   );
 }
 
-export default function dashboardPage() {
+export default function DashboardPage() {
   const signals_query = useActiveSignals();
   const health_query = useHealth();
   const favorites_query = useFavorites();
@@ -121,13 +143,13 @@ export default function dashboardPage() {
   if (has_error) {
     return (
       <div className="p-6">
-        {ErrorState({
-          message: 'Failed to load dashboard data',
-          onRetry: () => {
+        <ErrorState
+          message="Failed to load dashboard data"
+          onRetry={() => {
             signals_query.refetch();
             health_query.refetch();
-          },
-        })}
+          }}
+        />
       </div>
     );
   }
@@ -144,37 +166,39 @@ export default function dashboardPage() {
 
       {is_loading ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {LoadingSkeleton({ variant: 'card', count: 4 })}
+          <LoadingSkeleton variant="card" count={4} />
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {StatCard({
-            label: 'Active Signals',
-            value: active_count,
-            sub_text: active_count > 0 ? `${active_count} opportunities` : 'No signals today',
-          })}
+          <StatCard
+            label="Active Signals"
+            value={active_count}
+            sub_text={active_count > 0 ? `${active_count} opportunities` : 'No signals today'}
+          />
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <p className="text-sm text-zinc-400">Market Regime</p>
-            <div className="mt-2">{MarketRegimeBadge({ regime: derived_regime })}</div>
+            <div className="mt-2">
+              <MarketRegimeBadge regime={derived_regime} />
+            </div>
             <p className="mt-1 text-xs text-zinc-500">
               {market_status.pipelineRanToday ? 'Pipeline ran today' : 'Awaiting pipeline'}
             </p>
           </div>
-          {thirdStatCard(paper_enabled, paper_summary, favorites.length)}
-          {fourthStatCard(paper_enabled, paper_summary, health_query.data)}
+          <ThirdStatCard paper_enabled={paper_enabled} paper_summary={paper_summary} favorites_count={favorites.length} />
+          <FourthStatCard paper_enabled={paper_enabled} paper_summary={paper_summary} health={health_query.data} />
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <h2 className="text-lg font-semibold text-zinc-100">Active Signals</h2>
-          {signalSection(signals_query.isLoading, active_signals, active_count)}
+          <SignalSection is_loading={signals_query.isLoading} active_signals={active_signals} active_count={active_count} />
         </div>
 
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-zinc-100">Watchlist</h2>
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-            {favorites_query.isLoading && LoadingSkeleton({ variant: 'text' })}
+            {favorites_query.isLoading && <LoadingSkeleton variant="text" />}
             {!favorites_query.isLoading && favorites.length === 0 && (
               <div className="py-8 text-center">
                 <Star className="mx-auto h-6 w-6 text-zinc-600" />
@@ -210,7 +234,7 @@ export default function dashboardPage() {
             <BarChart3 className="h-5 w-5 text-zinc-400" />
             <h2 className="text-lg font-semibold text-zinc-100">Equity Curve</h2>
           </div>
-          {PnLCurveChart({ trades: closed_trades })}
+          <PnLCurveChart trades={closed_trades} />
         </div>
       )}
     </div>

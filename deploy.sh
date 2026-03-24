@@ -25,12 +25,32 @@ if [ "$MODE" = "dev" ]; then
     exit 1
   fi
 
+  echo "[Backend] Checking Python dependencies (FinBERT)..."
+  if command -v python3 &>/dev/null; then
+    if python3 -c "import fastapi, uvicorn, transformers, torch" 2>/dev/null; then
+      echo "  All Python deps already installed."
+    elif [ -f scripts/requirements.txt ]; then
+      echo "  Installing Python deps (torch download may take a few minutes)..."
+      pip3 install --user --break-system-packages -r scripts/requirements.txt || \
+        echo "  WARNING: Could not install Python deps. FinBERT may not start."
+    fi
+  fi
+
   echo "[Backend] Running migrations..."
   node scripts/migrate.js
 
-  echo "[Backend] Starting on port 3000..."
+  echo "[Backend] Starting Node.js server on port 3000..."
   node server.js &
   BACKEND_PID=$!
+
+  echo "[Backend] Starting FinBERT sentiment server on port 8765..."
+  FINBERT_PID=""
+  if command -v python3 &>/dev/null; then
+    python3 scripts/sentiment_server.py &
+    FINBERT_PID=$!
+  else
+    echo "  WARNING: python3 not found. Skipping FinBERT server."
+  fi
 
   # Wait for backend to be ready
   echo "[Backend] Waiting for server..."
@@ -49,6 +69,7 @@ if [ "$MODE" = "dev" ]; then
   if [ ! -f .env ]; then
     echo "ERROR: frontend/.env not found. Copy .env.example and configure it."
     kill $BACKEND_PID 2>/dev/null
+    [ -n "$FINBERT_PID" ] && kill $FINBERT_PID 2>/dev/null
     exit 1
   fi
 
@@ -59,8 +80,9 @@ if [ "$MODE" = "dev" ]; then
   echo ""
   echo "====================================="
   echo "  Backend:  http://localhost:3000"
+  echo "  FinBERT:  http://localhost:8765"
   echo "  Frontend: http://localhost:5173"
-  echo "  Press Ctrl+C to stop both"
+  echo "  Press Ctrl+C to stop all"
   echo "====================================="
   echo ""
 
@@ -68,7 +90,9 @@ if [ "$MODE" = "dev" ]; then
     echo ""
     echo "Shutting down..."
     kill $BACKEND_PID 2>/dev/null
+    [ -n "$FINBERT_PID" ] && kill $FINBERT_PID 2>/dev/null
     wait $BACKEND_PID 2>/dev/null
+    [ -n "$FINBERT_PID" ] && wait $FINBERT_PID 2>/dev/null
     echo "Done."
   }
   trap cleanup EXIT INT TERM
@@ -106,19 +130,33 @@ elif [ "$MODE" = "prod" ]; then
   echo "[Backend] Installing dependencies..."
   npm install --production
 
+  echo "[Backend] Checking Python dependencies (FinBERT)..."
+  if command -v python3 &>/dev/null; then
+    if python3 -c "import fastapi, uvicorn, transformers, torch" 2>/dev/null; then
+      echo "  All Python deps already installed."
+    elif [ -f scripts/requirements.txt ]; then
+      echo "  Installing Python deps (torch download may take a few minutes)..."
+      pip3 install --user --break-system-packages -r scripts/requirements.txt || \
+        echo "  WARNING: Could not install Python deps. FinBERT may not start."
+    fi
+  fi
+
   echo "[Backend] Running migrations..."
   node scripts/migrate.js
 
-  echo "[Backend] Starting on port 3000..."
+  echo "[Backend] Starting services..."
   echo ""
   echo "====================================="
   echo "  Backend:  http://localhost:3000"
+  echo "  FinBERT:  http://localhost:8765"
   echo "  Frontend: Serve frontend/dist/ with Nginx"
   echo "  Press Ctrl+C to stop"
   echo "====================================="
   echo ""
 
-  node server.js
+  npx concurrently -n node,finbert -c cyan,magenta \
+    "node server.js" \
+    "python3 scripts/sentiment_server.py || echo 'FinBERT exited — keyword sentiment fallback active'"
 
 else
   echo "Usage: ./deploy.sh [dev|prod]"

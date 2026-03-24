@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 import { DataTable } from '../common/DataTable';
-import { formatPct, formatRR, formatDate } from '../../utils/format';
+import { formatPct, formatRR, formatDate, toNum } from '../../utils/format';
 import type { BacktestResult } from '../../types';
 
 interface MetricsComparisonTableProps {
@@ -37,21 +37,27 @@ const columns = [
     key: 'win_rate_pct',
     header: 'Win Rate',
     sortable: true,
-    render: (r: BacktestResult) => (
-      <span className={cn(r.win_rate_pct >= 50 ? 'text-emerald-400' : 'text-red-400')}>
-        {formatPct(r.win_rate_pct)}
-      </span>
-    ),
+    render: (r: BacktestResult) => {
+      const v = toNum(r.win_rate_pct) ?? 0;
+      return (
+        <span className={cn(v >= 50 ? 'text-emerald-400' : 'text-red-400')}>
+          {formatPct(r.win_rate_pct)}
+        </span>
+      );
+    },
   },
   {
     key: 'avg_return_pct',
     header: 'Avg Return',
     sortable: true,
-    render: (r: BacktestResult) => (
-      <span className={cn(r.avg_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-        {formatPct(r.avg_return_pct, true)}
-      </span>
-    ),
+    render: (r: BacktestResult) => {
+      const v = toNum(r.avg_return_pct) ?? 0;
+      return (
+        <span className={cn(v >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+          {formatPct(r.avg_return_pct, true)}
+        </span>
+      );
+    },
   },
   {
     key: 'max_drawdown_pct',
@@ -65,8 +71,10 @@ const columns = [
     key: 'sharpe_ratio',
     header: 'Sharpe',
     sortable: true,
-    render: (r: BacktestResult) =>
-      r.sharpe_ratio == null ? <span className="text-zinc-500">—</span> : r.sharpe_ratio.toFixed(2),
+    render: (r: BacktestResult) => {
+      const v = toNum(r.sharpe_ratio);
+      return v == null ? <span className="text-zinc-500">—</span> : v.toFixed(2);
+    },
   },
   {
     key: 'profit_factor',
@@ -83,15 +91,13 @@ const columns = [
     key: 'avg_holding_days',
     header: 'Avg Hold Days',
     sortable: true,
-    render: (r: BacktestResult) =>
-      r.avg_holding_days == null ? (
-        <span className="text-zinc-500">—</span>
-      ) : (
-        `${r.avg_holding_days.toFixed(1)}d`
-      ),
+    render: (r: BacktestResult) => {
+      const v = toNum(r.avg_holding_days);
+      return v == null ? <span className="text-zinc-500">—</span> : `${v.toFixed(1)}d`;
+    },
   },
 ];
 
 export function MetricsComparisonTable({ results }: MetricsComparisonTableProps) {
-  return DataTable({ columns, data: results });
+  return <DataTable columns={columns} data={results} />;
 }

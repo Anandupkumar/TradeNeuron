@@ -410,6 +410,7 @@ export interface Candle {
   close: number;
   adjusted_close: number;
   volume: number;
+  delivery_pct: number | null;     // NSE delivery percentage (0–100)
 }
 
 export interface CandleWithIndicators extends Candle {
@@ -433,6 +434,8 @@ export interface StockIndicators {
   volume_change: number | null;
 }
 
+export type VolumeTier = 'LOW' | 'NORMAL' | 'HIGH' | 'VERY_HIGH' | 'EXTREME';
+
 export interface StockFeatures {
   is_uptrend: boolean;
   rsi_zone: RsiZone;
@@ -444,6 +447,15 @@ export interface StockFeatures {
   z_score_20d: number | null;
   distance_from_52w_high_pct: number | null;
   relative_strength_vs_nifty: number | null;
+
+  // --- Fields added by backend improvements ---
+  rvol: number | null;              // Relative Volume (today vol / 20-day avg vol)
+  volume_tier: VolumeTier | null;   // Tiered classification based on RVOL
+  vwap: number | null;              // Rolling Volume-Weighted Average Price
+  vwap_distance_pct: number | null; // Distance of close from VWAP (%)
+  is_near_vwap: boolean;            // |vwap_distance_pct| <= 1.5%
+  is_high_delivery: boolean;        // Delivery % above 20-day median
+  delivery_pct: number | null;      // NSE delivery percentage (0–100)
 }
 
 export interface StockDetail {
@@ -464,7 +476,11 @@ export interface HistoryResponse {
 ```
 
 > **Backend contract notes:**
-> - `is_ranging` and `z_score_20d` are computed by the backend's adaptive-threshold and range-strategy upgrades. The backend stores these in the `stock_features` table and returns them in the `GET /api/v1/stock/:symbol` features object. Ensure the backend API response includes both fields.
+> - `is_ranging` and `z_score_20d` are computed by the backend's adaptive-threshold and range-strategy upgrades. The backend stores these in the `features` table and returns them in the `GET /api/v1/stock/:symbol` features object.
+> - `rvol` (Relative Volume) is computed as `current_volume / avg_volume_20d`. `volume_tier` is derived from RVOL: LOW (<0.5), NORMAL (0.5–1.5), HIGH (1.5–2.5), VERY_HIGH (2.5–4.0), EXTREME (>4.0). These replace the simple `is_volume_spike` boolean for scoring purposes (though `is_volume_spike` is retained for backward compatibility).
+> - `vwap` is a rolling VWAP computed from intraday-equivalent data. `vwap_distance_pct` = `(close - vwap) / vwap * 100`. `is_near_vwap` flags when `|vwap_distance_pct| <= 1.5%`, used as a signal generation filter.
+> - `delivery_pct` comes from NSE Bhavcopy. `is_high_delivery` = true when today's delivery % exceeds the 20-day rolling median. High delivery on breakout signals adds a +10 confidence bonus.
+> - All new feature fields (`rvol`, `volume_tier`, `vwap`, `vwap_distance_pct`, `is_near_vwap`, `is_high_delivery`, `delivery_pct`) are stored in the `features` table and returned by the backend in the `GET /api/v1/stock/:symbol` response under the `features` object.
 
 ### Paper trade type
 
@@ -1113,9 +1129,23 @@ Clicking any row opens a `SignalDetailDrawer`.
 2. Candlestick chart with indicator overlays (EMA 20/50/200 toggleable)
 3. Volume chart (shared x-axis)
 4. Indicator grid: RSI, MACD, ATR, Volume change
-5. Feature grid: all boolean features + z_score_20d
+5. Feature grid: all boolean features + z_score_20d + RVOL / Volume Tier + VWAP distance + Delivery %
 6. Active signal panel (if signal exists)
 7. Signal history table (last 30 signals for this stock)
+
+**Feature grid additions (from backend improvements):**
+
+The feature grid now includes the following additional cards:
+
+| Feature | Field | Display | Card style |
+|---------|-------|---------|------------|
+| RVOL | `rvol` | `1.85x` (2 decimals + "x") | Numeric card |
+| Volume Tier | `volume_tier` | Coloured pill: LOW (grey), NORMAL (blue), HIGH (amber), VERY_HIGH (orange), EXTREME (red) | Pill badge |
+| VWAP | `vwap` | `formatINR()` | Numeric card |
+| VWAP Distance | `vwap_distance_pct` | `formatPct(v, true)` e.g. "+0.82%" | Signed % with colour |
+| Near VWAP | `is_near_vwap` | Green "Near" / grey "Far" pill | Boolean pill |
+| High Delivery | `is_high_delivery` | Green "Yes" / grey "No" pill | Boolean pill |
+| Delivery % | `delivery_pct` | `formatPct()` e.g. "42.50%" | Numeric card |
 
 **Candlestick chart controls:**
 - Timeframe: 1M / 3M / 6M / 1Y
@@ -1317,7 +1347,7 @@ Chart data is **memoized**. Re-renders only when `candles` reference changes —
 // The API call should enforce this via from_date, but as a safety net:
 const chartData = useMemo(() =>
   candles.slice(-500).map((c) => ({
-    time: c.date,  // 'YYYY-MM-DD'
+    time: toDateStr(c.date),  // always 'YYYY-MM-DD'
     open: c.open,
     high: c.high,
     low: c.low,
@@ -1326,6 +1356,22 @@ const chartData = useMemo(() =>
   [candles]
 );
 ```
+
+**Date string sanitisation (`toDateStr`):**
+
+Lightweight Charts requires date values in strict `yyyy-MM-dd` format. The backend may return ISO 8601 timestamps (e.g., `2025-09-23T18:30:00.000Z`) or `Date` objects depending on the MySQL driver configuration. Both `CandlestickChart.tsx` and `VolumeChart.tsx` use a `toDateStr` helper to guarantee the correct format:
+
+```typescript
+function toDateStr(raw: unknown): string {
+  if (raw instanceof Date) return raw.toISOString().slice(0, 10);
+  const s = String(raw);
+  if (s.length >= 10 && s[4] === '-' && s[7] === '-') return s.slice(0, 10);
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? '1970-01-01' : d.toISOString().slice(0, 10);
+}
+```
+
+This helper handles `Date` objects, ISO strings, plain `yyyy-MM-dd` strings, and falls back to `'1970-01-01'` for unparseable values rather than crashing the chart.
 
 The chart is initialised in a `useEffect`, updates data series on candle changes, and is fully destroyed on unmount. The chart container div gets `ref={chartContainerRef}`.
 
@@ -1397,51 +1443,80 @@ The `active_signals_count` from the health response is shown inline in the green
 
 All formatting must go through `src/utils/format.ts`. Never format numbers inline in components.
 
+### Type coercion helper
+
+MySQL returns `DECIMAL` columns as strings (e.g., `"2.00"` instead of `2.00`). All format functions accept `number | string | null | undefined` and internally coerce via a `toNum` helper:
+
+```typescript
+export function toNum(value: unknown): number | null {
+  if (value == null) return null;
+  const n = typeof value === 'string' ? parseFloat(value) : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+```
+
+All formatters return `"—"` for null/undefined/NaN inputs.
+
+**Defensive `.toFixed()` usage:** The backend improvements introduced several new numeric fields (`rvol`, `vwap`, `vwap_distance_pct`, `delivery_pct`) that arrive as MySQL `DECIMAL` strings. All components that call `.toFixed()` must guard against non-numeric values. The pattern is:
+
+```typescript
+(toNum(v) ?? 0).toFixed(2)
+// or for inline display:
+typeof value === 'number' ? value.toFixed(2) : '—'
+```
+
+This prevents `TypeError: value.toFixed is not a function` crashes when the backend returns string representations of decimals. Components hardened with this pattern include `IndicatorOverlay.tsx`, `IndicatorGrid.tsx`, and `FeatureGrid.tsx`.
+
 ### Price (INR)
 
 ```typescript
-export function formatINR(value: number): string {
-  return value.toLocaleString('en-IN', {
+export function formatINR(value: number | string | null | undefined): string {
+  const n = toNum(value);
+  if (n == null) return '—';
+  return n.toLocaleString('en-IN', {
     style: 'currency', currency: 'INR', minimumFractionDigits: 2,
   });
 }
 // 2450      → "₹2,450.00"
-// 2450000   → "₹24,50,000.00"   (Indian numbering: lakh, crore)
-// 68600     → "₹68,600.00"
+// "2450"    → "₹2,450.00"   (string input handled)
+// null      → "—"
 ```
 
 ### Percentage
 
 ```typescript
-export function formatPct(value: number, showSign = false): string {
-  const sign = showSign && value > 0 ? '+' : '';
-  return `${sign}${value.toFixed(2)}%`;
+export function formatPct(value: number | string | null | undefined, showSign = false): string {
+  const n = toNum(value);
+  if (n == null) return '—';
+  const sign = showSign && n > 0 ? '+' : '';
+  return `${sign}${n.toFixed(2)}%`;
 }
 // formatPct(78)           → "78.00%"
-// formatPct(2.45, true)   → "+2.45%"
-// formatPct(-8.20, true)  → "-8.20%"
+// formatPct("2.45", true) → "+2.45%"
+// formatPct(null)         → "—"
 ```
 
 ### Risk-reward
 
 ```typescript
-export function formatRR(value: number): string {
-  return `${value.toFixed(2)}x`;
+export function formatRR(value: number | string | null | undefined): string {
+  const n = toNum(value);
+  if (n == null) return '—';
+  return `${n.toFixed(2)}x`;
 }
-// 2.14 → "2.14x"
+// 2.14   → "2.14x"
+// "2.00" → "2.00x"  (MySQL returns DECIMAL as string)
 ```
 
 ### Dates (always IST)
 
 ```typescript
 export function formatDate(dateStr: string): string {
-  // Input: 'YYYY-MM-DD' string
   return format(parseISO(dateStr), 'd MMM yyyy');
 }
 // '2026-03-23' → "23 Mar 2026"
 
 export function formatDateTime(isoStr: string): string {
-  // Input: ISO UTC timestamp from API
   return formatInTimeZone(new Date(isoStr), 'Asia/Kolkata', "d MMM yyyy, h:mm a 'IST'");
 }
 // '2026-03-23T16:45:00.000Z' → "23 Mar 2026, 10:15 PM IST"
@@ -1450,8 +1525,10 @@ export function formatDateTime(isoStr: string): string {
 ### Shares
 
 ```typescript
-export function formatShares(value: number): string {
-  return value.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+export function formatShares(value: number | string | null | undefined): string {
+  const n = toNum(value);
+  if (n == null) return '—';
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
 }
 // 150 → "150"
 // 1200 → "1,200"
@@ -1462,21 +1539,20 @@ export function formatShares(value: number): string {
 Displayed as integer: `78` not `78.00`.
 
 ```typescript
-export function formatConfidence(value: number): string {
-  return Math.round(value).toString();
+export function formatConfidence(value: number | string | null | undefined): string {
+  const n = toNum(value);
+  if (n == null) return '—';
+  return Math.round(n).toString();
 }
 ```
 
-### Signal reasons display names
+### Signal reasons display
 
-| Backend string | Display label |
-|---------------|---------------|
-| "Trend Alignment" | Trend Alignment |
-| "RSI Pullback" | RSI Pullback |
-| "Volume Spike" | Volume Spike |
-| "Breakout" | Breakout |
-| "Range Setup" | Range Setup |
-| "Mean Reversion" | Mean Reversion |
+Signal reasons are rendered as-is from the backend — no display-name mapping is applied. The backend sends human-readable strings that are displayed directly as badge pills in `SignalDetailDrawer` and `SignalCard`.
+
+Known reason strings from the backend:
+
+`Trend Alignment` · `RSI Pullback` · `Volume Spike` · `High Volume` · `Very High Volume` · `Extreme Volume` · `Breakout` · `Range Setup` · `Mean Reversion` · `High Delivery` · `Near VWAP` · `FinBERT Positive` · `FinBERT Negative`
 
 ### Strategy source display names
 
@@ -2008,24 +2084,36 @@ Follow Tailwind's default breakpoints. Target at minimum:
 - Vite dev server proxies `/api` to the backend to avoid CORS:
 ```typescript
 // vite.config.ts
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
   return {
     server: {
+      port: 5173,
       proxy: {
         '/api': {
-          target: env.VITE_API_BASE_URL ?? 'http://localhost:3000',
+          target: 'http://localhost:3000',
           changeOrigin: true,
         }
       }
-    }
+    },
+    build: {
+      sourcemap: mode !== 'production',
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            'vendor-query': ['@tanstack/react-query'],
+            'vendor-charts': ['lightweight-charts', 'recharts'],
+          },
+        },
+      },
+    },
   };
 });
 ```
 
-> **Why `loadEnv`?** Inside `vite.config.ts`, `import.meta.env` is not available and `process.env.VITE_*` variables are not automatically loaded. Use Vite's `loadEnv()` helper to read `.env` files at config time.
+> The proxy target is hardcoded to `http://localhost:3000` (the backend server origin). Do not set it to `VITE_API_BASE_URL` which may include the `/api/v1` path prefix.
 - React Query DevTools mounted (lazy-loaded)
 - All `logger.debug` and `logger.info` output visible in console
 - Error boundary details shown (stack traces visible)
@@ -2249,7 +2337,7 @@ export const decodeSymbol = (s: string) => decodeURIComponent(s);
 | `shares_to_buy` | `number` | `formatShares()` | Text |
 | `position_value` | `number` | `formatINR()` | Text |
 | `capital_risk_inr` | `number` | `formatINR()` | Text |
-| `reasons` | `string[]` | display name map | Badge pills |
+| `reasons` | `string[]` | rendered as-is | Badge pills |
 | `status` | `SignalStatus` | — | `StatusBadge` |
 | `strategy_source` | `string` | display name map | Text |
 | `is_favorite` | `boolean` | — | Star icon |
@@ -2264,6 +2352,7 @@ export const decodeSymbol = (s: string) => decodeURIComponent(s);
 | `is_favorite` | `boolean` | — | Star toggle |
 | `latest_candle.close` | `number` | `formatINR()` | |
 | `latest_candle.volume` | `number` | `toLocaleString('en-IN')` | |
+| `latest_candle.delivery_pct` | `number \| null` | `formatPct()` | NSE delivery percentage |
 | `indicators.rsi` | `number \| null` | one decimal | + RSI zone badge |
 | `indicators.macd_line` | `number \| null` | signed, 2 dec | |
 | `indicators.atr` | `number \| null` | `formatINR()` | |
@@ -2275,7 +2364,13 @@ export const decodeSymbol = (s: string) => decodeURIComponent(s);
 | `features.z_score_20d` | `number \| null` | signed, 2 dec | |
 | `features.distance_from_52w_high_pct` | `number \| null` | `formatPct()` | |
 | `features.relative_strength_vs_nifty` | `number \| null` | `formatPct(v, true)` | |
-| `features.is_liquid` | `boolean` | — | Shown in feature grid |
+| `features.rvol` | `number \| null` | `(toNum(v) ?? 0).toFixed(2) + 'x'` | Numeric card |
+| `features.volume_tier` | `VolumeTier \| null` | — | Coloured pill (LOW/NORMAL/HIGH/VERY_HIGH/EXTREME) |
+| `features.vwap` | `number \| null` | `formatINR()` | Numeric card |
+| `features.vwap_distance_pct` | `number \| null` | `formatPct(v, true)` | Signed %, green/red |
+| `features.is_near_vwap` | `boolean` | — | Green "Near" / grey "Far" pill |
+| `features.is_high_delivery` | `boolean` | — | Green "Yes" / grey "No" pill |
+| `features.delivery_pct` | `number \| null` | `formatPct()` | Numeric card |
 
 ### Paper trade object
 

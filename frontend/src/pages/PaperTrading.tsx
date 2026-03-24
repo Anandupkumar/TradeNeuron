@@ -16,7 +16,7 @@ const status_options = [
   { value: 'CLOSED', label: 'Closed' },
 ] as const;
 
-export default function paperTradingPage() {
+export default function PaperTradingPage() {
   const [status_filter, set_status_filter] = useState('');
   const [symbol_filter, set_symbol_filter] = useState('');
   const [current_page, set_current_page] = useState(1);
@@ -54,13 +54,13 @@ export default function paperTradingPage() {
   if (summary_query.isError || trades_query.isError) {
     return (
       <div className="p-6">
-        {ErrorState({
-          message: 'Failed to load paper trading data',
-          onRetry: () => {
+        <ErrorState
+          message="Failed to load paper trading data"
+          onRetry={() => {
             summary_query.refetch();
             trades_query.refetch();
-          },
-        })}
+          }}
+        />
       </div>
     );
   }
@@ -76,14 +76,14 @@ export default function paperTradingPage() {
 
       {summary_query.isLoading && (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {LoadingSkeleton({ variant: 'card', count: 7 })}
+          <LoadingSkeleton variant="card" count={7} />
         </div>
       )}
       {!summary_query.isLoading && summary_query.data && (
-        PaperSummaryCards({ summary: summary_query.data })
+        <PaperSummaryCards summary={summary_query.data} />
       )}
 
-      {closed_trades.length > 0 && PnLCurveChart({ trades: closed_trades })}
+      {closed_trades.length > 0 && <PnLCurveChart trades={closed_trades} />}
 
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -117,28 +117,31 @@ export default function paperTradingPage() {
           </div>
         </div>
 
-        {trades_query.isLoading && LoadingSkeleton({ variant: 'table-row', count: 6 })}
-        {!trades_query.isLoading && trades.length === 0 &&
-          EmptyState({
-            icon: <FileBarChart className="h-8 w-8" />,
-            title: 'No paper trades found',
-            description: status_filter || symbol_filter
-              ? 'Try adjusting your filters.'
-              : 'Paper trades will appear here once signals are generated.',
-          })}
+        {trades_query.isLoading && <LoadingSkeleton variant="table-row" count={6} />}
+        {!trades_query.isLoading && trades.length === 0 && (
+          <EmptyState
+            icon={<FileBarChart className="h-8 w-8" />}
+            title="No paper trades found"
+            description={
+              status_filter || symbol_filter
+                ? 'Try adjusting your filters.'
+                : 'Paper trades will appear here once signals are generated.'
+            }
+          />
+        )}
         {!trades_query.isLoading && trades.length > 0 && (
           <>
-            {PaperTradeTable({ trades })}
+            <PaperTradeTable trades={trades} />
             {total_pages > 1 && (
               <div className="pt-2">
-                {Pagination({
-                  page: current_page,
-                  total_pages,
-                  onPageChange: set_current_page,
-                  page_sizes: [10, 20, 50],
-                  current_size: page_size,
-                  onPageSizeChange: handle_page_size_change,
-                })}
+                <Pagination
+                  page={current_page}
+                  total_pages={total_pages}
+                  onPageChange={set_current_page}
+                  page_sizes={[10, 20, 50]}
+                  current_size={page_size}
+                  onPageSizeChange={handle_page_size_change}
+                />
               </div>
             )}
           </>

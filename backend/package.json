@@ -5,8 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "concurrently -n node,finbert -c cyan,magenta \"nodemon server.js\" \"python3 scripts/sentiment_server.py || echo FinBERT exited — keyword sentiment fallback active\"",
+    "dev:node": "nodemon server.js",
+    "dev:finbert": "python3 scripts/sentiment_server.py",
     "migrate": "node scripts/migrate.js",
+    "download": "python3 scripts/download_yahoo_data.py",
     "seed": "node scripts/seed_historical.js",
     "pipeline": "node scripts/run_pipeline.js",
     "backtest": "node scripts/run_backtest.js",
@@ -16,6 +19,7 @@
   },
   "dependencies": {
     "axios": "^1.7.9",
+    "axios-cookiejar-support": "^6.0.5",
     "cors": "^2.8.5",
     "csv-parse": "^5.6.0",
     "dotenv": "^16.4.7",
@@ -27,9 +31,11 @@
     "node-cron": "^3.0.3",
     "rss-parser": "^3.13.0",
     "technicalindicators": "^3.1.0",
+    "tough-cookie": "^6.0.1",
     "uuid": "^9.0.1",
     "winston": "^3.17.0",
-    "yahoo-finance2": "^2.13.2"
+    "yahoo-finance2": "^2.13.2",
+    "concurrently": "^9.2.1"
   },
   "devDependencies": {
     "jest": "^29.7.0",

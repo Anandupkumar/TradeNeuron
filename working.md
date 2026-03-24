@@ -39,8 +39,8 @@ TradeNeuron is an AI-based swing trading signal generation system for NIFTY 50 s
 ┌──────────────┐    ┌──────────────────┐
 │   MySQL DB   │    │  Yahoo Finance   │
 │  17 tables   │    │  (data source)   │
-│  via mysql2  │    │  via yahoo-      │
-│              │    │  finance2        │
+│  via mysql2  │    │  via direct HTTP │
+│              │    │  + Python yfinance│
 └──────────────┘    └──────────────────┘
 ```
 
@@ -51,8 +51,10 @@ TradeNeuron is an AI-based swing trading signal generation system for NIFTY 50 s
 The core of the system is a **daily automated pipeline** that runs via cron at **4:30 PM IST** (after Indian market close) on weekdays. It can also be triggered manually.
 
 ```
-Step 1   Fetch Candles         Download OHLCV data from Yahoo Finance for all
-                               50 NIFTY stocks + NIFTY index + India VIX
+Step 1   Fetch Candles         Probe Yahoo API availability via lightweight spark
+                               endpoint. If reachable, download OHLCV data for
+                               all 50 NIFTY stocks + NIFTY index + India VIX.
+                               If rate-limited, skip and use existing seeded data.
 
 Step 2   Validate Data         Check for gaps, stale data, and anomalies
 
@@ -82,9 +84,10 @@ Step 8   Fundamental Filter    Remove signals for stocks with poor fundamentals
 Step 9   Sentiment Filter      Remove signals contradicted by negative news sentiment
                                (RSS feeds + optional Finnhub integration)
 
-Step 10  Score & Generate      Score remaining signals by confidence (0-100),
-                               deduplicate per symbol/direction, compute position
-                               sizing (shares, capital risk, position value)
+Step 10  Score & Generate      Score remaining signals by confidence (0-100)
+                               using latest available data date (not necessarily
+                               today). Deduplicate per symbol/direction, compute
+                               position sizing (shares, capital risk, position value)
 
 Step 11  Store Signals         Persist new signals to DB + auto-create paper trades
 
@@ -168,7 +171,8 @@ Runs every **Saturday at 6 PM IST**. Fetches Yahoo Finance quote summaries for f
 | Layer | Technologies |
 |---|---|
 | **Frontend** | React 18, TypeScript 5, Vite 5, Tailwind CSS 3, shadcn/ui, TanStack Query 5, Zustand 4, Lightweight Charts, Recharts, Axios |
-| **Backend** | Node.js, Express 4, MySQL 8, mysql2, yahoo-finance2, technicalindicators, node-cron, Winston, Joi, Helmet |
+| **Backend** | Node.js, Express 4, MySQL 8, mysql2, Axios (direct Yahoo API), technicalindicators, node-cron, Winston, Joi, Helmet |
+| **Data Seeding** | Python 3 + yfinance (for reliable historical data download) |
 | **Testing** | Frontend: Vitest + Testing Library + MSW (54 tests). Backend: Jest + Supertest (20 tests) |
 | **Deployment** | Vite build (code-split), Nginx reverse proxy, .env-based config |
 
@@ -178,6 +182,8 @@ Runs every **Saturday at 6 PM IST**. Fetches Yahoo Finance quote summaries for f
 
 ```
 Yahoo Finance  ──→  Candles (OHLCV)  ──→  Indicators  ──→  Features
+  (direct HTTP       (seeded via Python
+  or Python yfinance) yfinance + JSON)
                                                               │
                    Fundamentals (weekly) ──────────────┐      │
                    Sentiment (daily) ──────────────┐   │      │

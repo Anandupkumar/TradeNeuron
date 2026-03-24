@@ -8,7 +8,7 @@ import {
   CartesianGrid,
   Tooltip,
 } from 'recharts';
-import { formatPct, formatDate } from '../../utils/format';
+import { formatPct, formatDate, toNum } from '../../utils/format';
 import type { PaperTrade } from '../../types';
 
 interface PnLCurveChartProps {
@@ -26,7 +26,7 @@ export function PnLCurveChart({ trades }: PnLCurveChartProps) {
 
     let running_pnl = 0;
     return closed.map((t) => {
-      running_pnl += t.pnl_pct ?? 0;
+      running_pnl += toNum(t.pnl_pct) ?? 0;
       return {
         date: t.exit_date,
         cumulative_pnl: Number.parseFloat(running_pnl.toFixed(2)),

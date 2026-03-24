@@ -1,6 +1,7 @@
 const { logger } = require('../middlewares/logger.middleware');
 
 function isRateLimited(error) {
+  if (error.response?.status === 429) return true;
   const msg = error.message || '';
   return msg.includes('Too Many Requests') || msg.includes('429');
 }
