@@ -75,7 +75,7 @@ export function WalkForwardChart({ results }: WalkForwardChartProps) {
               borderRadius: '0.5rem',
               fontSize: '0.75rem',
             }}
-            formatter={(value: number) => [`${value.toFixed(1)}%`, '']}
+            formatter={(value: number | string) => [`${Number(value).toFixed(1)}%`, '']}
             labelStyle={{ color: '#a1a1aa' }}
           />
           <Legend

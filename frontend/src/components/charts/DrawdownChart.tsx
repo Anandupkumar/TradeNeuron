@@ -34,7 +34,7 @@ export function DrawdownChart({ data, height = 200 }: DrawdownChartProps) {
           tick={{ fill: '#a1a1aa', fontSize: 12 }}
           tickLine={{ stroke: '#27272a' }}
           axisLine={{ stroke: '#27272a' }}
-          tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+          tickFormatter={(v: number | string) => `${Number(v).toFixed(1)}%`}
         />
         <Tooltip
           contentStyle={{
@@ -44,7 +44,7 @@ export function DrawdownChart({ data, height = 200 }: DrawdownChartProps) {
             color: '#fafafa',
           }}
           labelStyle={{ color: '#a1a1aa' }}
-          formatter={(value: number) => [`${value.toFixed(2)}%`, 'Drawdown']}
+          formatter={(value: number | string) => [`${Number(value).toFixed(2)}%`, 'Drawdown']}
         />
         <Area
           type="monotone"
