@@ -55,6 +55,7 @@ Each signal tells you:
 You can filter signals by:
 - Status (Active, Target Hit, Stop Loss Hit, Expired)
 - Direction (Long/Buy or Short/Sell)
+- Confidence Tier (High / Normal / Low)
 - Date range
 - Minimum confidence level
 
@@ -66,7 +67,7 @@ Click on any stock symbol (anywhere in the app) to see its detail page:
 
 - **Candlestick chart** showing recent price action
 - **Technical indicators** like EMA, RSI, MACD, ATR
-- **Features** like whether it's in an uptrend, near support, has a volume spike, etc.
+- **Features** like whether it's in an uptrend, near support, has a volume spike, breakout strength, EMA50 trend, VWAP distance, delivery %, relative volume, etc.
 - **Active signal** for that stock (if any)
 
 ### Paper Trading
@@ -147,6 +148,7 @@ Every weekday after the Indian stock market closes at 3:30 PM, the system automa
 | **TARGET_HIT** | The stock reached the target price — this was a winning trade |
 | **SL_HIT** | The stock hit the stop loss — this was a losing trade |
 | **EXPIRED** | The holding period ended without hitting target or stop loss |
+| **EXPIRED (penalized)** | Expired with negligible price movement — a small opportunity cost penalty is applied |
 
 ### What is Risk-Reward?
 
@@ -156,7 +158,15 @@ If a signal has a risk-reward of **2.0x**, it means:
 
 ### What is Confidence?
 
-A number from 0 to 100 showing how strongly the system believes in the signal. Higher is better. The system requires a minimum confidence (default: 20) before publishing a signal.
+A number from 0 to 100 showing how strongly the system believes in the signal. Higher is better. The system requires a minimum confidence of 70 before publishing a signal.
+
+Signals are also assigned a **confidence tier**:
+
+| Tier | Confidence | Meaning |
+|------|-----------|---------|
+| **HIGH** | 85+ | Strong conviction — highest priority |
+| **NORMAL** | 75–84 | Standard signal |
+| **LOW** | 70–74 | Weaker conviction, still valid |
 
 ---
 

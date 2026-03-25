@@ -519,6 +519,7 @@ export interface PaperTrade {
   direction: SignalDirection;
   entry_date: string;
   entry_price: number;
+  actual_entry_price: number | null;
   stop_loss: number;
   target_price: number;
   shares_to_buy: number;
@@ -607,7 +608,7 @@ export interface FavoritesResponse {
 export type RejectStage =
   | 'FUNDAMENTAL_FILTER' | 'SENTIMENT_FILTER'
   | 'VWAP_FILTER' | 'PCR_FILTER' | 'SECTOR_GATE'
-  | 'CONFIDENCE_GATE' | 'RR_GATE' | 'LIQUIDITY_GATE'
+  | 'CONFIDENCE_GATE' | 'RR_GATE'
   | 'MERGED_RISK_ZERO' | 'ACTIVE_CAP' | 'POSITION_SIZING';
 
 export interface RejectedSignal {
@@ -2615,7 +2616,6 @@ export const decodeSymbol = (s: string) => decodeURIComponent(s);
 | `indicators.volume_change` | `number \| null` | `formatPct(v, true)` | |
 | `features.is_uptrend` | `boolean` | — | Green/red pill |
 | `features.rsi_zone` | `RsiZone` | — | Coloured pill |
-| `features.is_liquid` | `boolean` | — | OK / Warning |
 | `features.is_ranging` | `boolean` | — | Indicator pill |
 | `features.z_score_20d` | `number \| null` | signed, 2 dec | |
 | `features.distance_from_52w_high_pct` | `number \| null` | `formatPct()` | |

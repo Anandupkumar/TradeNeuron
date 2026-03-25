@@ -160,3 +160,44 @@ ema50_slope: number | null;
 4. **Improvement 5** — SignalBadge and PaperTradeTable penalty display
 
 This order matches the backend implementation sequence and ensures types are available before components consume them.
+
+---
+
+## 6. Entry Price Fix — Frontend Type Update
+
+**Status: IMPLEMENTED**
+
+### What the Backend Adds
+
+Paper trades now have an `actual_entry_price` field — the next-day open price used as the realistic entry for PnL calculations.
+
+### Frontend Changes
+
+| File | Change |
+|------|--------|
+| `src/types/paperTrade.types.ts` | Added `actual_entry_price: number \| null` to `PaperTrade` interface |
+
+The field is returned by the `GET /api/v1/paper-trading/trades` endpoint. It may be `null` for trades created before the fix or where next-day data isn't available yet.
+
+---
+
+## 7. Remove Liquidity Gate — Frontend Cleanup
+
+**Status: IMPLEMENTED**
+
+### Frontend Changes
+
+| File | Change |
+|------|--------|
+| `src/components/stocks/FeatureGrid.tsx` | Removed `is_liquid` pill from the feature grid |
+| `src/types/rejectedSignal.types.ts` | Removed `LIQUIDITY_GATE` from `RejectStage` union type |
+
+The `is_liquid` field remains on `StockFeatures` type for backward compatibility but is no longer displayed.
+
+---
+
+## 8. Paper Trade Feedback Loop — No Direct Frontend Impact
+
+**Status: IMPLEMENTED (backend only)**
+
+A new `GET /api/v1/strategies` endpoint returns strategy enable/disable status. No frontend components currently consume this endpoint, but it is available for future use (e.g., a strategy status panel on the Settings or Dashboard page).

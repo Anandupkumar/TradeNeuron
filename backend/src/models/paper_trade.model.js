@@ -2,18 +2,26 @@ const { pool } = require('../config/db');
 
 async function create(trade) {
   const sql = `
-    INSERT INTO paper_trades (signal_id, symbol, direction, entry_date, entry_price, stop_loss, target_price, status, shares_to_buy)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO paper_trades (signal_id, symbol, direction, entry_date, entry_price, actual_entry_price, stop_loss, target_price, status, shares_to_buy)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     trade.signal_id, trade.symbol, trade.direction || 'LONG',
     trade.entry_date,
-    trade.entry_price, trade.stop_loss, trade.target_price,
+    trade.entry_price,
+    trade.actual_entry_price || null,
+    trade.stop_loss, trade.target_price,
     trade.status || 'OPEN',
     trade.shares_to_buy || null,
   ];
   const [result] = await pool.query(sql, params);
   return { id: result.insertId, ...trade };
+}
+
+async function updateActualEntry(id, actual_entry_price) {
+  const sql = `UPDATE paper_trades SET actual_entry_price = ? WHERE id = ?`;
+  const [result] = await pool.query(sql, [actual_entry_price, id]);
+  return result;
 }
 
 async function findOpen() {
@@ -105,4 +113,4 @@ async function getSummary() {
   };
 }
 
-module.exports = { create, findOpen, updateClose, findAll, getSummary };
+module.exports = { create, findOpen, updateClose, updateActualEntry, findAll, getSummary };

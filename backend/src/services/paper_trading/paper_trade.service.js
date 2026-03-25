@@ -10,12 +10,16 @@ async function createPaperTrades(signals) {
   let created = 0;
 
   for (const signal of signals) {
+    const next_candle = await candleModel.findNextCandle(signal.symbol, signal.date);
+    const actual_entry = next_candle ? parseFloat(next_candle.open) : null;
+
     await paperTradeModel.create({
       signal_id: signal.id,
       symbol: signal.symbol,
       direction: signal.direction || 'LONG',
       entry_date: signal.date,
       entry_price: signal.entry_price,
+      actual_entry_price: actual_entry,
       stop_loss: signal.stop_loss,
       target_price: signal.target_price,
       shares_to_buy: signal.shares_to_buy || null,
@@ -58,13 +62,23 @@ async function updatePaperTrades() {
     const signal = trade.signal_id ? await signalModel.findById(trade.signal_id) : null;
     const direction = signal ? (signal.direction || 'LONG') : 'LONG';
 
+    // Populate actual_entry_price from next-day open if not yet set
+    let actual_entry = trade.actual_entry_price != null ? parseFloat(trade.actual_entry_price) : null;
+    if (actual_entry == null) {
+      const next_candle = await candleModel.findNextCandle(trade.symbol, trade.entry_date);
+      if (next_candle) {
+        actual_entry = parseFloat(next_candle.open);
+        await paperTradeModel.updateActualEntry(trade.id, actual_entry);
+      }
+    }
+
     const today = formatDate(candle.date);
     const low = parseFloat(candle.low);
     const high = parseFloat(candle.high);
     const close = parseFloat(candle.adjusted_close);
     const stop_loss = parseFloat(trade.stop_loss);
     const target_price = parseFloat(trade.target_price);
-    const entry_price = parseFloat(trade.entry_price);
+    const entry_price = actual_entry != null ? actual_entry : parseFloat(trade.entry_price);
     const shares = trade.shares_to_buy ? parseInt(trade.shares_to_buy, 10) : 0;
 
     let exit_price = null;

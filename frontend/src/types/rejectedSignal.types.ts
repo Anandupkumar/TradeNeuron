@@ -6,7 +6,6 @@ export type RejectStage =
   | 'SECTOR_GATE'
   | 'CONFIDENCE_GATE'
   | 'RR_GATE'
-  | 'LIQUIDITY_GATE'
   | 'MERGED_RISK_ZERO'
   | 'ACTIVE_CAP'
   | 'POSITION_SIZING';

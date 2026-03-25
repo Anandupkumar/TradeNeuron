@@ -6,7 +6,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 const REQUIRED_VARS = [
   'PORT', 'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
   'API_KEY', 'CRON_SCHEDULE', 'CRON_TIMEZONE', 'FUNDAMENTAL_CRON_SCHEDULE',
-  'VIX_THRESHOLD', 'MIN_LIQUIDITY_VOLUME', 'MIN_CONFIDENCE', 'MIN_RISK_REWARD',
+  'VIX_THRESHOLD', 'MIN_CONFIDENCE', 'MIN_RISK_REWARD',
   'TOTAL_CAPITAL_INR', 'RISK_PCT_PER_TRADE'
 ];
 
@@ -43,7 +43,7 @@ const config = Object.freeze({
 
   vix_threshold: parseFloat(process.env.VIX_THRESHOLD),
 
-  min_liquidity_volume: parseInt(process.env.MIN_LIQUIDITY_VOLUME, 10),
+  min_liquidity_volume: parseInt(process.env.MIN_LIQUIDITY_VOLUME || '500000', 10),
 
   fundamental_cron_schedule: process.env.FUNDAMENTAL_CRON_SCHEDULE,
   max_debt_to_equity: parseFloat(process.env.MAX_DEBT_TO_EQUITY || '2.0'),
@@ -74,6 +74,11 @@ const config = Object.freeze({
   expired_min_penalty: parseFloat(process.env.EXPIRED_MIN_PENALTY || '-0.1'),
   expired_max_penalty: parseFloat(process.env.EXPIRED_MAX_PENALTY || '-0.2'),
   expired_movement_threshold: parseFloat(process.env.EXPIRED_MOVEMENT_THRESHOLD || '1.0'),
+
+  strategy_disable_win_rate: parseFloat(process.env.STRATEGY_DISABLE_WIN_RATE || '0.40'),
+  strategy_disable_min_trades: parseInt(process.env.STRATEGY_DISABLE_MIN_TRADES || '15', 10),
+  strategy_reenable_win_rate: parseFloat(process.env.STRATEGY_REENABLE_WIN_RATE || '0.50'),
+  strategy_reenable_min_trades: parseInt(process.env.STRATEGY_REENABLE_MIN_TRADES || '20', 10),
 
   finnhub_api_key: process.env.FINNHUB_API_KEY || '',
 

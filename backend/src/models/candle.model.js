@@ -87,6 +87,12 @@ async function findDatesForSymbol(symbol) {
   return rows.map((r) => r.date);
 }
 
+async function findNextCandle(symbol, date) {
+  const sql = `SELECT * FROM candles WHERE symbol = ? AND date > ? ORDER BY date ASC LIMIT 1`;
+  const [rows] = await pool.query(sql, [symbol, date]);
+  return rows[0] || null;
+}
+
 module.exports = {
   upsert,
   bulkUpsert,
@@ -95,4 +101,5 @@ module.exports = {
   findBySymbolLast,
   find52WeekHigh,
   findDatesForSymbol,
+  findNextCandle,
 };

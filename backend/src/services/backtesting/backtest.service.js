@@ -18,7 +18,20 @@ const { nifty_50_symbols, nifty_index_symbol } = require('../../utils/symbols.ut
 const nifty50CompositionModel = require('../../models/nifty50_composition.model');
 
 function evaluateOutcome(signal, future_candles) {
+  if (future_candles.length === 0) {
+    return { result: 'NEUTRAL', exit_price: signal.entry_price, realistic_entry: signal.entry_price, days: 0 };
+  }
+
   const is_short = signal.direction === 'SHORT';
+  const realistic_entry = parseFloat(future_candles[0].open);
+
+  // Gap-open guard: next-day open already past SL means immediate loss
+  if (is_short && realistic_entry >= signal.stop_loss) {
+    return { result: 'LOSS', exit_price: realistic_entry, realistic_entry, days: 0, gap_open: true };
+  }
+  if (!is_short && realistic_entry <= signal.stop_loss) {
+    return { result: 'LOSS', exit_price: realistic_entry, realistic_entry, days: 0, gap_open: true };
+  }
 
   for (let day = 0; day < Math.min(future_candles.length, config.holding_period_days); day++) {
     const candle = future_candles[day];
@@ -27,24 +40,24 @@ function evaluateOutcome(signal, future_candles) {
 
     if (is_short) {
       if (high >= signal.stop_loss) {
-        return { result: 'LOSS', exit_price: signal.stop_loss, days: day + 1 };
+        return { result: 'LOSS', exit_price: signal.stop_loss, realistic_entry, days: day + 1 };
       }
       if (low <= signal.target_price) {
-        return { result: 'WIN', exit_price: signal.target_price, days: day + 1 };
+        return { result: 'WIN', exit_price: signal.target_price, realistic_entry, days: day + 1 };
       }
     } else {
       if (low <= signal.stop_loss) {
-        return { result: 'LOSS', exit_price: signal.stop_loss, days: day + 1 };
+        return { result: 'LOSS', exit_price: signal.stop_loss, realistic_entry, days: day + 1 };
       }
       if (high >= signal.target_price) {
-        return { result: 'WIN', exit_price: signal.target_price, days: day + 1 };
+        return { result: 'WIN', exit_price: signal.target_price, realistic_entry, days: day + 1 };
       }
     }
   }
 
   const last_candle = future_candles[future_candles.length - 1];
-  const exit_price = last_candle ? parseFloat(last_candle.adjusted_close) : signal.entry_price;
-  return { result: 'NEUTRAL', exit_price, days: future_candles.length };
+  const exit_price = last_candle ? parseFloat(last_candle.adjusted_close) : realistic_entry;
+  return { result: 'NEUTRAL', exit_price, realistic_entry, days: future_candles.length };
 }
 
 function calculateNetReturn(entry_price, exit_price) {
@@ -126,14 +139,14 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
       const short_trend = trendPullbackShort.evaluate(symbol, date_str, candle, indicators[i], features[i], past_candles);
       if (short_trend) {
         const outcome = evaluateOutcome(short_trend, future_candles);
-        const net_return = calculateNetReturn(short_trend.entry_price, outcome.exit_price);
+        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
         results_by_strategy.TREND_PULLBACK_SHORT.push({ ...outcome, net_return, days: outcome.days });
       }
 
       const breakdown_signal = breakdown.evaluate(symbol, date_str, candle, indicators[i], features[i], past_candles);
       if (breakdown_signal) {
         const outcome = evaluateOutcome(breakdown_signal, future_candles);
-        const net_return = calculateNetReturn(breakdown_signal.entry_price, outcome.exit_price);
+        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
         results_by_strategy.BREAKDOWN.push({ ...outcome, net_return, days: outcome.days });
       }
 
@@ -150,13 +163,13 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
             direction: 'LONG',
           };
           const outcome = evaluateOutcome(merged, future_candles);
-          const net_return = calculateNetReturn(merged.entry_price, outcome.exit_price);
+          const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
           results_by_strategy.COMBINED.push({ ...outcome, net_return, days: outcome.days });
         }
       } else if (long_signals.length === 1) {
         const { name, signal: sig } = long_signals[0];
         const outcome = evaluateOutcome(sig, future_candles);
-        const net_return = calculateNetReturn(sig.entry_price, outcome.exit_price);
+        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
         results_by_strategy[name].push({ ...outcome, net_return, days: outcome.days });
       }
     }

@@ -327,3 +327,110 @@ The `signal_outcomes.outcome` column is VARCHAR — `EXPIRED_PENALIZED` fits wit
 4. **Improvement 5** — Expiry penalty logic (no migration)
 
 This order minimizes risk: feature-level changes first (no signal flow impact), then signal metadata, then runtime-only changes.
+
+---
+
+## 6. Entry Price Fix — Next-Day Open (Look-Ahead Bias)
+
+**Status: IMPLEMENTED** (migration 029)
+
+### Problem
+
+Both the backtester and paper trading used `signal.entry_price` (= adjusted_close on signal date) as the trade entry. In reality you can only enter at the next trading day's open. This inflated all win rate metrics.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `src/services/backtesting/backtest.service.js` | `evaluateOutcome()` now uses `future_candles[0].open` as `realistic_entry`; gap-open guard returns immediate SL_HIT if next-day open gaps past SL; all `calculateNetReturn()` calls use `outcome.realistic_entry` |
+| `src/models/candle.model.js` | Added `findNextCandle(symbol, date)` — `SELECT * FROM candles WHERE symbol = ? AND date > ? ORDER BY date ASC LIMIT 1` |
+| `src/models/paper_trade.model.js` | `create()` now includes `actual_entry_price`; added `updateActualEntry(id, price)` |
+| `src/services/paper_trading/paper_trade.service.js` | `createPaperTrades()` looks up next-day candle and populates `actual_entry_price` at creation; `updatePaperTrades()` fills `actual_entry_price` if NULL for existing trades; uses it for all PnL calculations |
+
+### Migration
+
+`migrations/029_add_actual_entry_to_paper_trades.sql`:
+```sql
+ALTER TABLE paper_trades
+  ADD COLUMN actual_entry_price DECIMAL(12,2) DEFAULT NULL AFTER entry_price;
+```
+
+### Impact
+
+Backtest win rates reflect realistic execution. Expect 2–5pp lower than previous figures — that's accurate, not worse.
+
+---
+
+## 7. Remove Liquidity Gate
+
+**Status: IMPLEMENTED**
+
+### Problem
+
+All NIFTY 50 stocks are inherently liquid. The `is_liquid` check in `deduplicateAndGenerate()` never triggered — dead code.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `src/services/signals/signal.service.js` | Removed the `is_liquid` gate block from `deduplicateAndGenerate()` |
+| `src/config/env.js` | Removed `MIN_LIQUIDITY_VOLUME` from `REQUIRED_VARS` (kept as optional with default) |
+| `frontend/src/components/stocks/FeatureGrid.tsx` | Removed `is_liquid` pill from the feature grid |
+| `frontend/src/types/rejectedSignal.types.ts` | Removed `LIQUIDITY_GATE` from `RejectStage` type |
+
+### No Migration Required
+
+The `is_liquid` column and feature computation remain for backward compatibility — only the gate was removed.
+
+---
+
+## 8. Paper Trade Feedback Loop — Strategy Auto-Disable
+
+**Status: IMPLEMENTED** (migration 030)
+
+### Problem
+
+The weekly calibration job adjusted scoring weights but didn't distinguish between strategy-level performance. Underperforming strategies kept running indefinitely.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `migrations/030_create_strategy_config.sql` | Created `strategy_config` table; seeded all 6 strategies as enabled |
+| `src/models/strategy_config.model.js` | New model: `getEnabled()`, `getAll()`, `setEnabled(strategy_name, is_enabled, reason)` |
+| `src/jobs/weekly_weight_calibration.job.js` | Added `evaluateStrategyPerformance()`: queries per-strategy paper trade stats (last 90 days), auto-disables (win rate < 40%, >= 15 trades), auto-re-enables (win rate >= 50%, >= 20 trades), sends Telegram alerts |
+| `src/services/strategies/index.js` | `runStrategies()` checks `strategy_config` before executing each strategy (fail-open if table missing) |
+| `src/config/env.js` | Added `strategy_disable_win_rate`, `strategy_disable_min_trades`, `strategy_reenable_win_rate`, `strategy_reenable_min_trades` |
+| `src/routes/strategy.routes.js` | New `GET /api/v1/strategies` endpoint |
+| `server.js` | Registered strategy routes |
+
+### New Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `STRATEGY_DISABLE_WIN_RATE` | 0.40 | Disable strategy below this win rate |
+| `STRATEGY_DISABLE_MIN_TRADES` | 15 | Minimum trades before auto-disabling |
+| `STRATEGY_REENABLE_WIN_RATE` | 0.50 | Re-enable strategy above this win rate |
+| `STRATEGY_REENABLE_MIN_TRADES` | 20 | Minimum trades before auto-re-enabling |
+
+### Migration
+
+`migrations/030_create_strategy_config.sql`:
+```sql
+CREATE TABLE IF NOT EXISTS strategy_config (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  strategy_name   VARCHAR(100) NOT NULL UNIQUE,
+  is_enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+  disabled_at     TIMESTAMP    NULL,
+  disabled_reason VARCHAR(500) NULL,
+  updated_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO strategy_config (strategy_name) VALUES
+  ('TREND_PULLBACK'), ('BREAKOUT'), ('RANGE'),
+  ('MEAN_REVERSION'), ('TREND_PULLBACK_SHORT'), ('BREAKDOWN');
+```
+
+### Self-Improvement Loop
+
+Paper trades resolve → calibration job reads per-strategy results → underperforming strategies auto-disabled → Telegram alert fires → you decide whether to override.

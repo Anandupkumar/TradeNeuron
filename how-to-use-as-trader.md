@@ -44,7 +44,8 @@ Reasons: Trend Alignment · High Volume · High Delivery
 | **Symbol** | Which stock to trade (e.g., RELIANCE.NS) |
 | **BUY / SELL** | Whether to buy or sell |
 | **LONG / SHORT** | Direction — LONG means you profit when price goes up, SHORT means you profit when it goes down |
-| **Confidence** | How strong the signal is (0–100%). Higher is better. Minimum threshold is typically 70%+ |
+| **Confidence** | How strong the signal is (0–100%). Higher is better. Minimum threshold is 70% |
+| **Tier** | Priority level — **HIGH** (85+), **NORMAL** (75–84), or **LOW** (70–74). Focus on HIGH tier signals for best results |
 | **Entry** | The price to enter the trade at (use the next day's open or a limit order near this price) |
 | **Target** | The price where you should book profit |
 | **Stop Loss (SL)** | The price where you should exit to limit your loss. **Never ignore the stop loss.** |
@@ -58,7 +59,7 @@ Reasons: Trend Alignment · High Volume · High Delivery
 Not every signal needs to be traded. Use these filters to prioritise:
 
 **High-conviction trades (best for beginners):**
-- Confidence **80%+**
+- Confidence tier **HIGH** (85%+)
 - Risk:Reward **2.5x or higher**
 - Multiple reasons (3+ factors aligning)
 - Strategy: **Trend Pullback** or **Breakout** (these are the most reliable)
@@ -89,6 +90,7 @@ Once a trade is live, TradeNeuron tracks it automatically in the **Paper Trading
 - **TARGET_HIT** — price reached your target — profit booked!
 - **SL_HIT** — price hit your stop loss — loss contained
 - **EXPIRED** — trade was open for 10 days without hitting target or SL — time to manually exit
+- **EXPIRED (penalized)** — expired with negligible price movement — a small opportunity cost penalty is applied to PnL
 
 **Important:** The system updates signal statuses daily. If a signal shows **TARGET_HIT** or **SL_HIT**, make sure you've actually exited the trade in your broker app.
 
@@ -106,8 +108,9 @@ After market close each day, check:
 ### Signals Page (`/signals`)
 
 The full signal history with powerful filters:
-- **Status** — ACTIVE / TARGET_HIT / SL_HIT / EXPIRED
+- **Status** — ACTIVE / TARGET_HIT / SL_HIT / EXPIRED / EXPIRED_PENALIZED
 - **Direction** — LONG / SHORT / All
+- **Confidence Tier** — HIGH / NORMAL / LOW / All
 - **Confidence slider** — filter by minimum confidence
 - **Date range** — see signals from specific periods
 - **Favorites only** — show only signals for your watched stocks
@@ -126,6 +129,8 @@ Click any stock symbol to see its full analysis:
   - **VWAP Distance** — how far the price is from the volume-weighted average price
   - **Delivery %** — what percentage of traded shares were actually delivered (higher = more conviction from buyers)
   - **High Delivery** — Yes/No flag when delivery % exceeds the 20-day median
+  - **Breakout Strength** — how strongly the candle closed near its high (Strong / Moderate / Weak)
+  - **EMA50 Trend** — whether the 50-day moving average is rising or falling (directional arrow + value)
   - **Uptrend** — whether the stock is in an uptrend (EMA 20 > 50 > 200)
   - **RSI Zone** — Oversold / Pullback / Neutral / Overbought
 
@@ -163,16 +168,16 @@ The confidence score (0–100%) is calculated from multiple factors:
 
 | Factor | What it measures |
 |--------|-----------------|
-| Trend Alignment | Is the stock in an uptrend? (EMA 20 > 50 > 200) |
+| Trend Alignment | Is the stock in an uptrend? (EMA 20 > 50 > 200) — penalized if EMA50 slope is flat/declining |
 | RSI Zone | Is RSI in a healthy pullback zone? (30–45 for buys) |
 | Volume | Is volume elevated? Scored by tier — higher volume = higher score |
-| Breakout | Has the stock broken above resistance? |
+| Breakout | Has the stock broken above resistance? Scored by close position — strong/moderate/weak |
 | Near Support | Is the stock near a support level? |
 | Relative Strength | Is the stock outperforming NIFTY 50? |
 | Sentiment | Is news sentiment positive? (via FinBERT AI analysis) |
 | High Delivery | Are buyers taking actual delivery? (institutional interest) |
 
-A score of **80%+** means most factors are aligning — these are the strongest setups.
+A score of **85%+** is classified as **HIGH** tier — these are the strongest setups. **75–84%** is **NORMAL**, and **70–74%** is **LOW** priority.
 
 ---
 
@@ -182,7 +187,7 @@ A score of **80%+** means most factors are aligning — these are the strongest 
 
 2. **Don't overtrade.** 2–3 active positions at a time is ideal. The system caps signals per sector to avoid concentration risk.
 
-3. **Trust the process, not individual trades.** Some trades will lose. That's normal. The system targets a 55–65% win rate with a 2:1+ reward-to-risk ratio — so even with losses, the math works in your favour over many trades.
+3. **Trust the process, not individual trades.** Some trades will lose. That's normal. The system targets a 50–60% win rate with a 2:1+ reward-to-risk ratio — so even with losses, the math works in your favour over many trades. The system self-improves by automatically disabling strategies that underperform over time.
 
 4. **Paper trade first.** Use the Paper Trading page for at least 2–4 weeks before using real money. This lets you see the system's performance in current market conditions.
 

@@ -125,7 +125,6 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
       )}
 
       {booleanPill(features.near_support, 'Near Support')}
-      {booleanPill(features.is_liquid, 'Liquid')}
       {booleanPill(features.is_ranging, 'Ranging')}
 
       {numericCard('Z-Score (20D)', features.z_score_20d, (v) => (toNum(v) ?? 0).toFixed(2))}
