@@ -1,0 +1,5 @@
+ip = 15.135.78.164
+
+aws username = anandhu-office
+aws password = QEC<PBSv;{25<*p
+
