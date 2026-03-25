@@ -97,11 +97,6 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
   }
 
   const feature = await featureModel.findBySymbolAndDate(symbol, date);
-  if (feature && (feature.is_liquid === 0 || feature.is_liquid === false)) {
-    logger.info(`Signal for ${symbol} rejected: insufficient liquidity`);
-    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'LIQUIDITY_GATE', reject_reason: 'Insufficient liquidity (is_liquid = false)' });
-    return null;
-  }
 
   if (feature && feature.vwap_distance_pct != null) {
     const vwap_dist = parseFloat(feature.vwap_distance_pct);

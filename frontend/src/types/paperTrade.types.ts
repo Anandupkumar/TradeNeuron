@@ -10,6 +10,7 @@ export interface PaperTrade {
   direction: SignalDirection;
   entry_date: string;
   entry_price: number;
+  actual_entry_price: number | null;
   stop_loss: number;
   target_price: number;
   shares_to_buy: number;

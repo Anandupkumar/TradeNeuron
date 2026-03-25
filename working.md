@@ -28,7 +28,8 @@ TradeNeuron is an AI-based swing trading signal generation system for NIFTY 50 s
 │   Port 3000                                              │
 │                                                          │
 │   Routes: /api/v1/health, signals, stock, history,       │
-│           backtest, favorites, paper-trading              │
+│           backtest, favorites, paper-trading,             │
+│           trade-decisions, strategies                     │
 │                                                          │
 │   Middleware: Helmet, CORS, Rate Limiter, API Key Auth,  │
 │              Request Logger, Error Handler                │
@@ -38,7 +39,7 @@ TradeNeuron is an AI-based swing trading signal generation system for NIFTY 50 s
         ▼                     ▼
 ┌──────────────┐    ┌──────────────────┐
 │   MySQL DB   │    │  Yahoo Finance   │
-│  17 tables   │    │  (data source)   │
+│  16 tables   │    │  (data source)   │
 │  via mysql2  │    │  via direct HTTP │
 │              │    │  + Python yfinance│
 └──────────────┘    └──────────────────┘
@@ -63,8 +64,11 @@ Step 3   Compute Indicators    EMA (20/50/200), RSI, MACD (line/signal/histogram
 
 Step 4   Compute Features      Derived boolean/categorical features:
                                is_uptrend, rsi_zone, is_volume_spike, is_breakout,
-                               near_support, is_liquid, is_ranging, z_score_20d,
-                               distance_from_52w_high, relative_strength_vs_nifty
+                               close_position, ema50_slope, near_support, is_ranging,
+                               z_score_20d, distance_from_52w_high,
+                               relative_strength_vs_nifty, rvol, volume_tier,
+                               vwap, vwap_distance_pct, is_near_vwap,
+                               delivery_pct, is_high_delivery
 
 Step 5   Adaptive Thresholds   Dynamically adjust VIX thresholds and strategy
                                parameters based on recent market conditions
@@ -73,8 +77,10 @@ Step 6   Market Regime Check   Classify market as BULLISH / SIDEWAYS / BEARISH /
                                HIGH_VOLATILITY based on NIFTY vs EMA200 + VIX
                                (HIGH_VOLATILITY → skip signal generation)
 
-Step 7   Run Strategies        Execute regime-gated strategies per symbol:
-                               BULLISH  → Trend Pullback, Breakout
+Step 7   Run Strategies        Execute regime-gated strategies per symbol
+                               (only strategies enabled in strategy_config):
+                               BULLISH  → Trend Pullback, Breakout,
+                                          Range, Mean Reversion
                                SIDEWAYS → Range, Mean Reversion
                                BEARISH  → Trend Pullback Short, Breakdown
 
@@ -85,16 +91,20 @@ Step 9   Sentiment Filter      Remove signals contradicted by negative news sent
                                (RSS feeds + optional Finnhub integration)
 
 Step 10  Score & Generate      Score remaining signals by confidence (0-100)
-                               using latest available data date (not necessarily
-                               today). Deduplicate per symbol/direction, compute
+                               with soft filters (breakout strength, EMA50 slope).
+                               Assign confidence tier (HIGH/NORMAL/LOW).
+                               Deduplicate per symbol/direction, apply gates
+                               (VWAP, PCR, sector cap, active cap), compute
                                position sizing (shares, capital risk, position value)
 
 Step 11  Store Signals         Persist new signals to DB + auto-create paper trades
 
 Step 12  Update Statuses       Check active signals: TARGET_HIT / SL_HIT / EXPIRED
+                               (EXPIRED with negligible movement → EXPIRED_PENALIZED)
 
 Step 13  Update Paper Trades   Mark paper trades as CLOSED with PnL when their
-                               corresponding signal exits
+                               corresponding signal exits. Uses actual_entry_price
+                               (next-day open) for realistic PnL calculations
 ```
 
 ---
@@ -128,18 +138,25 @@ Every signal includes calculated position sizing based on:
 ## Signal Lifecycle
 
 ```
-ACTIVE  ──┬── price hits target ──→  TARGET_HIT  (win)
-           ├── price hits stop loss ──→  SL_HIT   (loss)
-           └── holding period expires ──→  EXPIRED  (neutral)
+ACTIVE  ──┬── price hits target ──────→  TARGET_HIT        (win)
+           ├── price hits stop loss ───→  SL_HIT            (loss)
+           └── holding period expires ─┬→ EXPIRED            (neutral, meaningful movement)
+                                       └→ EXPIRED_PENALIZED  (neutral, negligible movement — penalty applied)
 ```
 
-Paper trades mirror this lifecycle automatically.
+Paper trades mirror this lifecycle automatically. PnL uses the next-day open as the realistic entry price (`actual_entry_price`), not the signal day's close.
 
 ---
 
-## Weekly Fundamentals Job
+## Weekly Jobs
 
+### Fundamentals Refresh
 Runs every **Saturday at 6 PM IST**. Fetches Yahoo Finance quote summaries for fundamental data (debt/equity, EPS growth, revenue growth, promoter pledging). This data is used by Step 8 of the daily pipeline to filter out fundamentally weak stocks.
+
+### Weight Calibration + Strategy Feedback
+Runs every **Sunday at 2 AM IST**. Two-phase job:
+1. **Weight calibration** — adjusts scoring weights based on signal outcome win rates per feature (gradual blend for 15-29 outcomes, full adjustment for 30+)
+2. **Strategy performance evaluation** — queries per-strategy paper trade results (last 90 days). Auto-disables strategies with win rate < 40% (15+ trades), auto-re-enables at >= 50% (20+ trades). Sends Telegram alerts on state changes.
 
 ---
 

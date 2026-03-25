@@ -6,6 +6,7 @@ const featureModel = require('../../models/feature.model');
 const { nifty_index_symbol, india_vix_symbol } = require('../../utils/symbols.util');
 const config = require('../../config/env');
 const { getThresholds } = require('../features/adaptive_threshold.service');
+const strategyConfigModel = require('../../models/strategy_config.model');
 const trendPullback = require('./trend_pullback.strategy');
 const breakout = require('./breakout.strategy');
 const range = require('./range.strategy');
@@ -69,33 +70,53 @@ async function runStrategies(symbol, date, market_regime) {
 
   if (!candle || !indicator || !feature) return [];
 
+  let enabled_strategies;
+  try {
+    enabled_strategies = await strategyConfigModel.getEnabled();
+  } catch {
+    enabled_strategies = ['TREND_PULLBACK', 'BREAKOUT', 'RANGE', 'MEAN_REVERSION', 'TREND_PULLBACK_SHORT', 'BREAKDOWN'];
+  }
+  const is_enabled = (name) => enabled_strategies.includes(name);
+
   const recent_candles = await candleModel.findBySymbolLast(symbol, 25);
   const past_candles = recent_candles.slice(0, -1);
 
   const raw_signals = [];
 
   if (market_regime === 'BULLISH' || market_regime === 'SIDEWAYS') {
-    const range_signal = range.evaluate(symbol, date, candle, indicator, feature, past_candles);
-    if (range_signal) raw_signals.push(range_signal);
+    if (is_enabled('RANGE')) {
+      const range_signal = range.evaluate(symbol, date, candle, indicator, feature, past_candles);
+      if (range_signal) raw_signals.push(range_signal);
+    }
 
-    const reversion_signal = meanReversion.evaluate(symbol, date, candle, indicator, feature, past_candles);
-    if (reversion_signal) raw_signals.push(reversion_signal);
+    if (is_enabled('MEAN_REVERSION')) {
+      const reversion_signal = meanReversion.evaluate(symbol, date, candle, indicator, feature, past_candles);
+      if (reversion_signal) raw_signals.push(reversion_signal);
+    }
   }
 
   if (market_regime === 'BULLISH') {
-    const trend_signal = trendPullback.evaluate(symbol, date, candle, indicator, feature, past_candles);
-    if (trend_signal) raw_signals.push(trend_signal);
+    if (is_enabled('TREND_PULLBACK')) {
+      const trend_signal = trendPullback.evaluate(symbol, date, candle, indicator, feature, past_candles);
+      if (trend_signal) raw_signals.push(trend_signal);
+    }
 
-    const breakout_signal = breakout.evaluate(symbol, date, candle, indicator, feature, past_candles);
-    if (breakout_signal) raw_signals.push(breakout_signal);
+    if (is_enabled('BREAKOUT')) {
+      const breakout_signal = breakout.evaluate(symbol, date, candle, indicator, feature, past_candles);
+      if (breakout_signal) raw_signals.push(breakout_signal);
+    }
   }
 
   if (market_regime === 'BEARISH') {
-    const short_trend = trendPullbackShort.evaluate(symbol, date, candle, indicator, feature, past_candles);
-    if (short_trend) raw_signals.push(short_trend);
+    if (is_enabled('TREND_PULLBACK_SHORT')) {
+      const short_trend = trendPullbackShort.evaluate(symbol, date, candle, indicator, feature, past_candles);
+      if (short_trend) raw_signals.push(short_trend);
+    }
 
-    const breakdown_signal = breakdown.evaluate(symbol, date, candle, indicator, feature, past_candles);
-    if (breakdown_signal) raw_signals.push(breakdown_signal);
+    if (is_enabled('BREAKDOWN')) {
+      const breakdown_signal = breakdown.evaluate(symbol, date, candle, indicator, feature, past_candles);
+      if (breakdown_signal) raw_signals.push(breakdown_signal);
+    }
   }
 
   return raw_signals;

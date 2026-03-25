@@ -308,6 +308,12 @@ EXPIRED_MIN_PENALTY=-0.1
 EXPIRED_MAX_PENALTY=-0.2
 EXPIRED_MOVEMENT_THRESHOLD=1.0
 
+# ─── Strategy Auto-Disable ───
+STRATEGY_DISABLE_WIN_RATE=0.40
+STRATEGY_DISABLE_MIN_TRADES=15
+STRATEGY_REENABLE_WIN_RATE=0.50
+STRATEGY_REENABLE_MIN_TRADES=20
+
 # ─── Short Selling ───
 MAX_POSITION_PCT_SHORT=5
 
@@ -330,7 +336,7 @@ LOG_DIR=./logs
 
 Reads `.env` via dotenv, validates all required variables are present at startup, and exports a frozen config object. The app must fail fast if any required variable is missing.
 
-**Required variables (validated at startup):** `PORT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `API_KEY`, `CRON_SCHEDULE`, `CRON_TIMEZONE`, `FUNDAMENTAL_CRON_SCHEDULE`, `VIX_THRESHOLD`, `MIN_LIQUIDITY_VOLUME`, `MIN_CONFIDENCE`, `MIN_RISK_REWARD`, `TOTAL_CAPITAL_INR`, `RISK_PCT_PER_TRADE`. All others have sensible defaults but are still recommended.
+**Required variables (validated at startup):** `PORT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `API_KEY`, `CRON_SCHEDULE`, `CRON_TIMEZONE`, `FUNDAMENTAL_CRON_SCHEDULE`, `VIX_THRESHOLD`, `MIN_CONFIDENCE`, `MIN_RISK_REWARD`, `TOTAL_CAPITAL_INR`, `RISK_PCT_PER_TRADE`. All others have sensible defaults but are still recommended.
 
 ### Database Connection Pool (`src/config/db.js`)
 
@@ -621,20 +627,21 @@ CREATE TABLE sentiment_flags (
 
 ```sql
 CREATE TABLE paper_trades (
-    id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    signal_id       BIGINT UNSIGNED NOT NULL,
-    symbol          VARCHAR(20)     NOT NULL,
-    entry_date      DATE            NOT NULL,
-    entry_price     DECIMAL(12,2)   NOT NULL,
-    stop_loss       DECIMAL(12,2)   NOT NULL,
-    target_price    DECIMAL(12,2)   NOT NULL,
-    exit_date       DATE,
-    exit_price      DECIMAL(12,2),
-    exit_reason     ENUM('TARGET_HIT', 'SL_HIT', 'EXPIRED', 'MANUAL'),
-    pnl_pct         DECIMAL(8,4),
-    status          ENUM('OPEN', 'CLOSED') NOT NULL DEFAULT 'OPEN',
-    created_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    signal_id           BIGINT UNSIGNED NOT NULL,
+    symbol              VARCHAR(20)     NOT NULL,
+    entry_date          DATE            NOT NULL,
+    entry_price         DECIMAL(12,2)   NOT NULL,
+    actual_entry_price  DECIMAL(12,2)   DEFAULT NULL,
+    stop_loss           DECIMAL(12,2)   NOT NULL,
+    target_price        DECIMAL(12,2)   NOT NULL,
+    exit_date           DATE,
+    exit_price          DECIMAL(12,2),
+    exit_reason         ENUM('TARGET_HIT', 'SL_HIT', 'EXPIRED', 'MANUAL'),
+    pnl_pct             DECIMAL(8,4),
+    status              ENUM('OPEN', 'CLOSED') NOT NULL DEFAULT 'OPEN',
+    created_at          TIMESTAMP       DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP       DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
     INDEX idx_signal (signal_id),
     INDEX idx_symbol (symbol),
@@ -644,6 +651,7 @@ CREATE TABLE paper_trades (
 
 **Key decisions:**
 - `signal_id` links back to the signals table for traceability. Not a foreign key constraint in MVP to avoid cascade complexity.
+- `actual_entry_price` stores the next-day open price as the realistic entry. `entry_price` retains the signal's theoretical close-based entry. All PnL calculations use `actual_entry_price` when available, falling back to `entry_price`. This eliminates the look-ahead bias of entering at the signal day's close.
 - `pnl_pct` stores net return after transaction costs: `((effective_exit - effective_entry) / effective_entry) * 100`. The effective prices include slippage and brokerage deductions matching the backtesting cost model. See Section 16 for the full calculation.
 - Paper trades run in parallel with real signals -- they don't affect signal generation. They exist solely to validate live system performance before committing capital.
 
@@ -807,7 +815,7 @@ CREATE TABLE IF NOT EXISTS rejected_signals (
     reject_stage    ENUM(
       'FUNDAMENTAL_FILTER', 'SENTIMENT_FILTER',
       'VWAP_FILTER', 'PCR_FILTER', 'SECTOR_GATE',
-      'CONFIDENCE_GATE', 'RR_GATE', 'LIQUIDITY_GATE',
+      'CONFIDENCE_GATE', 'RR_GATE',
       'MERGED_RISK_ZERO', 'ACTIVE_CAP', 'POSITION_SIZING'
     ) NOT NULL,
     reject_reason   VARCHAR(500)    NOT NULL,
@@ -843,6 +851,34 @@ CREATE TABLE IF NOT EXISTS trade_decisions (
 
 **Key decision:** One decision per signal per user, enforced by the unique index. Uses INSERT ON DUPLICATE KEY UPDATE for upsert semantics — if the trader changes their mind, the row updates instead of duplicating. `actual_entry` and `actual_qty` are populated only for `MODIFIED` decisions where the trader deviated from the system's suggestion.
 
+### 4.25 actual_entry_price on paper_trades (migration 029)
+
+```sql
+ALTER TABLE paper_trades
+  ADD COLUMN actual_entry_price DECIMAL(12,2) DEFAULT NULL AFTER entry_price;
+```
+
+**Key decision:** `actual_entry_price` stores the next trading day's open price, which is the realistic entry. The original `entry_price` (signal day's close) is retained for reference. All PnL calculations prefer `actual_entry_price` when available.
+
+### 4.26 strategy_config (migration 030)
+
+```sql
+CREATE TABLE IF NOT EXISTS strategy_config (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  strategy_name   VARCHAR(100) NOT NULL UNIQUE,
+  is_enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+  disabled_at     TIMESTAMP    NULL,
+  disabled_reason VARCHAR(500) NULL,
+  updated_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO strategy_config (strategy_name) VALUES
+  ('TREND_PULLBACK'), ('BREAKOUT'), ('RANGE'),
+  ('MEAN_REVERSION'), ('TREND_PULLBACK_SHORT'), ('BREAKDOWN');
+```
+
+**Key decision:** The weekly calibration job auto-disables strategies with low win rates from paper trade data and auto-re-enables them when performance recovers. The table tracks when and why each strategy was disabled. Strategy enablement is checked at the start of `runStrategies()` — disabled strategies are skipped entirely. Telegram alerts fire on state changes.
+
 ### ER Diagram
 
 ```
@@ -858,6 +894,7 @@ sentiment_flags *──1 candles       (symbol, logical reference)
 rejected_signals                   (standalone audit log, populated per pipeline run)
 nifty50_composition                (standalone, referenced by backtest.service.js)
 adaptive_thresholds                (stores adaptive RSI/volume thresholds + scoring weights)
+strategy_config                    (stores per-strategy enable/disable state)
 ```
 
 ### Migration Strategy
@@ -1354,7 +1391,7 @@ is_liquid = (volume_sma_20 >= MIN_LIQUIDITY_VOLUME)    // default: 500,000 share
 
 **Purpose and threshold note:** Under normal market conditions, NIFTY 50 stocks routinely trade millions of shares per day, so the 500,000 default will almost never trigger. This check exists primarily as a **safety net for unusual conditions** -- trading halts, post-holiday low-volume sessions, or stocks that have just entered the NIFTY 50 index with historically thinner liquidity. If backtesting shows this gate never fires, consider raising the threshold to 1,000,000 to make it a more meaningful filter. The threshold is configurable via `MIN_LIQUIDITY_VOLUME` in `.env`.
 
-Illiquid stocks are not rejected at the feature level -- the `is_liquid` flag is stored and used as a hard gate during signal generation (Section 13).
+The `is_liquid` flag is computed and stored for backward compatibility but is no longer used as a gate during signal generation. All NIFTY 50 stocks are inherently liquid, so the liquidity gate was removed as dead code.
 
 ### Adaptive Thresholds
 
@@ -1694,28 +1731,39 @@ direction   = 'SHORT'
 
 ```
 FUNCTION runStrategies(symbol, date, market_regime)
+    enabled_strategies = FETCH strategy_config WHERE is_enabled = true
+    // Fail-open: if strategy_config table doesn't exist, run all strategies
+
     raw_signals = []
 
     IF market_regime IN ('BULLISH', 'SIDEWAYS')
-        range_signal = rangeStrategy.evaluate(symbol, date)
-        reversion_signal = meanReversionStrategy.evaluate(symbol, date)
-        IF range_signal: raw_signals.PUSH(range_signal)
-        IF reversion_signal: raw_signals.PUSH(reversion_signal)
+        IF 'RANGE' IN enabled_strategies
+            range_signal = rangeStrategy.evaluate(symbol, date)
+            IF range_signal: raw_signals.PUSH(range_signal)
+        IF 'MEAN_REVERSION' IN enabled_strategies
+            reversion_signal = meanReversionStrategy.evaluate(symbol, date)
+            IF reversion_signal: raw_signals.PUSH(reversion_signal)
 
     IF market_regime == 'BULLISH'
-        trend_signal = trendPullback.evaluate(symbol, date)
-        breakout_signal = breakout.evaluate(symbol, date)
-        IF trend_signal: raw_signals.PUSH(trend_signal)
-        IF breakout_signal: raw_signals.PUSH(breakout_signal)
+        IF 'TREND_PULLBACK' IN enabled_strategies
+            trend_signal = trendPullback.evaluate(symbol, date)
+            IF trend_signal: raw_signals.PUSH(trend_signal)
+        IF 'BREAKOUT' IN enabled_strategies
+            breakout_signal = breakout.evaluate(symbol, date)
+            IF breakout_signal: raw_signals.PUSH(breakout_signal)
 
     IF market_regime == 'BEARISH'
-        short_trend = trendPullbackShort.evaluate(symbol, date)
-        breakdown = breakdownStrategy.evaluate(symbol, date)
-        IF short_trend: raw_signals.PUSH(short_trend)
-        IF breakdown: raw_signals.PUSH(breakdown)
+        IF 'TREND_PULLBACK_SHORT' IN enabled_strategies
+            short_trend = trendPullbackShort.evaluate(symbol, date)
+            IF short_trend: raw_signals.PUSH(short_trend)
+        IF 'BREAKDOWN' IN enabled_strategies
+            breakdown = breakdownStrategy.evaluate(symbol, date)
+            IF breakdown: raw_signals.PUSH(breakdown)
 
     RETURN raw_signals
 ```
+
+Strategies are dynamically enabled/disabled via the `strategy_config` table. The weekly calibration job evaluates per-strategy paper trade performance and auto-disables underperforming strategies (win rate < 40% with >= 15 trades). See Section 18 for calibration details.
 
 ---
 
@@ -2176,11 +2224,7 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
             reasons: COLLECT all triggering factor names
         }
 
-    // Liquidity gate
     features = FETCH features for symbol, date
-    IF features.is_liquid = false
-        LOG: "Signal for {symbol} rejected: insufficient liquidity (volume_sma_20 < MIN_LIQUIDITY_VOLUME)"
-        RETURN null
 
     // VWAP distance filter (Improvement 5)
     IF features.vwap_distance_pct != null
@@ -2240,7 +2284,6 @@ Every `RETURN null` path in `deduplicateAndGenerate` now writes to the `rejected
 | Gate | `reject_stage` | When |
 |------|----------------|------|
 | Merged SL risk | `MERGED_RISK_ZERO` | Risk <= 0 after SL merge |
-| Liquidity | `LIQUIDITY_GATE` | `is_liquid = false` |
 | VWAP distance | `VWAP_FILTER` | Price stretched > ±2% from VWAP |
 | Put-Call Ratio | `PCR_FILTER` | PCR > 1.5 for LONG signals |
 | Confidence | `CONFIDENCE_GATE` | Confidence below `MIN_CONFIDENCE` |
@@ -2414,24 +2457,36 @@ FOR each test_date in test_period:
 
 ### Outcome Evaluation
 
+The backtester uses the **next-day open** as the realistic entry price instead of the signal day's close. This eliminates the look-ahead bias inherent in assuming you can enter at the closing price on the day the signal fires.
+
 ```
 FUNCTION evaluateOutcome(signal, future_candles)
-    FOR day = 1 to HOLDING_PERIOD_DAYS:
+    realistic_entry = future_candles[0].open   // next day's open, not signal.entry_price
+
+    // Gap-open guard: if the market opens past SL, it's an immediate loss
+    IF signal.direction == 'LONG' AND realistic_entry <= signal.stop_loss
+        RETURN { result: 'LOSS', exit_price: realistic_entry, realistic_entry, days: 0, gap_open: true }
+    IF signal.direction == 'SHORT' AND realistic_entry >= signal.stop_loss
+        RETURN { result: 'LOSS', exit_price: realistic_entry, realistic_entry, days: 0, gap_open: true }
+
+    FOR day = 0 to HOLDING_PERIOD_DAYS:
         candle = future_candles[day]
 
         IF signal.direction == 'LONG'
             IF candle.low <= signal.stop_loss
-                RETURN { result: 'LOSS', exit_price: signal.stop_loss, days: day }
+                RETURN { result: 'LOSS', exit_price: signal.stop_loss, realistic_entry, days: day+1 }
             IF candle.high >= signal.target_price
-                RETURN { result: 'WIN', exit_price: signal.target_price, days: day }
+                RETURN { result: 'WIN', exit_price: signal.target_price, realistic_entry, days: day+1 }
         ELSE IF signal.direction == 'SHORT'
             IF candle.high >= signal.stop_loss
-                RETURN { result: 'LOSS', exit_price: signal.stop_loss, days: day }
+                RETURN { result: 'LOSS', exit_price: signal.stop_loss, realistic_entry, days: day+1 }
             IF candle.low <= signal.target_price
-                RETURN { result: 'WIN', exit_price: signal.target_price, days: day }
+                RETURN { result: 'WIN', exit_price: signal.target_price, realistic_entry, days: day+1 }
 
-    RETURN { result: 'NEUTRAL', exit_price: last_candle.close, days: HOLDING_PERIOD_DAYS }
+    RETURN { result: 'NEUTRAL', exit_price: last_candle.close, realistic_entry, days: HOLDING_PERIOD_DAYS }
 ```
+
+The `calculateNetReturn()` function uses `outcome.realistic_entry` (not `signal.entry_price`) for all PnL calculations.
 
 ### SHORT Signal Outcome Evaluation
 
@@ -2581,13 +2636,19 @@ Paper trading tracks simulated trades without real money to validate the system'
 ```
 FUNCTION createPaperTrades(final_signals)
     FOR each signal in final_signals:
+        next_candle = findNextCandle(signal.symbol, signal.date)
+        actual_entry = next_candle ? next_candle.open : NULL
+
         INSERT INTO paper_trades (signal_id, symbol, entry_date,
-            entry_price, stop_loss, target_price, shares_to_buy, status)
+            entry_price, actual_entry_price, stop_loss, target_price,
+            shares_to_buy, status)
         VALUES (signal.id, signal.symbol, signal.date,
-            signal.entry_price, signal.stop_loss, signal.target_price,
-            signal.shares_to_buy, 'OPEN')
+            signal.entry_price, actual_entry, signal.stop_loss,
+            signal.target_price, signal.shares_to_buy, 'OPEN')
     LOG info: "{count} paper trades created"
 ```
+
+`actual_entry_price` is the next-day open, populated at creation if data is available. If the signal is created intraday before market close, it will be NULL and populated on the next `updatePaperTrades()` run.
 
 ### Daily Status Update (Pipeline Step 9.5)
 
@@ -2633,11 +2694,21 @@ FUNCTION updatePaperTrades()
             ELSE
                 CONTINUE    // still open
 
+        // Populate actual_entry_price from next-day open if not yet set
+        IF trade.actual_entry_price IS NULL
+            next_candle = findNextCandle(trade.symbol, trade.entry_date)
+            IF next_candle exists
+                trade.actual_entry_price = next_candle.open
+                UPDATE paper_trades SET actual_entry_price = next_candle.open WHERE id = trade.id
+
+        // Use actual_entry_price (next-day open) for PnL; fall back to entry_price
+        entry_for_pnl = trade.actual_entry_price ?? trade.entry_price
+
         // Apply the same cost model as backtesting (Section 14) so paper
         // trade results are directly comparable to backtest results.
         // Both show net returns after slippage and brokerage.
         total_cost_pct  = SLIPPAGE_PCT + BROKERAGE_PCT              // default: 0.15%
-        effective_entry = trade.entry_price * (1 + total_cost_pct / 100)
+        effective_entry = entry_for_pnl * (1 + total_cost_pct / 100)
         effective_exit  = exit_price * (1 - total_cost_pct / 100)
         pnl_pct = ((effective_exit - effective_entry) / effective_entry) * 100
 
@@ -3317,6 +3388,38 @@ Returns `null` data if no decision exists for this signal + user.
 }
 ```
 
+### 17.13 GET /api/v1/strategies
+
+**Description:** Returns the current enable/disable state of all strategies.
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "strategies": [
+      {
+        "id": 1,
+        "strategy_name": "TREND_PULLBACK",
+        "is_enabled": 1,
+        "disabled_at": null,
+        "disabled_reason": null,
+        "updated_at": "2026-03-24T16:00:00.000Z"
+      },
+      {
+        "id": 2,
+        "strategy_name": "BREAKOUT",
+        "is_enabled": 0,
+        "disabled_at": "2026-03-20T02:00:00.000Z",
+        "disabled_reason": "Win rate 35.0% (7/20) below 40% threshold",
+        "updated_at": "2026-03-20T02:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
 ---
 
 ## 18. Scheduler and Pipeline Orchestration
@@ -3591,6 +3694,23 @@ FUNCTION calibrateWeights()
     UPSERT INTO adaptive_thresholds (symbol='_GLOBAL_')
         SET weight_trend, weight_rsi, weight_volume, weight_breakout
     LOG info: "Weights calibrated from {outcomes.length} outcomes"
+
+    // Paper trade feedback loop — auto-disable underperforming strategies
+    CALL evaluateStrategyPerformance()
+
+FUNCTION evaluateStrategyPerformance()
+    strategyStats = QUERY paper_trades JOIN signals
+        WHERE pt.status = 'CLOSED' AND pt.exit_date >= 90 days ago
+        GROUP BY strategy_source HAVING total >= 10
+
+    FOR each strategy in strategyStats:
+        win_rate = wins / total
+        IF is_enabled AND win_rate < STRATEGY_DISABLE_WIN_RATE (0.40) AND total >= 15
+            SET strategy_config.is_enabled = false, reason = "low win rate"
+            SEND Telegram alert
+        IF NOT is_enabled AND win_rate >= STRATEGY_REENABLE_WIN_RATE (0.50) AND total >= 20
+            SET strategy_config.is_enabled = true
+            SEND Telegram alert
 ```
 
 ### Cron Job Registry
@@ -3617,6 +3737,8 @@ Sends notifications via Telegram Bot API when `TELEGRAM_BOT_TOKEN` and `TELEGRAM
 | Pipeline failure | Error message and failing step |
 | Zero signals (non-volatile) | Warning when regime is not HIGH_VOLATILITY |
 | HIGH_VOLATILITY early exit | Notification that pipeline skipped signal generation |
+| Strategy auto-disabled | Strategy name, win rate, trade count |
+| Strategy auto-re-enabled | Strategy name, win rate, trade count |
 
 ### SLA
 
@@ -3762,7 +3884,7 @@ Located in `tests/integration/`. Run with `npm run test:integration`.
 | API endpoints | Use supertest to hit each endpoint (including paper trading), verify response shape, status codes, pagination, error cases |
 | Fundamental filter pipeline | Seed unhealthy fundamentals for a symbol that would otherwise generate a signal, verify signal is rejected |
 | Sentiment filter pipeline | Mock RSS to return negative headline for a symbol, verify signal is suppressed |
-| Liquidity gate | Seed low-volume candles for a symbol, verify `is_liquid = false` and signal is rejected |
+| Strategy auto-disable | Seed paper trades with low win rate for a strategy, run calibration, verify strategy is disabled in `strategy_config` |
 | Favorites flow | Add -> list -> verify join with signals -> remove -> verify removed |
 | Data validation | Insert candles with known gaps, verify validation service detects them |
 | Market regime | Test pipeline with NIFTY below EMA200 (BEARISH, only short strategies fire); test India VIX above threshold (HIGH_VOLATILITY, no signals); test SIDEWAYS regime (EMA convergence, only Range/MeanReversion fire) |

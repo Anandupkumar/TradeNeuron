@@ -17,6 +17,7 @@ const backtestRoutes = require('./src/routes/backtest.routes');
 const favoriteRoutes = require('./src/routes/favorite.routes');
 const paperTradeRoutes = require('./src/routes/paper_trade.routes');
 const tradeDecisionRoutes = require('./src/routes/tradeDecision.routes');
+const strategyRoutes = require('./src/routes/strategy.routes');
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use('/api/v1', backtestRoutes);
 app.use('/api/v1', favoriteRoutes);
 app.use('/api/v1', paperTradeRoutes);
 app.use('/api/v1', tradeDecisionRoutes);
+app.use('/api/v1', strategyRoutes);
 
 app.use(errorHandler);
 

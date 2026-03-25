@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS strategy_config (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  strategy_name   VARCHAR(100) NOT NULL UNIQUE,
+  is_enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+  disabled_at     TIMESTAMP    NULL,
+  disabled_reason VARCHAR(500) NULL,
+  updated_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO strategy_config (strategy_name) VALUES
+  ('TREND_PULLBACK'), ('BREAKOUT'), ('RANGE'),
+  ('MEAN_REVERSION'), ('TREND_PULLBACK_SHORT'), ('BREAKDOWN');
