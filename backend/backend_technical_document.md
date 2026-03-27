@@ -2016,7 +2016,9 @@ FOR each [symbol, signals] in raw_signals:
 
 ### Weight Configuration
 
-**Static base weights** (stored in `src/config/constants.js`):
+The scoring engine is **direction-aware**. LONG and SHORT signals are scored using mirror logic against the same weight budget (max 100). The `direction` parameter (default `'LONG'`) is passed through from `deduplicateAndGenerate()`.
+
+**LONG scoring weights** (stored in `SCORING_WEIGHTS` in `src/config/constants.js`):
 
 | Factor | Base Weight | Condition to Score |
 |--------|--------|--------------------|
@@ -2026,16 +2028,27 @@ FOR each [symbol, signals] in raw_signals:
 | Breakout | +20 | `is_breakout = true`. **Soft filter:** if `close_position < 0.6`, 0 points; if `0.6-0.75`, reduced by 10 (BREAKOUT_SOFT_PENALTY); if `>= 0.75`, full points |
 | High Delivery Bonus | +10 | `is_high_delivery = true` AND `is_breakout = true` |
 
+**SHORT scoring weights** (stored in `SHORT_SCORING_WEIGHTS` in `src/config/constants.js`):
+
+| Factor | Base Weight | Condition to Score |
+|--------|--------|--------------------|
+| Downtrend Alignment | +30 | NOT `is_uptrend` AND `ema_20 < ema_50`. **Soft filter:** if `ema50_slope >= 0` (rising = weakening downtrend), reduced by 15 |
+| RSI Overbought | +20 | `rsi_zone = 'OVERBOUGHT'` |
+| Volume (tiered) | 0-30 | Same volume tier scoring as LONG (volume confirms both directions) |
+| Breakdown | +20 | NOT `is_breakout` AND `close_position < 0.4` (candle closed in lower 40% = strong breakdown) |
+| High Delivery Bonus | +10 | `is_high_delivery = true` AND breakdown confirmed (institutional selling pressure) |
+
 **Soft filter constants** (stored in `src/config/constants.js` under `SOFT_FILTER`):
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| BREAKOUT_CLOSE_POSITION_HARD | 0.6 | Below this, no breakout points |
-| BREAKOUT_CLOSE_POSITION_SOFT | 0.75 | Below this (but >= 0.6), reduced breakout points |
-| BREAKOUT_SOFT_PENALTY | 10 | Points deducted for moderate close position |
-| TREND_SLOPE_PENALTY | 15 | Points deducted for flat/declining EMA50 |
+| BREAKOUT_CLOSE_POSITION_HARD | 0.6 | Below this, no breakout points (LONG) |
+| BREAKOUT_CLOSE_POSITION_SOFT | 0.75 | Below this (but >= 0.6), reduced breakout points (LONG) |
+| BREAKOUT_SOFT_PENALTY | 10 | Points deducted for moderate close position (LONG) |
+| TREND_SLOPE_PENALTY | 15 | Points deducted for flat/declining EMA50 (LONG) or flat/rising EMA50 (SHORT) |
+| BREAKDOWN_CLOSE_POSITION_THRESHOLD | 0.4 | Below this, candle is a confirmed breakdown (SHORT) |
 
-**Volume tier scores** replace the flat `is_volume_spike = +30`:
+**Volume tier scores** (shared by both directions):
 
 | Volume Tier | RVOL Range | Score |
 |-------------|-----------|-------|
@@ -2044,7 +2057,7 @@ FOR each [symbol, signals] in raw_signals:
 | elevated | >= 1.3 | +10 |
 | normal | < 1.3 | +0 |
 
-**Delivery bonus:** When a breakout signal has high delivery percentage (>50%), an additional +10 points are added, rewarding confirmed institutional buying.
+**Delivery bonus:** For LONG, when a breakout signal has high delivery (>50%), +10 quality bonus. For SHORT, when a breakdown candle has high delivery, +10 quality bonus (institutional selling pressure).
 
 ### Dynamic Weight Calibration (Adaptive Scoring)
 
@@ -2071,32 +2084,63 @@ This prevents noisy early learning while still allowing the system to adapt with
 
 ### Scoring Algorithm
 
-The scoring engine provides two entry points: `calculateScore(symbol, date)` for backward-compatible total score, and `calculateScoreWithBreakdown(symbol, date)` which returns both the score and a four-bucket breakdown.
+The scoring engine provides two entry points: `calculateScore(symbol, date, direction)` for backward-compatible total score, and `calculateScoreWithBreakdown(symbol, date, direction)` which returns both the score and a four-bucket breakdown. The `direction` parameter defaults to `'LONG'`.
 
 ```
-FUNCTION _scoreInternal(symbol, date)
+FUNCTION _scoreInternal(symbol, date, direction = 'LONG')
     features  = FETCH features for symbol, date
     indicator = FETCH indicators for symbol, date
     IF NOT features OR NOT indicator: RETURN { score: 0, breakdown: null, feature, indicator }
 
     adaptive = loadAdaptiveWeights()
-    w_trend    = adaptive ? adaptive.trend    : SCORING_WEIGHTS.TREND        // 30
-    w_rsi      = adaptive ? adaptive.rsi      : SCORING_WEIGHTS.RSI_PULLBACK // 20
-    w_breakout = adaptive ? adaptive.breakout : SCORING_WEIGHTS.BREAKOUT     // 20
-
     technical = 0, momentum = 0, volume = 0, quality = 0
 
-    IF features.is_uptrend AND indicator.ema_20 > indicator.ema_50
-        trend_score = w_trend
-        // Soft filter: penalize flat/declining EMA50 slope
-        IF features.ema50_slope != null AND features.ema50_slope <= 0
-            trend_score = MAX(0, trend_score - SOFT_FILTER.TREND_SLOPE_PENALTY)
-        technical += trend_score
+    IF direction == 'SHORT':
+        w_trend     = adaptive ? adaptive.trend    : SHORT_SCORING_WEIGHTS.TREND          // 30
+        w_rsi       = adaptive ? adaptive.rsi      : SHORT_SCORING_WEIGHTS.RSI_OVERBOUGHT // 20
+        w_breakdown = adaptive ? adaptive.breakout : SHORT_SCORING_WEIGHTS.BREAKDOWN      // 20
 
-    IF features.rsi_zone == 'PULLBACK'
-        momentum += w_rsi
+        is_downtrend = NOT features.is_uptrend AND ema_20 < ema_50
+        IF is_downtrend
+            trend_score = w_trend
+            IF features.ema50_slope != null AND features.ema50_slope >= 0
+                trend_score = MAX(0, trend_score - TREND_SLOPE_PENALTY)
+            technical += trend_score
 
-    // Tiered volume scoring (replaces flat is_volume_spike weight)
+        IF features.rsi_zone == 'OVERBOUGHT'
+            momentum += w_rsi
+
+        is_breakdown = NOT features.is_breakout AND close_position < BREAKDOWN_CLOSE_POSITION_THRESHOLD (0.4)
+        IF is_breakdown
+            technical += w_breakdown
+
+        IF features.is_high_delivery AND is_breakdown
+            quality += 10
+
+    ELSE:    // LONG
+        w_trend    = adaptive ? adaptive.trend    : SCORING_WEIGHTS.TREND        // 30
+        w_rsi      = adaptive ? adaptive.rsi      : SCORING_WEIGHTS.RSI_PULLBACK // 20
+        w_breakout = adaptive ? adaptive.breakout : SCORING_WEIGHTS.BREAKOUT     // 20
+
+        IF features.is_uptrend AND ema_20 > ema_50
+            trend_score = w_trend
+            IF features.ema50_slope != null AND features.ema50_slope <= 0
+                trend_score = MAX(0, trend_score - TREND_SLOPE_PENALTY)
+            technical += trend_score
+
+        IF features.rsi_zone == 'PULLBACK'
+            momentum += w_rsi
+
+        IF features.is_breakout
+            close_pos = features.close_position
+            IF close_pos < 0.6: no points
+            ELSE IF close_pos < 0.75: technical += MAX(0, w_breakout - BREAKOUT_SOFT_PENALTY)
+            ELSE: technical += w_breakout
+
+        IF features.is_high_delivery AND features.is_breakout
+            quality += 10
+
+    // Volume scoring — same for both directions
     volume_tier = features.volume_tier OR 'normal'
     IF adaptive:
         tier_multiplier = { extreme: 1.0, high: 0.67, elevated: 0.33, normal: 0 }
@@ -2104,29 +2148,15 @@ FUNCTION _scoreInternal(symbol, date)
     ELSE:
         volume += VOLUME_TIER_SCORES[volume_tier]    // 30/20/10/0
 
-    IF features.is_breakout
-        // Soft filter: close_position determines breakout strength
-        close_pos = features.close_position
-        IF close_pos != null AND close_pos < BREAKOUT_CLOSE_POSITION_HARD (0.6)
-            // Weak breakout — no points
-        ELSE IF close_pos != null AND close_pos < BREAKOUT_CLOSE_POSITION_SOFT (0.75)
-            technical += MAX(0, w_breakout - BREAKOUT_SOFT_PENALTY)
-        ELSE
-            technical += w_breakout
-
-    // High delivery bonus for breakout strategies
-    IF features.is_high_delivery AND features.is_breakout
-        quality += 10
-
     score = CLAMP(technical + momentum + volume + quality, 0, 100)
     breakdown = { technical, momentum, volume, quality }
     RETURN { score, breakdown, feature, indicator }
 
-FUNCTION calculateScore(symbol, date)
-    RETURN _scoreInternal(symbol, date).score
+FUNCTION calculateScore(symbol, date, direction = 'LONG')
+    RETURN _scoreInternal(symbol, date, direction).score
 
-FUNCTION calculateScoreWithBreakdown(symbol, date)
-    RETURN _scoreInternal(symbol, date)
+FUNCTION calculateScoreWithBreakdown(symbol, date, direction = 'LONG')
+    RETURN _scoreInternal(symbol, date, direction)
 ```
 
 ### Confidence Breakdown
@@ -2146,7 +2176,7 @@ The breakdown object stored on each signal has this shape:
 
 ### Explainability (buildExplanations)
 
-A companion function `buildExplanations(feature, indicator, regime, sentiment)` produces an array of plain-English sentences using the same feature and indicator data that `calculateScore` evaluates. It covers trend alignment, RSI zone, volume tier, breakout status, delivery quality, and news sentiment. The result is stored as `explanation` JSON on the signal.
+A companion function `buildExplanations(feature, indicator, regime, sentiment, direction)` produces an array of plain-English sentences using the same feature and indicator data that `calculateScore` evaluates. It is direction-aware: for LONG it covers trend alignment, RSI pullback, breakout, and delivery quality; for SHORT it covers downtrend alignment, RSI overbought, breakdown confirmation, and institutional selling. Volume tier and sentiment explanations are shared. The result is stored as `explanation` JSON on the signal.
 
 ### Normalization for Merged Signals
 
@@ -2248,7 +2278,7 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
         RETURN null
 
     { confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator }
-        = calculateScoreWithBreakdown(symbol, date)
+        = calculateScoreWithBreakdown(symbol, date, direction)
 
     IF confidence < MIN_CONFIDENCE
         LOG + INSERT rejected_signals(CONFIDENCE_GATE)
@@ -2258,7 +2288,7 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
         LOG + INSERT rejected_signals(RR_GATE)
         RETURN null
 
-    explanation = buildExplanations(scoreFeature, scoreIndicator, regime, sentiment)
+    explanation = buildExplanations(scoreFeature, scoreIndicator, regime, sentiment, direction)
 
     RETURN {
         symbol,

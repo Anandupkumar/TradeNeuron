@@ -501,7 +501,7 @@ export interface HistoryResponse {
 > - `is_ranging` and `z_score_20d` are computed by the backend's adaptive-threshold and range-strategy upgrades. The backend stores these in the `features` table and returns them in the `GET /api/v1/stock/:symbol` features object.
 > - `rvol` (Relative Volume) is computed as `current_volume / avg_volume_20d`. `volume_tier` is derived from RVOL: LOW (<0.5), NORMAL (0.5–1.5), HIGH (1.5–2.5), VERY_HIGH (2.5–4.0), EXTREME (>4.0). These replace the simple `is_volume_spike` boolean for scoring purposes (though `is_volume_spike` is retained for backward compatibility).
 > - `vwap` is a rolling VWAP computed from intraday-equivalent data. `vwap_distance_pct` = `(close - vwap) / vwap * 100`. `is_near_vwap` flags when `|vwap_distance_pct| <= 1.5%`, used as a signal generation filter.
-> - `delivery_pct` comes from NSE Bhavcopy. `is_high_delivery` = true when today's delivery % exceeds the 20-day rolling median. High delivery on breakout signals adds a +10 confidence bonus.
+> - `delivery_pct` comes from NSE Bhavcopy. `is_high_delivery` = true when today's delivery % exceeds the 20-day rolling median. High delivery adds a +10 confidence bonus: on breakout signals (LONG) it confirms institutional buying, and on breakdown candles (SHORT) it confirms institutional selling pressure.
 > - All new feature fields (`rvol`, `volume_tier`, `vwap`, `vwap_distance_pct`, `is_near_vwap`, `is_high_delivery`, `delivery_pct`) are stored in the `features` table and returned by the backend in the `GET /api/v1/stock/:symbol` response under the `features` object.
 
 ### Paper trade type

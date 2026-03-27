@@ -434,3 +434,51 @@ INSERT INTO strategy_config (strategy_name) VALUES
 ### Self-Improvement Loop
 
 Paper trades resolve → calibration job reads per-strategy results → underperforming strategies auto-disabled → Telegram alert fires → you decide whether to override.
+
+---
+
+## 9. Fix SHORT Signal Scoring (Direction-Aware Scoring)
+
+### Problem
+
+The scoring engine (`scoring.service.js`) was LONG-only. It evaluated features like `is_uptrend`, `rsi_zone === 'PULLBACK'`, and `is_breakout` — all bullish indicators. In a BEARISH market regime, SHORT signals from `trend_pullback_short` and `breakdown` strategies always received confidence = 0 because none of these bullish features were true, causing every SHORT signal to be rejected.
+
+### Changes Made
+
+**`src/config/constants.js`:**
+- Added `SHORT_SCORING_WEIGHTS` with identical initial values (`TREND: 30`, `RSI_OVERBOUGHT: 20`, `BREAKDOWN: 20`) — allows future independent tuning
+- Added `SOFT_FILTER.BREAKDOWN_CLOSE_POSITION_THRESHOLD = 0.4` — candle closing in the lower 40% confirms breakdown
+
+**`src/services/scoring/scoring.service.js`:**
+- Added `direction` parameter (default `'LONG'`) to `_scoreInternal`, `calculateScore`, `calculateScoreWithBreakdown`
+- SHORT scoring branch mirrors LONG logic with bearish features:
+  - Downtrend: NOT `is_uptrend` AND `ema_20 < ema_50` (mirror of uptrend check)
+  - RSI: `rsi_zone === 'OVERBOUGHT'` (mirror of PULLBACK)
+  - Breakdown: NOT `is_breakout` AND `close_position < 0.4` (candle closed near low)
+  - Quality: `is_high_delivery` AND breakdown (institutional selling pressure)
+  - Trend slope penalty: rising EMA50 slope penalizes SHORT (weakening downtrend)
+- Volume scoring unchanged — volume confirms both directions
+- Added `direction` parameter to `buildExplanations` with SHORT-specific plain-English sentences
+
+**`src/services/signals/signal.service.js`:**
+- `deduplicateAndGenerate` now passes `direction` to `calculateScoreWithBreakdown(symbol, date, direction)`
+- `buildExplanations` call now includes `direction`
+
+### SHORT Scoring Factors (Mirror of LONG)
+
+| Factor              | LONG scoring                         | SHORT scoring                                          |
+| ------------------- | ------------------------------------ | ------------------------------------------------------ |
+| Trend (+30)         | `is_uptrend` AND `ema_20 > ema_50`   | NOT `is_uptrend` AND `ema_20 < ema_50`                 |
+| Momentum (+20)      | `rsi_zone === 'PULLBACK'`            | `rsi_zone === 'OVERBOUGHT'`                            |
+| Volume (+30)        | `volume_tier` scoring                | Same `volume_tier` scoring                             |
+| Breakout/down (+20) | `is_breakout` with close_position    | NOT `is_breakout` AND `close_position < 0.4`           |
+| Quality (+10)       | `is_high_delivery` AND `is_breakout` | `is_high_delivery` AND breakdown                       |
+| Slope penalty       | `ema50_slope <= 0` penalizes LONG    | `ema50_slope >= 0` penalizes SHORT                     |
+
+### What This Does NOT Change
+
+- No new features, DB columns, tables, or migrations
+- No changes to strategy entry logic
+- No changes to signal lifecycle or paper trading
+- Volume scoring identical for both directions
+- Adaptive weight calibration remains global (regime-specific is a separate future improvement)

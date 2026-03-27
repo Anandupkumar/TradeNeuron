@@ -164,18 +164,27 @@ See how each strategy performed historically:
 
 ## Understanding the Confidence Score
 
-The confidence score (0–100%) is calculated from multiple factors:
+The confidence score (0–100%) is **direction-aware** — LONG and SHORT signals are scored using different criteria:
+
+**LONG (BUY) signals:**
 
 | Factor | What it measures |
 |--------|-----------------|
-| Trend Alignment | Is the stock in an uptrend? (EMA 20 > 50 > 200) — penalized if EMA50 slope is flat/declining |
-| RSI Zone | Is RSI in a healthy pullback zone? (30–45 for buys) |
-| Volume | Is volume elevated? Scored by tier — higher volume = higher score |
-| Breakout | Has the stock broken above resistance? Scored by close position — strong/moderate/weak |
-| Near Support | Is the stock near a support level? |
-| Relative Strength | Is the stock outperforming NIFTY 50? |
-| Sentiment | Is news sentiment positive? (via FinBERT AI analysis) |
-| High Delivery | Are buyers taking actual delivery? (institutional interest) |
+| Trend Alignment (+30) | Is the stock in an uptrend? (EMA 20 > EMA 50) — penalized if EMA50 slope is flat/declining |
+| RSI Pullback (+20) | Is RSI in a healthy pullback zone? (30–45) |
+| Volume (+0-30) | Is volume elevated? Scored by tier (extreme/high/elevated/normal) |
+| Breakout (+20) | Has the stock broken above resistance? Scored by close position — strong/moderate/weak |
+| High Delivery (+10) | High delivery % on a breakout day = institutional buying confirmation |
+
+**SHORT (SELL) signals:**
+
+| Factor | What it measures |
+|--------|-----------------|
+| Downtrend Alignment (+30) | Is the stock in a downtrend? (EMA 20 < EMA 50) — penalized if EMA50 slope is rising |
+| RSI Overbought (+20) | Is RSI in the overbought zone? (65+) — overextended bounce = short entry |
+| Volume (+0-30) | Same tier scoring — volume confirms both directions |
+| Breakdown (+20) | Did the candle close near its low? (close position < 40% = breakdown pressure) |
+| High Delivery (+10) | High delivery % on a breakdown candle = institutional selling pressure |
 
 A score of **85%+** is classified as **HIGH** tier — these are the strongest setups. **75–84%** is **NORMAL**, and **70–74%** is **LOW** priority.
 

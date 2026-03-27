@@ -118,7 +118,7 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     return null;
   }
 
-  const { score: confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date);
+  const { score: confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date, direction);
   if (confidence < config.min_confidence) {
     logger.info(`Signal for ${symbol} rejected: confidence ${confidence} below ${config.min_confidence}`);
     await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'CONFIDENCE_GATE', reject_reason: `Confidence ${confidence} below minimum ${config.min_confidence}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
@@ -167,7 +167,7 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     return null;
   }
 
-  const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null);
+  const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null, direction);
 
   return {
     symbol,
