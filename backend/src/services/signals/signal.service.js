@@ -47,6 +47,14 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
   const direction = raw_signals[0].direction || 'LONG';
   const is_short = direction === 'SHORT';
 
+  const existing_active = await signalModel.findActiveBySymbol(symbol);
+  const has_duplicate = existing_active.some((s) => s.direction === direction);
+  if (has_duplicate) {
+    logger.info(`Signal for ${symbol} rejected: already has an active ${direction} signal`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: raw_signals[0].strategy, reject_stage: 'DUPLICATE', reject_reason: `Already has active ${direction} signal`, raw_confidence: null });
+    return null;
+  }
+
   let signal;
 
   if (raw_signals.length === 1) {

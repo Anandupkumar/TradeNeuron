@@ -8,6 +8,7 @@ export type RejectStage =
   | 'RR_GATE'
   | 'MERGED_RISK_ZERO'
   | 'ACTIVE_CAP'
+  | 'DUPLICATE'
   | 'POSITION_SIZING';
 
 export interface RejectedSignal {
