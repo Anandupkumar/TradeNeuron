@@ -68,8 +68,8 @@ export default function PaperTradingPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-50">Paper Trading</h1>
-        <p className="mt-1 text-sm text-zinc-400">
+        <h1 className="text-2xl font-bold text-foreground">Paper Trading</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Track simulated trades and performance metrics
         </p>
       </div>
@@ -91,8 +91,8 @@ export default function PaperTradingPage() {
             value={status_filter}
             onChange={(e) => handle_status_change(e.target.value)}
             className={cn(
-              'rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200',
-              'focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500',
+              'rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground',
+              'focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring',
             )}
           >
             {status_options.map((opt) => (
@@ -103,15 +103,15 @@ export default function PaperTradingPage() {
           </select>
 
           <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
               placeholder="Filter by symbol…"
               value={symbol_filter}
               onChange={(e) => handle_symbol_change(e.target.value)}
               className={cn(
-                'rounded-md border border-zinc-700 bg-zinc-800 py-2 pl-8 pr-3 text-sm text-zinc-200',
-                'placeholder:text-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500',
+                'rounded-md border border-border bg-muted py-2 pl-8 pr-3 text-sm text-foreground',
+                'placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring',
               )}
             />
           </div>

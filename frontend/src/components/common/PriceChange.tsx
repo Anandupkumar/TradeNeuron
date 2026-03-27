@@ -16,7 +16,7 @@ export function PriceChange({ value: raw_value, format = 'pct' }: PriceChangePro
     ? 'text-emerald-500'
     : is_negative
       ? 'text-red-500'
-      : 'text-zinc-400';
+      : 'text-muted-foreground';
 
   const formatted =
     format === 'pct'

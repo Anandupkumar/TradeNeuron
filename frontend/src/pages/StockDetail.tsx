@@ -91,16 +91,16 @@ export default function StockDetailPage() {
       <div className="flex items-center gap-3">
         <Link
           to="/"
-          className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ArrowLeft className="h-5 w-5" />
         </Link>
-        <span className="text-sm text-zinc-500">Back to Dashboard</span>
+        <span className="text-sm text-muted-foreground">Back to Dashboard</span>
       </div>
 
       <StockHeader stock={stock} />
 
-      <div className="flex items-center gap-1 rounded-lg bg-zinc-900 p-1">
+      <div className="flex items-center gap-1 rounded-lg bg-card p-1">
         {timeframe_options.map((tf) => (
           <button
             key={tf}
@@ -108,8 +108,8 @@ export default function StockDetailPage() {
             className={cn(
               'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
               timeframe === tf
-                ? 'bg-zinc-700 text-zinc-100'
-                : 'text-zinc-400 hover:text-zinc-200',
+                ? 'bg-accent text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {tf}
@@ -118,12 +118,12 @@ export default function StockDetailPage() {
       </div>
 
       <ChartErrorBoundary>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        <div className="rounded-lg border border-border bg-card p-4">
           <CandlestickChart candles={candles} />
         </div>
       </ChartErrorBoundary>
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+      <div className="rounded-lg border border-border bg-card p-4">
         <VolumeChart candles={candles} />
       </div>
 
@@ -131,18 +131,18 @@ export default function StockDetailPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-zinc-100">Indicators</h2>
+          <h2 className="mb-3 text-lg font-semibold text-foreground">Indicators</h2>
           <IndicatorGrid indicators={stock.indicators} />
         </div>
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-zinc-100">Features</h2>
+          <h2 className="mb-3 text-lg font-semibold text-foreground">Features</h2>
           <FeatureGrid features={stock.features} />
         </div>
       </div>
 
       {stock.active_signal && (
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-zinc-100">Active Signal</h2>
+          <h2 className="mb-3 text-lg font-semibold text-foreground">Active Signal</h2>
           <SignalCard signal={stock.active_signal} />
         </div>
       )}

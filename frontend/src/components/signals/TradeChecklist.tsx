@@ -64,7 +64,7 @@ export function TradeChecklist({ signal }: { signal: Signal }) {
 
   return (
     <div>
-      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         Trade Checklist
       </p>
       <div className="grid grid-cols-2 gap-2">
@@ -74,12 +74,12 @@ export function TradeChecklist({ signal }: { signal: Signal }) {
           return (
             <div
               key={item.label}
-              className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
+              className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2"
             >
               <Icon className={cn('h-4 w-4 shrink-0', style.color)} />
               <div className="min-w-0">
-                <p className="truncate text-xs text-zinc-400">{item.label}</p>
-                <p className="truncate text-sm font-medium text-zinc-200">{item.detail}</p>
+                <p className="truncate text-xs text-muted-foreground">{item.label}</p>
+                <p className="truncate text-sm font-medium text-foreground">{item.detail}</p>
               </div>
             </div>
           );

@@ -10,14 +10,14 @@ interface StatusConfig {
 }
 
 const dot_colors: Record<StatusVariant, string> = {
-  gray: 'bg-zinc-500',
+  gray: 'bg-muted-foreground',
   emerald: 'bg-emerald-500',
   amber: 'bg-amber-500',
   red: 'bg-red-500',
 };
 
 const text_colors: Record<StatusVariant, string> = {
-  gray: 'text-zinc-400',
+  gray: 'text-muted-foreground',
   emerald: 'text-emerald-400',
   amber: 'text-amber-400',
   red: 'text-red-400',

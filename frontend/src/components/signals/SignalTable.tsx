@@ -24,7 +24,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       key: 'symbol',
       label: 'Symbol',
       render: (signal: Signal) => (
-        <span className="font-medium text-zinc-100">{signal.symbol}</span>
+        <span className="font-medium text-foreground">{signal.symbol}</span>
       ),
     },
     {
@@ -55,7 +55,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       label: 'Confidence',
       align: 'right' as const,
       render: (signal: Signal) => (
-        <span className="font-medium text-zinc-200">{Math.round(signal.confidence)}%</span>
+        <span className="font-medium text-foreground">{Math.round(signal.confidence)}%</span>
       ),
     },
     {
@@ -63,7 +63,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       label: 'Entry',
       align: 'right' as const,
       render: (signal: Signal) => (
-        <span className="text-zinc-300">{formatINR(signal.entry_price)}</span>
+        <span className="text-muted-foreground">{formatINR(signal.entry_price)}</span>
       ),
     },
     {
@@ -87,7 +87,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       label: 'R:R',
       align: 'right' as const,
       render: (signal: Signal) => (
-        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-medium text-zinc-300">
+        <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
           {formatRR(signal.risk_reward)}
         </span>
       ),
@@ -96,7 +96,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       key: 'strategy',
       label: 'Strategy',
       render: (signal: Signal) => (
-        <span className="text-xs text-zinc-400">
+        <span className="text-xs text-muted-foreground">
           {signal.strategy_source.split('_').join(' ')}
         </span>
       ),
@@ -110,21 +110,21 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       key: 'date',
       label: 'Date',
       render: (signal: Signal) => (
-        <span className="text-xs text-zinc-400">{formatDate(signal.date)}</span>
+        <span className="text-xs text-muted-foreground">{formatDate(signal.date)}</span>
       ),
     },
   ].filter(Boolean) as Column[];
 
   return (
-    <div className={cn('overflow-x-auto rounded-lg border border-zinc-800', className)}>
+    <div className={cn('overflow-x-auto rounded-lg border border-border', className)}>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-zinc-800 bg-zinc-900/50">
+          <tr className="border-b border-border bg-card/50">
             {columns.map((col) => (
               <th
                 key={col.key}
                 className={cn(
-                  'whitespace-nowrap px-4 py-3 text-xs font-medium uppercase tracking-wider text-zinc-500',
+                  'whitespace-nowrap px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground',
                   col.align === 'right' && 'text-right',
                   col.align === 'center' && 'text-center',
                   col.align !== 'right' && col.align !== 'center' && 'text-left',
@@ -135,13 +135,13 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-800/50">
+        <tbody className="divide-y divide-border/50">
           {signals.map((signal) => (
             <tr
               key={signal.id}
               onClick={() => on_row_click?.(signal)}
               className={cn(
-                'bg-zinc-900 transition-colors hover:bg-zinc-800/50',
+                'bg-card transition-colors hover:bg-muted/50',
                 on_row_click && 'cursor-pointer',
               )}
             >

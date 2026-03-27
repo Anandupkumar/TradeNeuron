@@ -73,7 +73,7 @@ const columns = [
     sortable: true,
     render: (r: BacktestResult) => {
       const v = toNum(r.sharpe_ratio);
-      return v == null ? <span className="text-zinc-500">—</span> : v.toFixed(2);
+      return v == null ? <span className="text-muted-foreground">—</span> : v.toFixed(2);
     },
   },
   {
@@ -82,7 +82,7 @@ const columns = [
     sortable: true,
     render: (r: BacktestResult) =>
       r.profit_factor == null ? (
-        <span className="text-zinc-500">—</span>
+        <span className="text-muted-foreground">—</span>
       ) : (
         formatRR(r.profit_factor)
       ),
@@ -93,7 +93,7 @@ const columns = [
     sortable: true,
     render: (r: BacktestResult) => {
       const v = toNum(r.avg_holding_days);
-      return v == null ? <span className="text-zinc-500">—</span> : `${v.toFixed(1)}d`;
+      return v == null ? <span className="text-muted-foreground">—</span> : `${v.toFixed(1)}d`;
     },
   },
 ];

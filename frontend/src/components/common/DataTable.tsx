@@ -43,24 +43,24 @@ export function DataTable<T>({ columns, data, onRowClick, className }: DataTable
     : data;
 
   function sortIcon(key: string) {
-    if (sort_key !== key) return <ArrowUpDown className="h-3 w-3 text-zinc-500" />;
+    if (sort_key !== key) return <ArrowUpDown className="h-3 w-3 text-muted-foreground" />;
     return sort_dir === 'asc' ? (
-      <ArrowUp className="h-3 w-3 text-zinc-300" />
+      <ArrowUp className="h-3 w-3 text-muted-foreground" />
     ) : (
-      <ArrowDown className="h-3 w-3 text-zinc-300" />
+      <ArrowDown className="h-3 w-3 text-muted-foreground" />
     );
   }
 
   return (
-    <div className={cn('overflow-x-auto rounded-lg border border-zinc-800', className)}>
+    <div className={cn('overflow-x-auto rounded-lg border border-border', className)}>
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-zinc-800 bg-zinc-900">
+        <thead className="border-b border-border bg-card">
           <tr>
             {columns.map((col) => (
               <th
                 key={col.key}
                 className={cn(
-                  'px-4 py-3 text-xs font-medium uppercase tracking-wider text-zinc-400',
+                  'px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground',
                   col.sortable && 'cursor-pointer select-none',
                   col.className
                 )}
@@ -74,18 +74,18 @@ export function DataTable<T>({ columns, data, onRowClick, className }: DataTable
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-800 bg-zinc-900/50">
+        <tbody className="divide-y divide-border bg-card/50">
           {sorted_data.map((item, idx) => (
             <tr
               key={idx}
               onClick={onRowClick ? () => onRowClick(item) : undefined}
               className={cn(
                 'transition-colors',
-                onRowClick && 'cursor-pointer hover:bg-zinc-800/50'
+                onRowClick && 'cursor-pointer hover:bg-muted/50'
               )}
             >
               {columns.map((col) => (
-                <td key={col.key} className={cn('px-4 py-3 text-zinc-200', col.className)}>
+                <td key={col.key} className={cn('px-4 py-3 text-foreground', col.className)}>
                   {col.render(item)}
                 </td>
               ))}

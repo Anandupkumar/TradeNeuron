@@ -45,15 +45,15 @@ export function WalkForwardChart({ results }: WalkForwardChartProps) {
 
   if (chart_data.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900">
-        <p className="text-sm text-zinc-500">No backtest data available</p>
+      <div className="flex h-64 items-center justify-center rounded-lg border border-border bg-card">
+        <p className="text-sm text-muted-foreground">No backtest data available</p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h3 className="mb-4 text-sm font-medium text-zinc-300">Walk-Forward Win Rate by Strategy</h3>
+    <div className="rounded-lg border border-border bg-card p-4">
+      <h3 className="mb-4 text-sm font-medium text-muted-foreground">Walk-Forward Win Rate by Strategy</h3>
       <ResponsiveContainer width="100%" height={350}>
         <BarChart data={chart_data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />

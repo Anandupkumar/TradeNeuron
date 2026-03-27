@@ -33,7 +33,7 @@ const tier_options = [
 ];
 
 const select_classes =
-  'rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500';
+  'rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring';
 
 export function SignalFilters({ filters, on_change, className }: SignalFiltersProps) {
   const [symbol_input, set_symbol_input] = useState(filters.symbol ?? '');
@@ -48,14 +48,14 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
   return (
     <div className={cn('flex flex-wrap items-center gap-3', className)}>
       <div className="relative">
-        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
           id="symbol-search"
           type="text"
           placeholder="Search symbol…"
           value={symbol_input}
           onChange={(e) => set_symbol_input(e.target.value)}
-          className="rounded-md border border-zinc-700 bg-zinc-800 py-2 pl-8 pr-3 text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+          className="rounded-md border border-border bg-muted py-2 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
         />
       </div>
 
@@ -98,7 +98,7 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
       </select>
 
       <div className="flex items-center gap-2">
-        <label htmlFor="confidence-slider" className="text-xs text-zinc-400">
+        <label htmlFor="confidence-slider" className="text-xs text-muted-foreground">
           Min Confidence
         </label>
         <input
@@ -111,7 +111,7 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
           onChange={(e) => on_change({ min_confidence: Number(e.target.value) })}
           className="h-1.5 w-24 accent-emerald-500"
         />
-        <span className="min-w-[2.5rem] text-xs font-medium text-zinc-300">
+        <span className="min-w-[2.5rem] text-xs font-medium text-muted-foreground">
           {filters.min_confidence ?? 0}%
         </span>
       </div>
@@ -122,7 +122,7 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
           'flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm transition-colors',
           filters.favorites_only
             ? 'border-amber-500/50 bg-amber-500/15 text-amber-400'
-            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:text-zinc-200',
+            : 'border-border bg-muted text-muted-foreground hover:text-foreground',
         )}
       >
         <Star className={cn('h-3.5 w-3.5', filters.favorites_only && 'fill-amber-400')} />

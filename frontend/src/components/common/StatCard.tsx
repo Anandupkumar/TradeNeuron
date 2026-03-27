@@ -18,13 +18,13 @@ export function StatCard({ label, value, sub_text, trend, className }: StatCardP
     ) : null;
 
   return (
-    <div className={cn('bg-zinc-900 border border-zinc-800 rounded-lg p-4', className)}>
-      <p className="text-sm text-zinc-400">{label}</p>
+    <div className={cn('bg-card border border-border rounded-lg p-4', className)}>
+      <p className="text-sm text-muted-foreground">{label}</p>
       <div className="mt-1 flex items-center gap-2">
-        <span className="text-2xl font-semibold text-zinc-50">{value}</span>
+        <span className="text-2xl font-semibold text-foreground">{value}</span>
         {trend_icon}
       </div>
-      {sub_text && <p className="mt-1 text-xs text-zinc-500">{sub_text}</p>}
+      {sub_text && <p className="mt-1 text-xs text-muted-foreground">{sub_text}</p>}
     </div>
   );
 }

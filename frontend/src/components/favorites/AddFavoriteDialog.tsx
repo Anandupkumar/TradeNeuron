@@ -39,12 +39,12 @@ export function AddFavoriteDialog({ open, on_close, on_add }: AddFavoriteDialogP
         onClick={handleCancel}
         aria-label="Close dialog"
       />
-      <div className="relative z-10 w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
+      <div className="relative z-10 w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-zinc-100">Add to Watchlist</h2>
+          <h2 className="text-lg font-semibold text-foreground">Add to Watchlist</h2>
           <button
             onClick={handleCancel}
-            className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-muted-foreground"
           >
             <X className="h-5 w-5" />
           </button>
@@ -52,7 +52,7 @@ export function AddFavoriteDialog({ open, on_close, on_add }: AddFavoriteDialogP
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
           <div>
-            <label htmlFor="symbol_select" className="mb-1.5 block text-sm font-medium text-zinc-300">
+            <label htmlFor="symbol_select" className="mb-1.5 block text-sm font-medium text-muted-foreground">
               Symbol
             </label>
             <select
@@ -60,7 +60,7 @@ export function AddFavoriteDialog({ open, on_close, on_add }: AddFavoriteDialogP
               value={selected_symbol}
               onChange={(e) => set_selected_symbol(e.target.value)}
               className={cn(
-                'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200',
+                'w-full rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground',
                 'focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500',
               )}
             >
@@ -74,8 +74,8 @@ export function AddFavoriteDialog({ open, on_close, on_add }: AddFavoriteDialogP
           </div>
 
           <div>
-            <label htmlFor="notes_input" className="mb-1.5 block text-sm font-medium text-zinc-300">
-              Notes <span className="text-zinc-600">(optional)</span>
+            <label htmlFor="notes_input" className="mb-1.5 block text-sm font-medium text-muted-foreground">
+              Notes <span className="text-muted-foreground">(optional)</span>
             </label>
             <textarea
               id="notes_input"
@@ -84,8 +84,8 @@ export function AddFavoriteDialog({ open, on_close, on_add }: AddFavoriteDialogP
               rows={3}
               placeholder="Why are you watching this stock?"
               className={cn(
-                'w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200',
-                'placeholder:text-zinc-600 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500',
+                'w-full resize-none rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground',
+                'placeholder:text-muted-foreground focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500',
               )}
             />
           </div>
@@ -94,7 +94,7 @@ export function AddFavoriteDialog({ open, on_close, on_add }: AddFavoriteDialogP
             <button
               type="button"
               onClick={handleCancel}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+              className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
             >
               Cancel
             </button>
@@ -105,7 +105,7 @@ export function AddFavoriteDialog({ open, on_close, on_add }: AddFavoriteDialogP
                 'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
                 selected_symbol
                   ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                  : 'cursor-not-allowed bg-zinc-700 text-zinc-500',
+                  : 'cursor-not-allowed bg-muted text-muted-foreground',
               )}
             >
               Add to Watchlist

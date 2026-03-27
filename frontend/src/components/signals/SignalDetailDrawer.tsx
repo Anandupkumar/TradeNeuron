@@ -18,7 +18,7 @@ interface SignalDetailDrawerProps {
 function priceRow(label: string, value: number, color_class: string) {
   return (
     <div className="flex items-center justify-between py-2">
-      <span className="text-sm text-zinc-400">{label}</span>
+      <span className="text-sm text-muted-foreground">{label}</span>
       <span className={cn('text-sm font-medium', color_class)}>{formatINR(value)}</span>
     </div>
   );
@@ -27,8 +27,8 @@ function priceRow(label: string, value: number, color_class: string) {
 function detailRow(label: string, value: React.ReactNode) {
   return (
     <div className="flex items-center justify-between py-2">
-      <span className="text-sm text-zinc-400">{label}</span>
-      <span className="text-sm text-zinc-200">{value}</span>
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-sm text-foreground">{value}</span>
     </div>
   );
 }
@@ -51,18 +51,18 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
 
       <div
         className={cn(
-          'fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-950 shadow-2xl transition-transform duration-300',
+          'fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-border bg-background shadow-2xl transition-transform duration-300',
           open ? 'translate-x-0' : 'translate-x-full',
         )}
       >
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div>
-            <h2 className="text-lg font-bold text-zinc-50">{signal.symbol}</h2>
-            <p className="text-xs text-zinc-500">{formatDateTime(signal.created_at)}</p>
+            <h2 className="text-lg font-bold text-foreground">{signal.symbol}</h2>
+            <p className="text-xs text-muted-foreground">{formatDateTime(signal.created_at)}</p>
           </div>
           <button
             onClick={on_close}
-            className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <X className="h-5 w-5" />
           </button>
@@ -79,20 +79,20 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
             confidence={signal.confidence}
           />
 
-          <div className="divide-y divide-zinc-800/50 rounded-lg border border-zinc-800 bg-zinc-900 px-4">
-            {priceRow('Entry Price', signal.entry_price, 'text-zinc-100')}
+          <div className="divide-y divide-border/50 rounded-lg border border-border bg-card px-4">
+            {priceRow('Entry Price', signal.entry_price, 'text-foreground')}
             {priceRow('Target Price', signal.target_price, 'text-emerald-400')}
             {priceRow('Stop Loss', signal.stop_loss, 'text-red-400')}
           </div>
 
-          <div className="divide-y divide-zinc-800/50 rounded-lg border border-zinc-800 bg-zinc-900 px-4">
+          <div className="divide-y divide-border/50 rounded-lg border border-border bg-card px-4">
             {detailRow('Risk : Reward', formatRR(signal.risk_reward))}
             {detailRow('Shares', (typeof signal.shares_to_buy === 'string' ? Number.parseInt(signal.shares_to_buy, 10) : signal.shares_to_buy).toLocaleString('en-IN'))}
             {detailRow('Position Value', formatINR(signal.position_value))}
             {detailRow('Capital at Risk', formatINR(signal.capital_risk_inr))}
           </div>
 
-          <div className="divide-y divide-zinc-800/50 rounded-lg border border-zinc-800 bg-zinc-900 px-4">
+          <div className="divide-y divide-border/50 rounded-lg border border-border bg-card px-4">
             {detailRow('Strategy', signal.strategy_source.replaceAll('_', ' '))}
             {detailRow('Direction', signal.direction)}
             {detailRow('Date', formatDate(signal.date))}
