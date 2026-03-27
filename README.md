@@ -12,7 +12,7 @@ The system uses **multi-strategy logic, market regime detection, adaptive scorin
 
 - **6 Trading Strategies** — Trend Pullback, Breakout, Range, Mean Reversion (Long) + Trend Pullback Short, Breakdown (Short)
 - **Market Regime Detection** — BULLISH / SIDEWAYS / BEARISH / HIGH_VOLATILITY with automatic strategy routing
-- **Adaptive Scoring** — Confidence tiers (HIGH / NORMAL / LOW) with soft filters for breakout strength and trend slope
+- **Adaptive Scoring** — Direction-aware confidence (LONG: uptrend/pullback/breakout; SHORT: downtrend/overbought/breakdown) with tiers (HIGH / NORMAL / LOW) and weekly self-calibrating weights
 - **Self-Improving** — Weekly calibration adjusts scoring weights; strategies that underperform are auto-disabled via paper trade feedback
 - **Fundamental Filter** — Rejects stocks with high debt, declining EPS/revenue, or excessive promoter pledging
 - **Sentiment Filter** — Google News RSS with negation-aware keyword matching

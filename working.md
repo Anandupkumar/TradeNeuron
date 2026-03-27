@@ -90,8 +90,9 @@ Step 8   Fundamental Filter    Remove signals for stocks with poor fundamentals
 Step 9   Sentiment Filter      Remove signals contradicted by negative news sentiment
                                (RSS feeds + optional Finnhub integration)
 
-Step 10  Score & Generate      Score remaining signals by confidence (0-100)
-                               with soft filters (breakout strength, EMA50 slope).
+Step 10  Score & Generate      Score remaining signals by confidence (0-100).
+                               Direction-aware: LONG uses uptrend/pullback/breakout;
+                               SHORT uses downtrend/overbought/breakdown.
                                Assign confidence tier (HIGH/NORMAL/LOW).
                                Deduplicate per symbol/direction, apply gates
                                (VWAP, PCR, sector cap, active cap), compute
