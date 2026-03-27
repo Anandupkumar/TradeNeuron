@@ -43,10 +43,10 @@ function sectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+    <div className="rounded-lg border border-border bg-card p-5">
       <div className="mb-4 flex items-center gap-2">
-        <span className="text-zinc-400">{icon}</span>
-        <h2 className="text-base font-semibold text-zinc-100">{title}</h2>
+        <span className="text-muted-foreground">{icon}</span>
+        <h2 className="text-base font-semibold text-foreground">{title}</h2>
       </div>
       {children}
     </div>
@@ -63,7 +63,7 @@ export default function settingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
-      <h1 className="text-2xl font-bold text-zinc-50">Settings</h1>
+      <h1 className="text-2xl font-bold text-foreground">Settings</h1>
 
       {sectionCard({
         title: 'Connection',
@@ -71,15 +71,15 @@ export default function settingsPage() {
         children: (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">API Base URL</span>
-              <code className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
+              <span className="text-sm text-muted-foreground">API Base URL</span>
+              <code className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 {API_BASE_URL}
               </code>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Status</span>
+              <span className="text-sm text-muted-foreground">Status</span>
               {health_query.isLoading && (
-                <span className="text-xs text-zinc-500">Checking…</span>
+                <span className="text-xs text-muted-foreground">Checking…</span>
               )}
               {!health_query.isLoading && is_connected && (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
@@ -95,9 +95,9 @@ export default function settingsPage() {
               )}
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">User ID</span>
+              <span className="text-sm text-muted-foreground">User ID</span>
               <code
-                className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300"
+                className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
                 title={userId}
               >
                 {truncated_user_id}
@@ -113,14 +113,14 @@ export default function settingsPage() {
         children: (
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-zinc-200">Theme</p>
-              <p className="text-xs text-zinc-500">
+              <p className="text-sm text-foreground">Theme</p>
+              <p className="text-xs text-muted-foreground">
                 {theme === 'dark' ? 'Dark mode' : 'Light mode'}
               </p>
             </div>
             <button
               onClick={toggleTheme}
-              className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               {theme === 'dark' ? (
                 <Sun className="h-5 w-5" />
@@ -141,13 +141,13 @@ export default function settingsPage() {
               const is_enabled = FEATURES[entry.key];
               return (
                 <div key={entry.key} className="flex items-center justify-between">
-                  <span className="text-sm text-zinc-300">{entry.label}</span>
+                  <span className="text-sm text-muted-foreground">{entry.label}</span>
                   <span
                     className={cn(
                       'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
                       is_enabled
                         ? 'bg-emerald-500/15 text-emerald-400'
-                        : 'bg-zinc-700/50 text-zinc-500',
+                        : 'bg-muted/50 text-muted-foreground',
                     )}
                   >
                     {is_enabled ? (
@@ -171,14 +171,14 @@ export default function settingsPage() {
         title: 'Keyboard Shortcuts',
         icon: <Keyboard className="h-5 w-5" />,
         children: (
-          <div className="divide-y divide-zinc-800">
+          <div className="divide-y divide-border">
             {keyboard_shortcuts.map((shortcut) => (
               <div
                 key={shortcut.key}
                 className="flex items-center justify-between py-2 first:pt-0 last:pb-0"
               >
-                <span className="text-sm text-zinc-300">{shortcut.description}</span>
-                <kbd className="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300">
+                <span className="text-sm text-muted-foreground">{shortcut.description}</span>
+                <kbd className="rounded border border-border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
                   {shortcut.key}
                 </kbd>
               </div>
@@ -193,12 +193,12 @@ export default function settingsPage() {
         children: (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Application</span>
-              <span className="text-sm font-medium text-zinc-200">{APP_NAME}</span>
+              <span className="text-sm text-muted-foreground">Application</span>
+              <span className="text-sm font-medium text-foreground">{APP_NAME}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Version</span>
-              <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-300">
+              <span className="text-sm text-muted-foreground">Version</span>
+              <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                 v{APP_VERSION}
               </span>
             </div>

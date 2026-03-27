@@ -17,7 +17,7 @@ interface IndicatorCardData {
 function rsiColor(v: number): string {
   if (v <= 30) return 'text-emerald-400';
   if (v >= 70) return 'text-red-400';
-  return 'text-zinc-200';
+  return 'text-foreground';
 }
 
 export function IndicatorGrid({ indicators, className }: IndicatorGridProps) {
@@ -61,14 +61,14 @@ export function IndicatorGrid({ indicators, className }: IndicatorGridProps) {
       {cards.map((card) => {
         const val = card.value;
         const formatted = val == null ? '—' : card.formatter(val);
-        const color = val == null || !card.color_fn ? 'text-zinc-200' : card.color_fn(val);
+        const color = val == null || !card.color_fn ? 'text-foreground' : card.color_fn(val);
 
         return (
           <div
             key={card.label}
-            className="rounded-lg border border-zinc-800 bg-zinc-900 p-3"
+            className="rounded-lg border border-border bg-card p-3"
           >
-            <p className="text-xs text-zinc-500">{card.label}</p>
+            <p className="text-xs text-muted-foreground">{card.label}</p>
             <p className={cn('mt-1 text-lg font-semibold', color)}>{formatted}</p>
           </div>
         );

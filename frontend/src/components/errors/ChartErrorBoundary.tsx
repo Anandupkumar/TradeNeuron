@@ -38,19 +38,19 @@ export class ChartErrorBoundary extends React.Component<
         <div
           className={cn(
             'flex flex-col items-center justify-center rounded-lg',
-            'border border-zinc-800 bg-zinc-900/50',
+            'border border-border bg-card/50',
             this.props.className ?? 'h-64 w-full',
           )}
         >
-          <BarChart3 className="mb-3 h-8 w-8 text-zinc-600" />
-          <p className="mb-4 text-sm text-zinc-500">Chart unavailable</p>
+          <BarChart3 className="mb-3 h-8 w-8 text-muted-foreground" />
+          <p className="mb-4 text-sm text-muted-foreground">Chart unavailable</p>
           <button
             type="button"
             onClick={this.handleRetry}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-md bg-zinc-800 px-3 py-1.5',
-              'text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700',
-              'focus:outline-none focus:ring-2 focus:ring-zinc-600',
+              'inline-flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5',
+              'text-xs font-medium text-muted-foreground transition-colors hover:bg-accent',
+              'focus:outline-none focus:ring-2 focus:ring-ring',
             )}
           >
             <RefreshCw className="h-3 w-3" />

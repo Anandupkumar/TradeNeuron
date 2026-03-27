@@ -11,7 +11,7 @@ interface PaperTradeTableProps {
 }
 
 function pnlCell(value: number | null) {
-  if (value == null) return <span className="text-zinc-500">—</span>;
+  if (value == null) return <span className="text-muted-foreground">—</span>;
   const is_positive = value >= 0;
   return (
     <span className={cn(is_positive ? 'text-emerald-400' : 'text-red-400')}>
@@ -60,13 +60,13 @@ const columns = [
     header: 'Exit Date',
     sortable: true,
     render: (t: PaperTrade) =>
-      t.exit_date == null ? <span className="text-zinc-500">—</span> : formatDate(t.exit_date),
+      t.exit_date == null ? <span className="text-muted-foreground">—</span> : formatDate(t.exit_date),
   },
   {
     key: 'exit_price',
     header: 'Exit Price',
     render: (t: PaperTrade) =>
-      t.exit_price == null ? <span className="text-zinc-500">—</span> : formatINR(t.exit_price),
+      t.exit_price == null ? <span className="text-muted-foreground">—</span> : formatINR(t.exit_price),
   },
   {
     key: 'pnl_pct',
@@ -80,7 +80,7 @@ const columns = [
     sortable: true,
     render: (t: PaperTrade) =>
       t.gross_pnl_inr == null ? (
-        <span className="text-zinc-500">—</span>
+        <span className="text-muted-foreground">—</span>
       ) : (
         <span className={cn(t.gross_pnl_inr >= 0 ? 'text-emerald-400' : 'text-red-400')}>
           {formatINR(t.gross_pnl_inr)}
@@ -97,9 +97,9 @@ const columns = [
     header: 'Exit Reason',
     render: (t: PaperTrade) =>
       t.exit_reason ? (
-        <span className="text-xs text-zinc-300">{t.exit_reason.split('_').join(' ')}</span>
+        <span className="text-xs text-muted-foreground">{t.exit_reason.split('_').join(' ')}</span>
       ) : (
-        <span className="text-zinc-500">—</span>
+        <span className="text-muted-foreground">—</span>
       ),
   },
 ];

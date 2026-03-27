@@ -14,7 +14,7 @@ interface IndicatorOverlayProps {
 function getRsiColor(rsi: number): string {
   if (rsi <= 30) return 'text-red-400';
   if (rsi <= 45) return 'text-amber-400';
-  if (rsi <= 55) return 'text-zinc-400';
+  if (rsi <= 55) return 'text-muted-foreground';
   if (rsi <= 70) return 'text-emerald-400';
   return 'text-red-400';
 }
@@ -39,25 +39,25 @@ export function IndicatorOverlay({ indicators, className }: IndicatorOverlayProp
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-zinc-900/80 px-3 py-2 text-xs backdrop-blur',
+        'flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-card/80 px-3 py-2 text-xs backdrop-blur',
         className,
       )}
     >
       {ema_items.map(
         (item) =>
           item.value != null && (
-            <span key={item.label} className="flex items-center gap-1.5 text-zinc-300">
+            <span key={item.label} className="flex items-center gap-1.5 text-muted-foreground">
               <span className={cn('inline-block h-2 w-2 rounded-full', item.color)} />
               {item.label}:&nbsp;
-              <span className="font-medium text-zinc-100">
+              <span className="font-medium text-foreground">
                 {typeof item.value === 'number' ? item.value.toFixed(2) : '—'}
               </span>
             </span>
           ),
       )}
       {rsi != null && (
-        <span className="flex items-center gap-1.5 text-zinc-300">
-          <span className="inline-block h-2 w-2 rounded-full bg-zinc-500" />
+        <span className="flex items-center gap-1.5 text-muted-foreground">
+          <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground" />
           RSI:&nbsp;
           <span className={cn('font-medium', getRsiColor(rsi))}>
             {typeof rsi === 'number' ? rsi.toFixed(1) : '—'}

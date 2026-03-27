@@ -22,10 +22,10 @@ export function ConfidenceBreakdownBar({ breakdown, confidence }: Props) {
     return (
       <div>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-zinc-400">Confidence</span>
-          <span className="font-semibold text-zinc-100">{Math.round(confidence)}%</span>
+          <span className="text-muted-foreground">Confidence</span>
+          <span className="font-semibold text-foreground">{Math.round(confidence)}%</span>
         </div>
-        <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-zinc-800">
+        <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-muted">
           <div
             className={cn('h-full rounded-full transition-all', bar_color)}
             style={{ width: `${Math.min(confidence, 100)}%` }}
@@ -41,11 +41,11 @@ export function ConfidenceBreakdownBar({ breakdown, confidence }: Props) {
   return (
     <div>
       <div className="flex items-center justify-between text-sm">
-        <span className="text-zinc-400">Confidence Breakdown</span>
-        <span className="font-semibold text-zinc-100">{Math.round(confidence)}%</span>
+        <span className="text-muted-foreground">Confidence Breakdown</span>
+        <span className="font-semibold text-foreground">{Math.round(confidence)}%</span>
       </div>
 
-      <div className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-zinc-800">
+      <div className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-muted">
         {SEGMENTS.map(({ key, color }) => {
           const val = breakdown[key];
           if (val <= 0) return null;
@@ -63,8 +63,8 @@ export function ConfidenceBreakdownBar({ breakdown, confidence }: Props) {
         {SEGMENTS.map(({ key, label, color }) => (
           <div key={key} className="flex items-center gap-2 text-xs">
             <span className={cn('inline-block h-2.5 w-2.5 rounded-sm', color)} />
-            <span className="text-zinc-400">{label}</span>
-            <span className="ml-auto font-medium text-zinc-200">{breakdown[key]}</span>
+            <span className="text-muted-foreground">{label}</span>
+            <span className="ml-auto font-medium text-foreground">{breakdown[key]}</span>
           </div>
         ))}
       </div>

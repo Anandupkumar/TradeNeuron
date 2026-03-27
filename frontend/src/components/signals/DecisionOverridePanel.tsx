@@ -44,7 +44,7 @@ export function DecisionOverridePanel({ signalId }: Props) {
 
   return (
     <div>
-      <p className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         Your Decision
       </p>
 
@@ -58,7 +58,7 @@ export function DecisionOverridePanel({ signalId }: Props) {
               'flex-1 rounded-md border px-3 py-2 text-sm font-medium text-white transition-colors',
               decision === opt.value
                 ? opt.color
-                : 'border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:border-zinc-600',
+                : 'border-border bg-muted/60 text-muted-foreground hover:border-border',
             )}
           >
             {decision === opt.value && <Check className="mr-1 inline h-3.5 w-3.5" />}
@@ -70,25 +70,25 @@ export function DecisionOverridePanel({ signalId }: Props) {
       {decision === 'MODIFIED' && (
         <div className="mt-3 grid grid-cols-2 gap-3">
           <div>
-            <label htmlFor="actual-entry" className="mb-1 block text-xs text-zinc-400">Actual Entry</label>
+            <label htmlFor="actual-entry" className="mb-1 block text-xs text-muted-foreground">Actual Entry</label>
             <input
               id="actual-entry"
               type="number"
               step="0.01"
               value={actualEntry}
               onChange={(e) => setActualEntry(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-zinc-500"
+              className="w-full rounded-md border border-border bg-muted px-3 py-1.5 text-sm text-foreground outline-none focus:border-ring"
             />
           </div>
           <div>
-            <label htmlFor="actual-qty" className="mb-1 block text-xs text-zinc-400">Actual Qty</label>
+            <label htmlFor="actual-qty" className="mb-1 block text-xs text-muted-foreground">Actual Qty</label>
             <input
               id="actual-qty"
               type="number"
               step="1"
               value={actualQty}
               onChange={(e) => setActualQty(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-zinc-500"
+              className="w-full rounded-md border border-border bg-muted px-3 py-1.5 text-sm text-foreground outline-none focus:border-ring"
             />
           </div>
         </div>
@@ -99,7 +99,7 @@ export function DecisionOverridePanel({ signalId }: Props) {
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Notes (optional)"
         rows={2}
-        className="mt-3 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-zinc-500"
+        className="mt-3 w-full rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
       />
 
       <button
@@ -113,7 +113,7 @@ export function DecisionOverridePanel({ signalId }: Props) {
       </button>
 
       {existing && (
-        <p className="mt-2 text-center text-xs text-zinc-500">
+        <p className="mt-2 text-center text-xs text-muted-foreground">
           Last updated: {new Date(existing.updated_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
         </p>
       )}

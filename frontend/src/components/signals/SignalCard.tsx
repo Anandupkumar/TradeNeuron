@@ -20,7 +20,7 @@ export function SignalCard({ signal, className }: SignalCardProps) {
   return (
     <div
       className={cn(
-        'flex h-full flex-col rounded-lg border border-zinc-800 bg-zinc-900 p-4 transition-colors hover:border-zinc-700',
+        'flex h-full flex-col rounded-lg border border-border bg-card p-4 transition-colors hover:border-border',
         className,
       )}
     >
@@ -28,7 +28,7 @@ export function SignalCard({ signal, className }: SignalCardProps) {
         <div className="flex flex-wrap items-center gap-1.5">
           <Link
             to={`/stock/${encodeSymbol(signal.symbol)}`}
-            className="text-base font-bold text-zinc-50 hover:text-emerald-400 transition-colors"
+            className="text-base font-bold text-foreground hover:text-emerald-400 transition-colors"
           >
             {signal.symbol}
           </Link>
@@ -40,16 +40,16 @@ export function SignalCard({ signal, className }: SignalCardProps) {
             'h-4 w-4 shrink-0 cursor-pointer',
             signal.is_favorite
               ? 'fill-amber-400 text-amber-400'
-              : 'text-zinc-600 hover:text-zinc-400',
+              : 'text-muted-foreground hover:text-muted-foreground',
           )}
         />
       </div>
 
       <div className="mt-3">
-        <div className="flex items-center justify-between text-xs text-zinc-400">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>Confidence</span>
           <div className="flex items-center gap-1.5">
-            <span className="font-medium text-zinc-200">{Math.round(signal.confidence)}%</span>
+            <span className="font-medium text-foreground">{Math.round(signal.confidence)}%</span>
             {signal.confidence_tier && (
               <span className={cn(
                 'rounded px-1.5 py-0.5 text-[10px] font-medium',
@@ -62,7 +62,7 @@ export function SignalCard({ signal, className }: SignalCardProps) {
             )}
           </div>
         </div>
-        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
             className={cn('h-full rounded-full transition-all', confidence_color)}
             style={{ width: `${Math.min(signal.confidence, 100)}%` }}
@@ -72,22 +72,22 @@ export function SignalCard({ signal, className }: SignalCardProps) {
 
       <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
         <div>
-          <p className="text-xs text-zinc-500">Entry</p>
-          <p className="font-medium text-zinc-200">{formatINR(signal.entry_price)}</p>
+          <p className="text-xs text-muted-foreground">Entry</p>
+          <p className="font-medium text-foreground">{formatINR(signal.entry_price)}</p>
         </div>
         <div>
-          <p className="text-xs text-zinc-500">Target</p>
+          <p className="text-xs text-muted-foreground">Target</p>
           <p className="font-medium text-emerald-400">{formatINR(signal.target_price)}</p>
         </div>
         <div>
-          <p className="text-xs text-zinc-500">SL</p>
+          <p className="text-xs text-muted-foreground">SL</p>
           <p className="font-medium text-red-400">{formatINR(signal.stop_loss)}</p>
         </div>
       </div>
 
-      <div className="mt-auto flex items-center justify-between pt-3 text-xs text-zinc-400">
+      <div className="mt-auto flex items-center justify-between pt-3 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
-          <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-medium text-zinc-300">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-muted-foreground">
             R:R {formatRR(signal.risk_reward)}
           </span>
           <span className="truncate">{signal.strategy_source.replaceAll('_', ' ')}</span>

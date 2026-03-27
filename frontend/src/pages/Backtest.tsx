@@ -45,8 +45,8 @@ export default function BacktestPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-50">Backtest Results</h1>
-        <p className="mt-1 text-sm text-zinc-400">
+        <h1 className="text-2xl font-bold text-foreground">Backtest Results</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Strategy performance metrics and walk-forward analysis
         </p>
       </div>
@@ -56,8 +56,8 @@ export default function BacktestPage() {
           value={strategy_filter}
           onChange={(e) => set_strategy_filter(e.target.value)}
           className={cn(
-            'rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200',
-            'focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500',
+            'rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground',
+            'focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring',
           )}
         >
           {strategy_options.map((opt) => (
@@ -69,7 +69,7 @@ export default function BacktestPage() {
         {strategy_filter && (
           <button
             onClick={() => set_strategy_filter('')}
-            className="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             Clear filter
           </button>
@@ -103,13 +103,13 @@ export default function BacktestPage() {
           </div>
 
           <div>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-100">Metrics Comparison</h2>
+            <h2 className="mb-3 text-lg font-semibold text-foreground">Metrics Comparison</h2>
             <MetricsComparisonTable results={results} />
           </div>
 
           {all_results.length > 0 && (
             <div>
-              <h2 className="mb-3 text-lg font-semibold text-zinc-100">Walk-Forward Analysis</h2>
+              <h2 className="mb-3 text-lg font-semibold text-foreground">Walk-Forward Analysis</h2>
               <WalkForwardChart results={all_results} />
             </div>
           )}

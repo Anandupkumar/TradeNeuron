@@ -10,7 +10,7 @@ export function Topbar() {
   return (
     <header
       className={cn(
-        'flex items-center justify-between border-b border-zinc-800 bg-zinc-950 px-6 py-3',
+        'flex items-center justify-between border-b border-border bg-background px-6 py-3',
       )}
     >
       <PipelineStatusBar />
@@ -19,9 +19,9 @@ export function Topbar() {
         type="button"
         onClick={toggle_theme}
         className={cn(
-          'rounded-lg p-2 text-zinc-400 transition-colors',
-          'hover:bg-zinc-800 hover:text-zinc-100',
-          'focus:outline-none focus:ring-2 focus:ring-zinc-600',
+          'rounded-lg p-2 text-muted-foreground transition-colors',
+          'hover:bg-muted hover:text-foreground',
+          'focus:outline-none focus:ring-2 focus:ring-ring',
         )}
         aria-label="Toggle theme"
       >

@@ -6,12 +6,12 @@ interface LoadingSkeletonProps {
 }
 
 function skeletonBlock({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse rounded bg-zinc-800', className)} />;
+  return <div className={cn('animate-pulse rounded bg-muted', className)} />;
 }
 
 function cardSkeleton() {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+    <div className="rounded-lg border border-border bg-card p-4">
       {skeletonBlock({ className: 'h-3 w-24 mb-3' })}
       {skeletonBlock({ className: 'h-7 w-32 mb-2' })}
       {skeletonBlock({ className: 'h-3 w-20' })}
@@ -21,7 +21,7 @@ function cardSkeleton() {
 
 function tableRowSkeleton() {
   return (
-    <div className="flex items-center gap-4 border-b border-zinc-800 px-4 py-3">
+    <div className="flex items-center gap-4 border-b border-border px-4 py-3">
       {skeletonBlock({ className: 'h-4 w-24' })}
       {skeletonBlock({ className: 'h-4 w-16' })}
       {skeletonBlock({ className: 'h-4 w-20' })}
@@ -32,7 +32,7 @@ function tableRowSkeleton() {
 
 function chartSkeleton() {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+    <div className="rounded-lg border border-border bg-card p-4">
       {skeletonBlock({ className: 'h-48 w-full' })}
     </div>
   );

@@ -42,14 +42,14 @@ export function ApiKeySetupScreen() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
         <div className="mb-8 flex flex-col items-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600">
             <Activity className="h-7 w-7 text-white" />
           </div>
-          <h1 className="mt-5 text-2xl font-bold text-zinc-100">TradeNeuron</h1>
-          <p className="mt-2 text-center text-sm text-zinc-400">
+          <h1 className="mt-5 text-2xl font-bold text-foreground">TradeNeuron</h1>
+          <p className="mt-2 text-center text-sm text-muted-foreground">
             Enter your TradeNeuron API key to access the dashboard
           </p>
         </div>
@@ -57,12 +57,12 @@ export function ApiKeySetupScreen() {
         <form
           onSubmit={handleConnect}
           className={cn(
-            'rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl',
+            'rounded-xl border border-border bg-card p-6 shadow-xl',
           )}
         >
           <label
             htmlFor="api-key-input"
-            className="mb-2 block text-sm font-medium text-zinc-300"
+            className="mb-2 block text-sm font-medium text-muted-foreground"
           >
             API Key
           </label>
@@ -75,20 +75,20 @@ export function ApiKeySetupScreen() {
               placeholder="tn_live_..."
               autoComplete="off"
               className={cn(
-                'w-full rounded-lg border bg-zinc-950 px-4 py-2.5 pr-10 text-sm text-zinc-100',
-                'placeholder:text-zinc-600 focus:outline-none focus:ring-2',
-                'focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-zinc-900',
+                'w-full rounded-lg border bg-background px-4 py-2.5 pr-10 text-sm text-foreground',
+                'placeholder:text-muted-foreground focus:outline-none focus:ring-2',
+                'focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-background',
                 error_msg
                   ? 'border-red-500/50'
-                  : 'border-zinc-700 hover:border-zinc-600',
+                  : 'border-border hover:border-border',
               )}
             />
             <button
               type="button"
               onClick={() => set_show_key((prev) => !prev)}
               className={cn(
-                'absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500',
-                'hover:text-zinc-300 focus:outline-none',
+                'absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground',
+                'hover:text-foreground focus:outline-none',
               )}
               tabIndex={-1}
             >
@@ -111,7 +111,7 @@ export function ApiKeySetupScreen() {
               'mt-5 flex w-full items-center justify-center gap-2 rounded-lg py-2.5',
               'text-sm font-medium text-white transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-emerald-500',
-              'focus:ring-offset-2 focus:ring-offset-zinc-900',
+              'focus:ring-offset-2 focus:ring-offset-background',
               loading || !key_input.trim()
                 ? 'cursor-not-allowed bg-emerald-600/50'
                 : 'bg-emerald-600 hover:bg-emerald-500',

@@ -87,7 +87,7 @@ function SignalSection({
         action={
           <Link
             to="/signals"
-            className="rounded-md bg-zinc-800 px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-700"
+            className="rounded-md bg-muted px-4 py-2 text-sm text-foreground transition-colors hover:bg-accent"
           >
             View Signal History
           </Link>
@@ -157,8 +157,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-50">Dashboard</h1>
-        <p className="mt-1 text-sm text-zinc-400">
+        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           {market_status.marketOpen ? 'Market is open' : 'Market is closed'}
           {market_status.dataIsStale && ' · Data may be stale'}
         </p>
@@ -175,12 +175,12 @@ export default function DashboardPage() {
             value={active_count}
             sub_text={active_count > 0 ? `${active_count} opportunities` : 'No signals today'}
           />
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-            <p className="text-sm text-zinc-400">Market Regime</p>
+          <div className="rounded-lg border border-border bg-card p-4">
+            <p className="text-sm text-muted-foreground">Market Regime</p>
             <div className="mt-2">
               <MarketRegimeBadge regime={derived_regime} />
             </div>
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-muted-foreground">
               {market_status.pipelineRanToday ? 'Pipeline ran today' : 'Awaiting pipeline'}
             </p>
           </div>
@@ -191,18 +191,18 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          <h2 className="text-lg font-semibold text-zinc-100">Active Signals</h2>
+          <h2 className="text-lg font-semibold text-foreground">Active Signals</h2>
           <SignalSection is_loading={signals_query.isLoading} active_signals={active_signals} active_count={active_count} />
         </div>
 
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-zinc-100">Watchlist</h2>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <h2 className="text-lg font-semibold text-foreground">Watchlist</h2>
+          <div className="rounded-lg border border-border bg-card p-4">
             {favorites_query.isLoading && <LoadingSkeleton variant="text" />}
             {!favorites_query.isLoading && favorites.length === 0 && (
               <div className="py-8 text-center">
-                <Star className="mx-auto h-6 w-6 text-zinc-600" />
-                <p className="mt-2 text-sm text-zinc-400">No favorites yet</p>
+                <Star className="mx-auto h-6 w-6 text-muted-foreground" />
+                <p className="mt-2 text-sm text-muted-foreground">No favorites yet</p>
               </div>
             )}
             {!favorites_query.isLoading && favorites.length > 0 && (
@@ -211,14 +211,14 @@ export default function DashboardPage() {
                   <Link
                     key={fav.id}
                     to={`/stock/${encodeURIComponent(fav.symbol)}`}
-                    className="flex items-center justify-between rounded-md px-3 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-800"
+                    className="flex items-center justify-between rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
                   >
                     <span className="font-medium">{fav.symbol}</span>
                     <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
                   </Link>
                 ))}
                 {favorites.length > 8 && (
-                  <p className="pt-1 text-center text-xs text-zinc-500">
+                  <p className="pt-1 text-center text-xs text-muted-foreground">
                     +{favorites.length - 8} more
                   </p>
                 )}
@@ -231,8 +231,8 @@ export default function DashboardPage() {
       {paper_enabled && closed_trades.length > 0 && (
         <div>
           <div className="mb-3 flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-zinc-400" />
-            <h2 className="text-lg font-semibold text-zinc-100">Equity Curve</h2>
+            <BarChart3 className="h-5 w-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold text-foreground">Equity Curve</h2>
           </div>
           <PnLCurveChart trades={closed_trades} />
         </div>

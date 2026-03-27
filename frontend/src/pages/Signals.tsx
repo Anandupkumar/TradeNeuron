@@ -95,7 +95,7 @@ function RejectedSignalsSection() {
       <button
         type="button"
         onClick={() => set_show((v) => !v)}
-        className="flex items-center gap-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
+        className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
         {show ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         Show rejected signals
@@ -107,12 +107,12 @@ function RejectedSignalsSection() {
           {query.isLoading && <LoadingSkeleton variant="table-row" count={4} />}
           {query.isError && <ErrorState message="Failed to load rejected signals" onRetry={() => { query.refetch(); }} />}
           {!query.isLoading && !query.isError && rejected.length === 0 && (
-            <p className="py-4 text-center text-sm text-zinc-500">No rejected signals</p>
+            <p className="py-4 text-center text-sm text-muted-foreground">No rejected signals</p>
           )}
           {rejected.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-left text-sm">
-                <thead className="border-b border-zinc-800 bg-zinc-900/50 text-xs uppercase text-zinc-500">
+                <thead className="border-b border-border bg-card/50 text-xs uppercase text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2.5">Symbol</th>
                     <th className="px-4 py-2.5">Strategy</th>
@@ -122,17 +122,17 @@ function RejectedSignalsSection() {
                     <th className="px-4 py-2.5 text-right">R:R</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50">
+                <tbody className="divide-y divide-border/50">
                   {rejected.map((r: RejectedSignal) => (
-                    <tr key={r.id} className="text-zinc-300">
-                      <td className="whitespace-nowrap px-4 py-2 font-medium text-zinc-100">{r.symbol}</td>
+                    <tr key={r.id} className="text-muted-foreground">
+                      <td className="whitespace-nowrap px-4 py-2 font-medium text-foreground">{r.symbol}</td>
                       <td className="whitespace-nowrap px-4 py-2">{r.strategy_source}</td>
                       <td className="px-4 py-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${REJECT_STAGE_COLORS[r.reject_stage] ?? 'bg-zinc-800 text-zinc-400'}`}>
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${REJECT_STAGE_COLORS[r.reject_stage] ?? 'bg-muted text-muted-foreground'}`}>
                           {r.reject_stage.replaceAll('_', ' ')}
                         </span>
                       </td>
-                      <td className="max-w-xs truncate px-4 py-2 text-zinc-400">{r.reject_reason}</td>
+                      <td className="max-w-xs truncate px-4 py-2 text-muted-foreground">{r.reject_reason}</td>
                       <td className="whitespace-nowrap px-4 py-2 text-right">{r.raw_confidence == null ? '—' : `${r.raw_confidence}%`}</td>
                       <td className="whitespace-nowrap px-4 py-2 text-right">{r.raw_rr == null ? '—' : `${r.raw_rr}x`}</td>
                     </tr>
@@ -149,7 +149,7 @@ function RejectedSignalsSection() {
 
 const DECISION_COLORS: Record<string, string> = {
   TAKEN: 'bg-emerald-900/50 text-emerald-300',
-  SKIPPED: 'bg-zinc-700/50 text-zinc-300',
+  SKIPPED: 'bg-muted/50 text-muted-foreground',
   MODIFIED: 'bg-amber-900/50 text-amber-300',
 };
 
@@ -164,7 +164,7 @@ function DecisionHistorySection() {
       <button
         type="button"
         onClick={() => set_show((v) => !v)}
-        className="flex items-center gap-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
+        className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
         {show ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         Decision history
@@ -176,12 +176,12 @@ function DecisionHistorySection() {
           {query.isLoading && <LoadingSkeleton variant="table-row" count={4} />}
           {query.isError && <ErrorState message="Failed to load decision history" onRetry={() => { query.refetch(); }} />}
           {!query.isLoading && !query.isError && decisions.length === 0 && (
-            <p className="py-4 text-center text-sm text-zinc-500">No decisions recorded yet</p>
+            <p className="py-4 text-center text-sm text-muted-foreground">No decisions recorded yet</p>
           )}
           {decisions.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-left text-sm">
-                <thead className="border-b border-zinc-800 bg-zinc-900/50 text-xs uppercase text-zinc-500">
+                <thead className="border-b border-border bg-card/50 text-xs uppercase text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2.5">Symbol</th>
                     <th className="px-4 py-2.5">Direction</th>
@@ -192,19 +192,19 @@ function DecisionHistorySection() {
                     <th className="px-4 py-2.5">Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50">
+                <tbody className="divide-y divide-border/50">
                   {decisions.map((d: DecisionHistoryItem) => (
-                    <tr key={d.id} className="text-zinc-300">
-                      <td className="whitespace-nowrap px-4 py-2 font-medium text-zinc-100">{d.symbol}</td>
+                    <tr key={d.id} className="text-muted-foreground">
+                      <td className="whitespace-nowrap px-4 py-2 font-medium text-foreground">{d.symbol}</td>
                       <td className="whitespace-nowrap px-4 py-2">{d.direction}</td>
                       <td className="px-4 py-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${DECISION_COLORS[d.decision] ?? 'bg-zinc-800 text-zinc-400'}`}>
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${DECISION_COLORS[d.decision] ?? 'bg-muted text-muted-foreground'}`}>
                           {d.decision}
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-2 text-right">{formatINR(d.entry_price)}</td>
                       <td className="whitespace-nowrap px-4 py-2 text-right">{formatPct(d.confidence)}</td>
-                      <td className="max-w-xs truncate px-4 py-2 text-zinc-400">{d.notes ?? '—'}</td>
+                      <td className="max-w-xs truncate px-4 py-2 text-muted-foreground">{d.notes ?? '—'}</td>
                       <td className="whitespace-nowrap px-4 py-2">{d.signal_status?.replaceAll('_', ' ') ?? '—'}</td>
                     </tr>
                   ))}
@@ -244,8 +244,8 @@ export default function SignalsPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-50">Signals</h1>
-        <p className="mt-1 text-sm text-zinc-400">
+        <h1 className="text-2xl font-bold text-foreground">Signals</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Browse and filter trade signals
           {pagination_meta && ` · ${pagination_meta.total} total`}
         </p>
@@ -255,7 +255,7 @@ export default function SignalsPage() {
 
       {active_signals.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-base font-semibold text-zinc-200">
+          <h2 className="text-base font-semibold text-foreground">
             Active Signals ({active_signals.length})
           </h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -274,7 +274,7 @@ export default function SignalsPage() {
       )}
 
       <div className="space-y-4">
-        <h2 className="text-base font-semibold text-zinc-200">All Signals</h2>
+        <h2 className="text-base font-semibold text-foreground">All Signals</h2>
         <AllSignalsContent
           is_loading={signals_query.isLoading}
           is_error={signals_query.isError}

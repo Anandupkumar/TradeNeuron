@@ -15,14 +15,14 @@ export function StockHeader({ stock, on_favorite_toggle, className }: StockHeade
     <div className={cn('flex flex-wrap items-start justify-between gap-4', className)}>
       <div className="space-y-2">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-zinc-50">{stock.symbol}</h1>
-          <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs font-medium text-zinc-300">
+          <h1 className="text-2xl font-bold text-foreground">{stock.symbol}</h1>
+          <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
             {stock.sector}
           </span>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-3xl font-semibold text-zinc-50">
+          <span className="text-3xl font-semibold text-foreground">
             {formatINR(stock.latest_candle.close)}
           </span>
 
@@ -42,7 +42,7 @@ export function StockHeader({ stock, on_favorite_toggle, className }: StockHeade
             'rounded-md p-2 transition-colors',
             stock.is_favorite
               ? 'bg-amber-500/15 text-amber-400'
-              : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300',
+              : 'bg-muted text-muted-foreground hover:text-muted-foreground',
           )}
         >
           <Star className={cn('h-5 w-5', stock.is_favorite && 'fill-amber-400')} />

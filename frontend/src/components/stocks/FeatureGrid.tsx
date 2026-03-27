@@ -11,12 +11,12 @@ interface FeatureGridProps {
 const rsi_zone_styles: Record<RsiZone, string> = {
   OVERSOLD: 'bg-emerald-500/20 text-emerald-400',
   PULLBACK: 'bg-blue-500/20 text-blue-400',
-  NEUTRAL: 'bg-zinc-700/50 text-zinc-300',
+  NEUTRAL: 'bg-muted/50 text-muted-foreground',
   OVERBOUGHT: 'bg-red-500/20 text-red-400',
 };
 
 const volume_tier_styles: Record<VolumeTier, string> = {
-  LOW: 'bg-zinc-700/50 text-zinc-400',
+  LOW: 'bg-muted/50 text-muted-foreground',
   NORMAL: 'bg-blue-500/20 text-blue-400',
   HIGH: 'bg-amber-500/20 text-amber-400',
   VERY_HIGH: 'bg-orange-500/20 text-orange-400',
@@ -33,8 +33,8 @@ const volume_tier_labels: Record<VolumeTier, string> = {
 
 function booleanPill(value: boolean, label: string) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-      <span className="text-sm text-zinc-300">{label}</span>
+    <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+      <span className="text-sm text-muted-foreground">{label}</span>
       {value ? (
         <span className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
           <Check className="h-3 w-3" />
@@ -55,9 +55,9 @@ function numericCard(label: string, raw_value: number | string | null, formatter
   const display = value == null ? '—' : formatter(value);
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-      <p className="text-xs text-zinc-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-zinc-200">{display}</p>
+    <div className="rounded-lg border border-border bg-card p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-foreground">{display}</p>
     </div>
   );
 }
@@ -67,8 +67,8 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
     <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4', className)}>
       {booleanPill(features.is_uptrend, 'Uptrend')}
 
-      <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-        <span className="text-sm text-zinc-300">RSI Zone</span>
+      <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+        <span className="text-sm text-muted-foreground">RSI Zone</span>
         <span
           className={cn(
             'rounded-full px-2 py-0.5 text-xs font-medium',
@@ -83,8 +83,8 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
       {booleanPill(features.is_breakout, 'Breakout')}
 
       {features.close_position != null && (
-        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-          <span className="text-sm text-zinc-300">Breakout Strength</span>
+        <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+          <span className="text-sm text-muted-foreground">Breakout Strength</span>
           <span
             className={cn(
               'rounded-full px-2 py-0.5 text-xs font-medium',
@@ -92,7 +92,7 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
                 ? 'bg-emerald-500/20 text-emerald-400'
                 : features.close_position >= 0.6
                   ? 'bg-amber-500/20 text-amber-400'
-                  : 'bg-zinc-700/50 text-zinc-400',
+                  : 'bg-muted/50 text-muted-foreground',
             )}
           >
             {features.close_position >= 0.75
@@ -105,8 +105,8 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
       )}
 
       {features.ema50_slope != null && (
-        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-          <span className="text-sm text-zinc-300">EMA50 Trend</span>
+        <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+          <span className="text-sm text-muted-foreground">EMA50 Trend</span>
           <span
             className={cn(
               'flex items-center gap-1 text-sm font-medium',
@@ -136,8 +136,8 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
       {numericCard('RVOL', features.rvol, (v) => formatRR(v))}
 
       {features.volume_tier != null && (
-        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-          <span className="text-sm text-zinc-300">Volume Tier</span>
+        <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+          <span className="text-sm text-muted-foreground">Volume Tier</span>
           <span
             className={cn(
               'rounded-full px-2 py-0.5 text-xs font-medium',

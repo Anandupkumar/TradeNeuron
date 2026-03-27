@@ -47,15 +47,15 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'flex h-full w-16 flex-col border-r border-zinc-800 bg-zinc-900',
+        'flex h-full w-16 flex-col border-r border-border bg-card',
         'lg:w-56',
       )}
     >
-      <div className="flex h-14 items-center gap-2.5 border-b border-zinc-800 px-4">
+      <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600">
           <Activity className="h-4 w-4 text-white" />
         </div>
-        <span className="hidden text-sm font-bold tracking-tight text-zinc-100 lg:block">
+        <span className="hidden text-sm font-bold tracking-tight text-foreground lg:block">
           TradeNeuron
         </span>
       </div>
@@ -69,10 +69,10 @@ export function Sidebar() {
             className={({ isActive }) =>
               cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                'hover:bg-zinc-800',
+                'hover:bg-muted',
                 isActive
                   ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'text-zinc-400 hover:text-zinc-100',
+                  : 'text-muted-foreground hover:text-foreground',
               )
             }
           >

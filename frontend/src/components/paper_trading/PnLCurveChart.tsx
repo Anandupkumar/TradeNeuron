@@ -37,8 +37,8 @@ export function PnLCurveChart({ trades }: PnLCurveChartProps) {
 
   if (equity_data.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900">
-        <p className="text-sm text-zinc-500">No closed trades to display</p>
+      <div className="flex h-64 items-center justify-center rounded-lg border border-border bg-card">
+        <p className="text-sm text-muted-foreground">No closed trades to display</p>
       </div>
     );
   }
@@ -49,8 +49,8 @@ export function PnLCurveChart({ trades }: PnLCurveChartProps) {
   const is_positive = last_point ? last_point.cumulative_pnl >= 0 : true;
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h3 className="mb-4 text-sm font-medium text-zinc-300">Equity Curve (Cumulative PnL%)</h3>
+    <div className="rounded-lg border border-border bg-card p-4">
+      <h3 className="mb-4 text-sm font-medium text-muted-foreground">Equity Curve (Cumulative PnL%)</h3>
       <ResponsiveContainer width="100%" height={300}>
         <AreaChart data={equity_data}>
           <defs>

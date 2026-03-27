@@ -27,9 +27,9 @@ export default function WatchlistPage() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-zinc-50">Watchlist</h1>
+          <h1 className="text-2xl font-bold text-foreground">Watchlist</h1>
           {!favorites_query.isLoading && (
-            <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs font-medium text-zinc-300">
+            <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
               {favorites.length}
             </span>
           )}
