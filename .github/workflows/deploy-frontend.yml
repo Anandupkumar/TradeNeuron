@@ -40,8 +40,9 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "frontend/dist/*"
+          source: "frontend/dist"
           target: "/opt/projects/TradeNeuron/frontend/"
+          strip_components: 2
 
       # 🔄 Reload Nginx
       - name: Reload Nginx
