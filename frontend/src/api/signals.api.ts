@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { SignalListResponse, ActiveSignalsResponse, SignalFilters, RejectedSignalsResponse } from '../types';
+import type { SignalListResponse, ActiveSignalsResponse, SignalFilters, RejectedSignalsResponse, FunnelResponse } from '../types';
 
 function stripAllValues(filters: SignalFilters): Record<string, unknown> {
   const cleaned: Record<string, unknown> = {};
@@ -18,4 +18,6 @@ export const signalsApi = {
   active: (): Promise<ActiveSignalsResponse> => apiClient.get('/signals/active'),
   rejected: (date?: string): Promise<RejectedSignalsResponse> =>
     apiClient.get('/signals/rejected', { params: date ? { date } : {} }),
+  funnel: (date?: string): Promise<FunnelResponse> =>
+    apiClient.get('/signals/funnel', { params: date ? { date } : {} }),
 };

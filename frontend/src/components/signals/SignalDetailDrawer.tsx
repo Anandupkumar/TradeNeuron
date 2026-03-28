@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { formatINR, formatDate, formatRR, formatDateTime } from '../../utils/format';
 import { SignalBadge } from './SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
+import { ExecutionBadge } from './ExecutionBadge';
 import { ConfidenceBreakdownBar } from './ConfidenceBreakdownBar';
 import { ExplainabilityPanel } from './ExplainabilityPanel';
 import { TradeChecklist } from './TradeChecklist';
@@ -69,9 +70,10 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {SignalBadge({ signal_type: signal.signal_type, direction: signal.direction })}
             {StatusBadge({ status: signal.status })}
+            {!signal.is_executable && <ExecutionBadge execution_type={signal.execution_type} />}
           </div>
 
           <ConfidenceBreakdownBar
@@ -95,6 +97,7 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
           <div className="divide-y divide-border/50 rounded-lg border border-border bg-card px-4">
             {detailRow('Strategy', signal.strategy_source.replaceAll('_', ' '))}
             {detailRow('Direction', signal.direction)}
+            {detailRow('Execution', signal.execution_type)}
             {detailRow('Date', formatDate(signal.date))}
           </div>
 

@@ -5,6 +5,7 @@ import { formatINR, formatDate, formatRR } from '../../utils/format';
 import { encodeSymbol } from '../../utils/symbols';
 import { SignalBadge } from './SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
+import { ExecutionBadge } from './ExecutionBadge';
 import type { Signal } from '../../types';
 
 interface SignalCardProps {
@@ -34,6 +35,7 @@ export function SignalCard({ signal, className }: SignalCardProps) {
           </Link>
           {SignalBadge({ signal_type: signal.signal_type, direction: signal.direction })}
           {StatusBadge({ status: signal.status })}
+          {!signal.is_executable && <ExecutionBadge execution_type={signal.execution_type} />}
         </div>
         <Star
           className={cn(

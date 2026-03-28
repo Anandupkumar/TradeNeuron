@@ -8,6 +8,7 @@ import { LoadingSkeleton } from './components/common/LoadingSkeleton';
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Signals = React.lazy(() => import('./pages/Signals'));
+const Funnel = React.lazy(() => import('./pages/Funnel'));
 const StockDetailPage = React.lazy(() => import('./pages/StockDetail'));
 const PaperTrading = React.lazy(() => import('./pages/PaperTrading'));
 const Backtest = React.lazy(() => import('./pages/Backtest'));
@@ -30,6 +31,7 @@ export default function App() {
         <Route element={<AuthGuard><AppShell /></AuthGuard>}>
           <Route index element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
           <Route path="/signals" element={<Suspense fallback={<PageFallback />}><Signals /></Suspense>} />
+          <Route path="/funnel" element={<Suspense fallback={<PageFallback />}><Funnel /></Suspense>} />
           <Route path="/stock/:symbol" element={<Suspense fallback={<PageFallback />}><StockDetailPage /></Suspense>} />
           <Route path="/watchlist" element={<Suspense fallback={<PageFallback />}><Watchlist /></Suspense>} />
           <Route path="/settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />

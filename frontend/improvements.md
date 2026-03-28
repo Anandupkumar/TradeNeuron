@@ -201,3 +201,64 @@ The `is_liquid` field remains on `StockFeatures` type for backward compatibility
 **Status: IMPLEMENTED (backend only)**
 
 A new `GET /api/v1/strategies` endpoint returns strategy enable/disable status. No frontend components currently consume this endpoint, but it is available for future use (e.g., a strategy status panel on the Settings or Dashboard page).
+
+---
+
+## 9. Execution Type Flag — Frontend Type Update
+
+**Status: IMPLEMENTED**
+
+### What the Backend Adds
+
+Signals now have `execution_type` (`'EQUITY' | 'FUTURES' | 'OPTIONS' | 'NONE'`) and `is_executable` (`boolean`) fields. Paper trades have `execution_type`. Non-executable signals (SHORT in equity-only accounts) are generated for display but do not create paper trades.
+
+### Frontend Changes
+
+| File | Change |
+|------|--------|
+| `src/types/signal.types.ts` | Added `ExecutionType` union type; added `execution_type` and `is_executable` to `Signal` interface |
+| `src/types/paperTrade.types.ts` | Added `execution_type` to `PaperTrade` interface; imported `ExecutionType` from signal types |
+
+### UI Components
+
+| File | Change |
+|------|--------|
+| `src/components/signals/ExecutionBadge.tsx` | New component — orange "Not Executable" badge with Ban icon for `NONE` execution type, neutral badge for other types |
+| `src/components/signals/SignalCard.tsx` | Shows `ExecutionBadge` when `is_executable` is false |
+| `src/components/signals/SignalTable.tsx` | Added "Exec" column (visible when short direction feature flag is on) showing execution type; non-executable rows render at 60% opacity |
+| `src/components/signals/SignalDetailDrawer.tsx` | Shows `ExecutionBadge` in the badge row and "Execution" in the details section |
+| `src/pages/Signals.tsx` | Added `DUPLICATE` to reject stage color map |
+
+---
+
+## 10. Gate Funnel Audit — Funnel Page
+
+**Status: IMPLEMENTED**
+
+### Frontend Changes
+
+| File | Change |
+|------|--------|
+| `src/types/signal.types.ts` | Added `FunnelGate` and `FunnelResponse` interfaces |
+| `src/types/index.ts` | Exported `FunnelGate`, `FunnelResponse`, `ExecutionType` |
+| `src/api/signals.api.ts` | Added `signalsApi.funnel(date?)` function |
+| `src/hooks/useFunnel.ts` | New hook — wraps funnel API with TanStack Query (5min stale time) |
+| `src/pages/Funnel.tsx` | New page — date picker, summary cards (candidates/signals/conversion), warnings panel, per-gate visual breakdown with pass rate bars, and detailed table |
+| `src/components/layout/Sidebar.tsx` | Added "Funnel" nav item with Filter icon |
+| `src/App.tsx` | Added `/funnel` route with lazy loading |
+
+---
+
+## 11. Per-Strategy VWAP Thresholds — No Frontend Impact
+
+**Status: IMPLEMENTED (backend only)**
+
+VWAP distance thresholds are now per-strategy (breakout gets a wider 3.5% band vs default 2.0%). This is purely backend signal filtering logic — no frontend type or component changes needed.
+
+---
+
+## 12. Yahoo Health Check — No Frontend Impact
+
+**Status: IMPLEMENTED (backend only)**
+
+Candle data source quality is checked in the pipeline (Step 2b). Symbols with suspect data (Bhavcopy-sourced or anomalous adjusted_close gaps) are excluded from indicator computation and signal generation. This is entirely pipeline-internal — no frontend changes needed.

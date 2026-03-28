@@ -2,6 +2,7 @@ export type { ApiEnvelope, PaginationMeta, PaginatedResponse } from './api.types
 export type {
   SignalType,
   SignalDirection,
+  ExecutionType,
   SignalStatus,
   ConfidenceTier,
   StrategySource,
@@ -10,6 +11,8 @@ export type {
   SignalFilters,
   ActiveSignalsResponse,
   SignalListResponse,
+  FunnelGate,
+  FunnelResponse,
 } from './signal.types';
 export type {
   RejectStage,

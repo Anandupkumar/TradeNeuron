@@ -66,6 +66,7 @@ function AllSignalsContent(props: AllSignalsContentProps) {
 }
 
 const REJECT_STAGE_COLORS: Record<string, string> = {
+  DUPLICATE: 'bg-slate-900/50 text-slate-300',
   LIQUIDITY_GATE: 'bg-red-900/50 text-red-300',
   VWAP_FILTER: 'bg-amber-900/50 text-amber-300',
   PCR_FILTER: 'bg-purple-900/50 text-purple-300',

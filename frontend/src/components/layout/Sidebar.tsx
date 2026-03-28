@@ -3,6 +3,7 @@ import {
   Activity,
   LayoutDashboard,
   Zap,
+  Filter,
   Star,
   Wallet,
   FlaskConical,
@@ -21,6 +22,7 @@ interface NavItem {
 const base_nav_items: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/signals', label: 'Signals', icon: Zap },
+  { path: '/funnel', label: 'Funnel', icon: Filter },
   { path: '/watchlist', label: 'Watchlist', icon: Star },
 ];
 

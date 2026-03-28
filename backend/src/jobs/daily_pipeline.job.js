@@ -2,7 +2,7 @@ const { logger } = require('../middlewares/logger.middleware');
 const { formatDate } = require('../utils/date.util');
 const { nifty_50_symbols, nifty_index_symbol, india_vix_symbol } = require('../utils/symbols.util');
 const { fetchYahooCandles, probeYahooApi } = require('../services/data_ingestion/yahoo.service');
-const { validateData } = require('../services/data_ingestion/validation.service');
+const { validateData, checkCandleSourceQuality } = require('../services/data_ingestion/validation.service');
 const { computeAndStoreIndicators } = require('../services/indicators/index');
 const { computeAndStoreFeatures } = require('../services/features/feature.service');
 const { computeAndStoreThresholds } = require('../services/features/adaptive_threshold.service');
@@ -89,9 +89,38 @@ async function runDailyPipeline() {
       }
     }
 
+    // Step 2b: Check candle data source quality
+    logger.info('Step 2b/13: Checking candle data source quality');
+    let suspect_symbols = new Set();
+    try {
+      const quality = await checkCandleSourceQuality(data_date);
+      logger.info(`Step 2b: Quality=${quality.quality}, Yahoo=${quality.yahoo_count}, Bhavcopy=${quality.bhavcopy_count}`);
+
+      if (quality.quality === 'POOR') {
+        const msg =
+          `Data quality POOR: ${quality.bhavcopy_count}/${quality.total_symbols} symbols ` +
+          `from Bhavcopy (unadjusted close). EMA/RSI calculations unreliable. ` +
+          `Affected: ${quality.bhavcopy_symbols.join(', ')}`;
+        logger.warn(msg);
+        await sendTelegramAlert(`⚠️ TradeNeuron: ${msg}`);
+      }
+
+      if (quality.suspicious_gap_symbols.length > 0) {
+        logger.warn(`Suspicious adjusted_close gap on: ${quality.suspicious_gap_symbols.join(', ')}`);
+      }
+
+      suspect_symbols = new Set(quality.suspect_symbols);
+    } catch (error) {
+      logger.warn(`Step 2b: Quality check failed — ${error.message}. Proceeding without exclusions.`);
+    }
+
     // Step 3: Compute indicators
     logger.info('Step 3/13: Computing indicators');
     for (const symbol of INDICATOR_SYMBOLS) {
+      if (suspect_symbols.has(symbol)) {
+        logger.warn(`Step 3: Skipping indicator computation for ${symbol} (suspect candle data)`);
+        continue;
+      }
       try {
         await computeAndStoreIndicators(symbol);
       } catch (error) {
@@ -102,6 +131,10 @@ async function runDailyPipeline() {
     // Step 4: Compute features (including is_ranging, z_score_20d)
     logger.info('Step 4/13: Computing features');
     for (const symbol of nifty_50_symbols) {
+      if (suspect_symbols.has(symbol)) {
+        logger.warn(`Step 4: Skipping feature extraction for ${symbol} (suspect candle data)`);
+        continue;
+      }
       try {
         await computeAndStoreFeatures(symbol);
       } catch (error) {
@@ -150,6 +183,7 @@ async function runDailyPipeline() {
     logger.info(`Step 7/13: Running strategies (regime=${regime})`);
     const raw_signal_map = {};
     for (const symbol of nifty_50_symbols) {
+      if (suspect_symbols.has(symbol)) continue;
       try {
         const signals = await runStrategies(symbol, data_date, regime);
         if (signals.length > 0) {

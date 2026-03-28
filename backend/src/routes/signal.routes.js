@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const signalModel = require('../models/signal.model');
 const rejectedSignalModel = require('../models/rejected_signal.model');
+const { pool } = require('../config/db');
 const { listSignalsSchema } = require('../validations/signal.validation');
 const { ValidationError } = require('../utils/errors');
 const { getSector } = require('../utils/symbols.util');
@@ -15,6 +16,74 @@ function parseSignalJson(s) {
     confidence_breakdown: typeof s.confidence_breakdown === 'string' ? JSON.parse(s.confidence_breakdown) : (s.confidence_breakdown || null),
   };
 }
+
+router.get('/signals/funnel', async (req, res, next) => {
+  try {
+    const date = req.query.date || new Date().toISOString().slice(0, 10);
+
+    const [[{ raw_total }]] = await pool.query(
+      `SELECT COUNT(DISTINCT symbol) AS raw_total
+       FROM rejected_signals WHERE date = ?`, [date]
+    );
+
+    const [gate_rows] = await pool.query(
+      `SELECT reject_stage,
+              COUNT(*) AS rejected_count
+       FROM rejected_signals
+       WHERE date = ?
+       GROUP BY reject_stage
+       ORDER BY FIELD(reject_stage,
+         'FUNDAMENTAL_FILTER','SENTIMENT_FILTER','VWAP_FILTER',
+         'PCR_FILTER','CONFIDENCE_GATE','RR_GATE',
+         'SECTOR_GATE','ACTIVE_CAP','DUPLICATE','MERGED_RISK_ZERO','POSITION_SIZING'
+       )`, [date]
+    );
+
+    const [[{ final_signals }]] = await pool.query(
+      `SELECT COUNT(*) AS final_signals FROM signals WHERE date = ?`, [date]
+    );
+
+    const total_candidates = raw_total + final_signals;
+    let survivors = total_candidates;
+    const funnel = gate_rows.map((row) => {
+      const input = survivors;
+      survivors = survivors - row.rejected_count;
+      const pass_rate = input > 0
+        ? ((survivors / input) * 100).toFixed(1)
+        : '100.0';
+      return {
+        gate: row.reject_stage,
+        input,
+        rejected: row.rejected_count,
+        passed: survivors,
+        pass_rate_pct: parseFloat(pass_rate),
+      };
+    });
+
+    const over_strict = funnel
+      .filter((g) => g.input >= 5 && g.pass_rate_pct < 40)
+      .map((g) => g.gate);
+
+    res.json({
+      success: true,
+      data: {
+        date,
+        total_candidates,
+        final_signals,
+        overall_conversion_pct: total_candidates > 0
+          ? parseFloat(((final_signals / total_candidates) * 100).toFixed(1))
+          : 0,
+        funnel,
+        warnings: over_strict.length > 0
+          ? over_strict.map((g) => `${g} pass rate below 40% — consider widening threshold`)
+          : [],
+      },
+      error: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/signals/rejected', async (req, res, next) => {
   try {

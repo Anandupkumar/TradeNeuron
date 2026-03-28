@@ -343,6 +343,7 @@ export interface PaginatedResponse<T> {
 
 export type SignalType      = 'BUY' | 'SELL';
 export type SignalDirection = 'LONG' | 'SHORT';
+export type ExecutionType   = 'EQUITY' | 'FUTURES' | 'OPTIONS' | 'NONE';
 export type SignalStatus    = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED';
 export type ConfidenceTier  = 'HIGH' | 'NORMAL' | 'LOW';
 export type StrategySource  =
@@ -367,6 +368,8 @@ export interface Signal {
   date: string;                    // YYYY-MM-DD
   signal_type: SignalType;
   direction: SignalDirection;
+  execution_type: ExecutionType;   // EQUITY for longs, FUTURES for shorts in FNO, NONE for non-executable
+  is_executable: boolean;          // false for SHORT signals in equity-only accounts
   confidence: number;              // 0–100
   confidence_tier: ConfidenceTier | null;  // HIGH (85+), NORMAL (75-84), LOW (70-74)
   entry_price: number;
@@ -517,6 +520,7 @@ export interface PaperTrade {
   signal_id: number;
   symbol: string;
   direction: SignalDirection;
+  execution_type: ExecutionType;   // matches the signal's execution type
   entry_date: string;
   entry_price: number;
   actual_entry_price: number | null;
@@ -1115,6 +1119,7 @@ export default function App() {
         <Route element={<AuthGuard><AppShell /></AuthGuard>}>
           <Route index element={<Dashboard />} />
           <Route path="/signals"       element={<Signals />} />
+          <Route path="/funnel"        element={<Funnel />} />
           <Route path="/stock/:symbol" element={<StockDetail />} />
           <Route path="/watchlist"     element={<Watchlist />} />
           <Route path="/settings"      element={<Settings />} />
@@ -1141,10 +1146,11 @@ export default function App() {
 | Icon | Label | Route | Badge | Hidden when flag off |
 |------|-------|-------|-------|---------------------|
 | LayoutDashboard | Dashboard | / | — | — |
-| TrendingUp | Signals | /signals | Active signal count | — |
+| Zap | Signals | /signals | Active signal count | — |
+| Filter | Funnel | /funnel | — | — |
 | Star | Watchlist | /watchlist | Favorite count | — |
-| FlaskConical | Paper Trading | /paper-trading | Open trade count | `paperTrading` |
-| History | Backtest | /backtest | — | `backtest` |
+| Wallet | Paper Trading | /paper-trading | Open trade count | `paperTrading` |
+| FlaskConical | Backtest | /backtest | — | `backtest` |
 | Settings | Settings | /settings | — | — |
 
 ### URL design for StockDetail
@@ -1237,6 +1243,7 @@ See Section 17 for filter debouncing and URL sync implementation.
 | Symbol | `symbol` | Link to `/stock/:symbol` |
 | Date | `date` | `DD MMM YYYY` |
 | Direction | `direction` | LONG (green) / SHORT (red) — hidden if `!FEATURES.shortSignals` |
+| Exec | `execution_type` | EQUITY / FUTURES / NONE — hidden if `!FEATURES.shortSignals`. Non-executable rows at 60% opacity |
 | Signal Type | `signal_type` | BUY / SELL |
 | Strategy | `strategy_source` | Abbreviated |
 | Confidence | `confidence` | Progress bar + integer |
@@ -1265,7 +1272,28 @@ Below the active and all signals sections, a collapsible "Rejected Signals" pane
 
 ---
 
-### 10.3 Stock Detail (`/stock/:symbol`)
+### 10.3 Funnel (`/funnel`)
+
+**Purpose:** Pipeline observability — understand which gates are filtering out the most signal candidates and whether any thresholds are over-strict.
+
+**Data source:** `GET /api/v1/signals/funnel?date=YYYY-MM-DD`
+
+**Hook:** `useFunnel(date?)` — TanStack Query with 5-minute stale time.
+
+**Layout:**
+1. Header with date picker input
+2. Summary cards row — Total Candidates, Final Signals, Conversion Rate (color-coded: green >= 10%, amber >= 5%, red < 5%)
+3. Warnings panel — amber alert box when any gate has pass rate < 40% with 5+ inputs
+4. Gate breakdown — visual pass rate bars per gate with color coding (green >= 80%, blue >= 60%, amber >= 40%, red < 40%)
+5. Detailed table — Gate name, Input count, Rejected count, Passed count, Pass Rate percentage
+
+**Components used:** `LoadingSkeleton`, `ErrorState`, `EmptyState`, `PassRateBar` (local to page)
+
+**New component:** `ExecutionBadge` (`src/components/signals/ExecutionBadge.tsx`) — displays execution type as a small badge. `NONE` execution type shows orange "Not Executable" badge with Ban icon. Used in SignalCard, SignalTable, and SignalDetailDrawer for non-executable signals.
+
+---
+
+### 10.4 Stock Detail (`/stock/:symbol`)
 
 **Purpose:** Deep dive into a single stock.
 
@@ -1302,7 +1330,7 @@ The feature grid now includes the following additional cards:
 
 ---
 
-### 10.4 Paper Trading (`/paper-trading`)
+### 10.5 Paper Trading (`/paper-trading`)
 
 Only rendered if `FEATURES.paperTrading` is true.
 
@@ -1315,7 +1343,7 @@ Only rendered if `FEATURES.paperTrading` is true.
 
 ---
 
-### 10.5 Backtest (`/backtest`)
+### 10.6 Backtest (`/backtest`)
 
 Only rendered if `FEATURES.backtest` is true.
 
@@ -1341,7 +1369,7 @@ Only rendered if `FEATURES.backtest` is true.
 
 ---
 
-### 10.6 Watchlist (`/watchlist`)
+### 10.7 Watchlist (`/watchlist`)
 
 **Layout:**
 1. Add stock button (opens `AddFavoriteDialog`)
@@ -1364,7 +1392,7 @@ Only rendered if `FEATURES.backtest` is true.
 
 ---
 
-### 10.7 Settings (`/settings`)
+### 10.8 Settings (`/settings`)
 
 **Sections:**
 - **Connection:** API Key field (masked, toggleable) + "Test Connection" button

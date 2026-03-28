@@ -11,6 +11,19 @@ const { nifty_50_symbols } = require('../../utils/symbols.util');
 const signalOutcomeModel = require('../../models/signal_outcome.model');
 const rejectedSignalModel = require('../../models/rejected_signal.model');
 
+function resolveExecutionType(direction, accountType) {
+  if (direction === 'LONG') {
+    return { execution_type: 'EQUITY', is_executable: true };
+  }
+  if (direction === 'SHORT') {
+    if (accountType === 'FNO') {
+      return { execution_type: 'FUTURES', is_executable: true };
+    }
+    return { execution_type: 'NONE', is_executable: false };
+  }
+  return { execution_type: 'EQUITY', is_executable: true };
+}
+
 function computePositionSizing(entry_price, stop_loss, direction) {
   const risk_per_share = direction === 'SHORT'
     ? stop_loss - entry_price
@@ -108,14 +121,20 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
 
   if (feature && feature.vwap_distance_pct != null) {
     const vwap_dist = parseFloat(feature.vwap_distance_pct);
-    if (direction === 'LONG' && vwap_dist > 2.0) {
-      logger.info(`Signal for ${symbol} rejected: price stretched above VWAP (${vwap_dist}%)`);
-      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price stretched above VWAP (${vwap_dist}%)` });
+    const is_breakout_strategy = (signal.strategy || '').toUpperCase().includes('BREAKOUT');
+    const long_threshold = is_breakout_strategy
+      ? config.vwap_distance_breakout_long
+      : config.vwap_distance_long_default;
+    const short_threshold = config.vwap_distance_short_default;
+
+    if (direction === 'LONG' && vwap_dist > long_threshold) {
+      logger.info(`Signal for ${symbol} rejected: price ${vwap_dist.toFixed(2)}% above VWAP (threshold: ${long_threshold}%, strategy: ${signal.strategy})`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${vwap_dist.toFixed(2)}% above VWAP, threshold ${long_threshold}%` });
       return null;
     }
-    if (direction === 'SHORT' && vwap_dist < -2.0) {
-      logger.info(`Signal for ${symbol} rejected: price stretched below VWAP (${vwap_dist}%)`);
-      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price stretched below VWAP (${vwap_dist}%)` });
+    if (direction === 'SHORT' && vwap_dist < -short_threshold) {
+      logger.info(`Signal for ${symbol} rejected: price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP (threshold: ${short_threshold}%)`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP, threshold ${short_threshold}%` });
       return null;
     }
   }
@@ -177,11 +196,15 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
 
   const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null, direction);
 
+  const { execution_type, is_executable } = resolveExecutionType(direction, config.account_type);
+
   return {
     symbol,
     date,
     signal_type: is_short ? 'SELL' : 'BUY',
     direction,
+    execution_type,
+    is_executable,
     confidence,
     confidence_tier,
     entry_price: signal.entry_price,
@@ -247,6 +270,13 @@ async function updateSignalStatuses() {
 
     if (new_status) {
       await signalModel.updateStatus(signal.id, new_status, today);
+
+      if (!signal.is_executable) {
+        logger.info(`Signal ${signal.id} (${signal.symbol}) status updated to ${new_status} but outcome not recorded: non-executable (${signal.execution_type})`);
+        updated++;
+        continue;
+      }
+
       let outcome_status = new_status;
       if (new_status === 'EXPIRED') {
         const entry = parseFloat(signal.entry_price);

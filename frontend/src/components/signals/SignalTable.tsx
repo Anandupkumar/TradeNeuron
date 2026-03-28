@@ -3,6 +3,7 @@ import { featureFlags } from '../../utils/featureFlags';
 import { formatINR, formatDate, formatRR } from '../../utils/format';
 import { SignalBadge } from './SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
+import { ExecutionBadge } from './ExecutionBadge';
 import type { Signal } from '../../types';
 
 interface Column {
@@ -48,6 +49,18 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
               {signal.direction}
             </span>
           ),
+        }
+      : null,
+    featureFlags.showShortDirection()
+      ? {
+          key: 'exec',
+          label: 'Exec',
+          render: (signal: Signal) =>
+            !signal.is_executable ? (
+              <ExecutionBadge execution_type={signal.execution_type} />
+            ) : (
+              <span className="text-xs text-muted-foreground">{signal.execution_type}</span>
+            ),
         }
       : null,
     {
@@ -143,6 +156,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
               className={cn(
                 'bg-card transition-colors hover:bg-muted/50',
                 on_row_click && 'cursor-pointer',
+                !signal.is_executable && 'opacity-60',
               )}
             >
               {columns.map((col) => (

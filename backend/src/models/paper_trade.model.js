@@ -2,11 +2,12 @@ const { pool } = require('../config/db');
 
 async function create(trade) {
   const sql = `
-    INSERT INTO paper_trades (signal_id, symbol, direction, entry_date, entry_price, actual_entry_price, stop_loss, target_price, status, shares_to_buy)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO paper_trades (signal_id, symbol, direction, execution_type, entry_date, entry_price, actual_entry_price, stop_loss, target_price, status, shares_to_buy)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     trade.signal_id, trade.symbol, trade.direction || 'LONG',
+    trade.execution_type || 'EQUITY',
     trade.entry_date,
     trade.entry_price,
     trade.actual_entry_price || null,

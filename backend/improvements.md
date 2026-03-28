@@ -482,3 +482,140 @@ The scoring engine (`scoring.service.js`) was LONG-only. It evaluated features l
 - No changes to signal lifecycle or paper trading
 - Volume scoring identical for both directions
 - Adaptive weight calibration remains global (regime-specific is a separate future improvement)
+
+---
+
+## 10. Execution Type Flag (Phantom Paper Win Prevention)
+
+**Status: IMPLEMENTED** (migration 031)
+
+### Problem
+
+SHORT signals were generating paper trades in equity-only accounts where short selling is structurally impossible. These phantom paper trades could produce wins that corrupted the weekly weight calibration job's per-strategy performance calculations, leading to artificially inflated win rates for short strategies.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `migrations/031_add_execution_type_to_signals.sql` | Added `execution_type ENUM('EQUITY','FUTURES','OPTIONS','NONE')` and `is_executable TINYINT(1)` to `signals`; added `execution_type` to `paper_trades` |
+| `src/config/env.js` | Added `account_type` (from `ACCOUNT_TYPE` env var, default `'EQUITY'`) |
+| `.env.example` / `.env` | Added `ACCOUNT_TYPE=EQUITY` with documentation |
+| `src/services/signals/signal.service.js` | Added `resolveExecutionType(direction, accountType)` function; integrated into `deduplicateAndGenerate()` return object; `updateSignalStatuses()` skips `recordOutcome()` for non-executable signals |
+| `src/services/paper_trading/paper_trade.service.js` | Added `is_executable` guard in `createPaperTrades()` — non-executable signals are skipped; added `execution_type` to INSERT |
+| `src/models/signal.model.js` | Added `execution_type, is_executable` to `create()` INSERT |
+| `src/models/paper_trade.model.js` | Added `execution_type` to `create()` INSERT |
+| `frontend/src/types/signal.types.ts` | Added `ExecutionType` union and `execution_type, is_executable` to `Signal` interface |
+| `frontend/src/types/paperTrade.types.ts` | Added `execution_type` to `PaperTrade` interface |
+
+### Execution Type Resolution
+
+| Direction | Account Type | execution_type | is_executable |
+|-----------|-------------|----------------|---------------|
+| LONG | EQUITY or FNO | EQUITY | true |
+| SHORT | FNO | FUTURES | true |
+| SHORT | EQUITY | NONE | false |
+
+### Data Integrity Protection
+
+- Non-executable signals are **still generated and stored** for analysis and display
+- Paper trades are **NOT created** for non-executable signals
+- Signal outcomes are **NOT recorded** for non-executable signals (status is updated for display but `recordOutcome()` is skipped)
+- This prevents calibration data pollution: the weekly weight calibration job only sees outcomes from signals that were actually executable
+
+---
+
+## 11. Yahoo Health Check (Candle Source Quality)
+
+**Status: IMPLEMENTED**
+
+### Problem
+
+When Yahoo Finance is unavailable, the system falls back to NSE Bhavcopy data which uses unadjusted close prices. Computing EMA, RSI, and other indicators on unadjusted prices produces unreliable values that can generate incorrect signals.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `src/services/data_ingestion/validation.service.js` | Added `checkCandleSourceQuality(date)` function — checks what proportion of NIFTY 50 candles came from Bhavcopy (unadjusted) vs Yahoo (adjusted), and detects suspicious adjusted_close/close gaps > 20% |
+| `src/jobs/daily_pipeline.job.js` | Added Step 2b between Step 2 and Step 3; builds `suspect_symbols` Set from quality report; sends Telegram alert if quality is POOR (>20% Bhavcopy); Steps 3, 4, and 7 skip suspect symbols |
+
+### Quality Assessment
+
+| Metric | Threshold | Action |
+|--------|-----------|--------|
+| Bhavcopy ratio > 20% | POOR quality | Telegram alert + all Bhavcopy symbols added to suspect set |
+| adjusted_close/close gap > 20% | Suspicious | Symbol added to suspect set (possible data anomaly) |
+
+### Downstream Impact
+
+Suspect symbols are excluded from:
+- **Step 3:** Indicator computation (stale indicators from previous day are retained)
+- **Step 4:** Feature extraction
+- **Step 7:** Strategy execution (no signals generated for these symbols)
+
+This is fail-safe: if the quality check itself fails, no symbols are excluded (empty suspect set).
+
+---
+
+## 12. Gate Funnel Audit API
+
+**Status: IMPLEMENTED**
+
+### Problem
+
+No visibility into which pipeline gates were killing the most signals. Traders and developers had no way to assess if thresholds were too strict or too lenient.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `src/routes/signal.routes.js` | Added `GET /api/v1/signals/funnel?date=YYYY-MM-DD` endpoint — queries `rejected_signals` for per-gate rejection counts, `signals` for final count, computes per-gate pass rates, flags over-strict gates |
+
+### Endpoint Details
+
+**`GET /api/v1/signals/funnel?date=2026-03-24`**
+
+Returns:
+- `total_candidates` — approximate pipeline input (rejected + final signals)
+- `final_signals` — how many signals survived all gates
+- `overall_conversion_pct` — final / total as percentage
+- `funnel[]` — per-gate breakdown: gate name, input count, rejected count, passed count, pass rate
+- `warnings[]` — gates with pass rate below 40% (with 5+ inputs) flagged as potentially over-strict
+
+### No Schema Changes
+
+Uses existing `rejected_signals` and `signals` tables. Read-only endpoint.
+
+---
+
+## 13. Per-Strategy VWAP Thresholds
+
+**Status: IMPLEMENTED**
+
+### Problem
+
+A flat ±2% VWAP distance filter was applied to all signals regardless of strategy type. Breakout signals naturally move away from the volume-weighted average — a 2.1% distance above VWAP is expected behavior for a breakout, not a rejection criterion.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `src/config/env.js` | Added `vwap_distance_long_default` (2.0%), `vwap_distance_breakout_long` (3.5%), `vwap_distance_short_default` (2.0%) |
+| `.env.example` / `.env` | Added `VWAP_DISTANCE_LONG_DEFAULT`, `VWAP_DISTANCE_BREAKOUT_LONG`, `VWAP_DISTANCE_SHORT_DEFAULT` |
+| `src/services/signals/signal.service.js` | VWAP filter now checks if strategy includes 'BREAKOUT' to select the wider band; uses config values instead of hardcoded 2.0 |
+
+### VWAP Thresholds
+
+| Strategy | Direction | Threshold |
+|----------|-----------|-----------|
+| Trend Pullback, Range, Mean Reversion | LONG | 2.0% (default) |
+| Breakout | LONG | 3.5% (wider band) |
+| All short strategies | SHORT | 2.0% (default) |
+
+### New Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VWAP_DISTANCE_LONG_DEFAULT` | 2.0 | VWAP distance threshold for non-breakout LONG signals |
+| `VWAP_DISTANCE_BREAKOUT_LONG` | 3.5 | VWAP distance threshold for breakout LONG signals |
+| `VWAP_DISTANCE_SHORT_DEFAULT` | 2.0 | VWAP distance threshold for SHORT signals |
