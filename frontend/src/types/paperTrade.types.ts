@@ -1,4 +1,4 @@
-import type { SignalDirection } from './signal.types';
+import type { SignalDirection, ExecutionType } from './signal.types';
 
 export type ExitReason = 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED' | 'MANUAL';
 export type TradeStatus = 'OPEN' | 'CLOSED';
@@ -8,6 +8,7 @@ export interface PaperTrade {
   signal_id: number;
   symbol: string;
   direction: SignalDirection;
+  execution_type: ExecutionType;
   entry_date: string;
   entry_price: number;
   actual_entry_price: number | null;

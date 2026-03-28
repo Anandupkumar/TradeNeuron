@@ -61,6 +61,8 @@ const config = Object.freeze({
   max_position_pct: parseFloat(process.env.MAX_POSITION_PCT || '10'),
   max_position_pct_short: parseFloat(process.env.MAX_POSITION_PCT_SHORT || '5'),
 
+  account_type: process.env.ACCOUNT_TYPE || 'EQUITY',
+
   adaptive_thresholds_enabled: (process.env.ADAPTIVE_THRESHOLDS_ENABLED || 'true').toLowerCase() === 'true',
   adaptive_min_data_points: parseInt(process.env.ADAPTIVE_MIN_DATA_POINTS || '30', 10),
   adaptive_min_trades_partial: parseInt(process.env.ADAPTIVE_MIN_TRADES_PARTIAL || '15', 10),
@@ -79,6 +81,10 @@ const config = Object.freeze({
   strategy_disable_min_trades: parseInt(process.env.STRATEGY_DISABLE_MIN_TRADES || '15', 10),
   strategy_reenable_win_rate: parseFloat(process.env.STRATEGY_REENABLE_WIN_RATE || '0.50'),
   strategy_reenable_min_trades: parseInt(process.env.STRATEGY_REENABLE_MIN_TRADES || '20', 10),
+
+  vwap_distance_long_default: parseFloat(process.env.VWAP_DISTANCE_LONG_DEFAULT || '2.0'),
+  vwap_distance_breakout_long: parseFloat(process.env.VWAP_DISTANCE_BREAKOUT_LONG || '3.5'),
+  vwap_distance_short_default: parseFloat(process.env.VWAP_DISTANCE_SHORT_DEFAULT || '2.0'),
 
   finnhub_api_key: process.env.FINNHUB_API_KEY || '',
 

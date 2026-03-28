@@ -317,6 +317,14 @@ STRATEGY_REENABLE_MIN_TRADES=20
 # ─── Short Selling ───
 MAX_POSITION_PCT_SHORT=5
 
+# ─── Account Type ───
+ACCOUNT_TYPE=EQUITY
+
+# ─── VWAP Distance Thresholds ───
+VWAP_DISTANCE_LONG_DEFAULT=2.0
+VWAP_DISTANCE_BREAKOUT_LONG=3.5
+VWAP_DISTANCE_SHORT_DEFAULT=2.0
+
 # ─── Finnhub (Optional) ───
 FINNHUB_API_KEY=
 
@@ -878,6 +886,24 @@ INSERT INTO strategy_config (strategy_name) VALUES
 ```
 
 **Key decision:** The weekly calibration job auto-disables strategies with low win rates from paper trade data and auto-re-enables them when performance recovers. The table tracks when and why each strategy was disabled. Strategy enablement is checked at the start of `runStrategies()` — disabled strategies are skipped entirely. Telegram alerts fire on state changes.
+
+### 4.27 execution_type on signals and paper_trades (migration 031)
+
+```sql
+ALTER TABLE signals
+  ADD COLUMN execution_type ENUM('EQUITY', 'FUTURES', 'OPTIONS', 'NONE') NOT NULL DEFAULT 'EQUITY' AFTER direction;
+
+ALTER TABLE signals
+  ADD COLUMN is_executable TINYINT(1) NOT NULL DEFAULT 1 AFTER execution_type;
+
+ALTER TABLE paper_trades
+  ADD COLUMN execution_type ENUM('EQUITY', 'FUTURES', 'OPTIONS', 'NONE') NOT NULL DEFAULT 'EQUITY' AFTER direction;
+```
+
+**Key decisions:**
+- `execution_type` tracks how a signal would be executed: EQUITY for long positions, FUTURES for short positions in F&O accounts, NONE for non-executable signals.
+- `is_executable` flags whether the signal can actually be taken given the current account type (`ACCOUNT_TYPE` env var). SHORT signals in equity-only accounts are marked `is_executable = false`.
+- Non-executable signals are still generated and stored for analysis, but they do NOT create paper trades and their outcomes do NOT feed into the weekly weight calibration. This prevents phantom wins from corrupting the self-improvement loop.
 
 ### ER Diagram
 
@@ -2256,13 +2282,16 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
 
     features = FETCH features for symbol, date
 
-    // VWAP distance filter (Improvement 5)
+    // VWAP distance filter — per-strategy thresholds
+    // Breakout strategies get a wider band (default 3.5%) since breakouts move away from mean
     IF features.vwap_distance_pct != null
-        IF signal.direction == 'LONG' AND features.vwap_distance_pct > 2.0
-            LOG: "LONG signal for {symbol} rejected: price stretched {vwap_distance_pct}% above VWAP"
+        long_threshold = isBreakoutStrategy ? VWAP_DISTANCE_BREAKOUT_LONG (3.5) : VWAP_DISTANCE_LONG_DEFAULT (2.0)
+        short_threshold = VWAP_DISTANCE_SHORT_DEFAULT (2.0)
+        IF signal.direction == 'LONG' AND features.vwap_distance_pct > long_threshold
+            LOG: "LONG signal for {symbol} rejected: price {vwap_distance_pct}% above VWAP (threshold: {long_threshold}%)"
             RETURN null
-        IF signal.direction == 'SHORT' AND features.vwap_distance_pct < -2.0
-            LOG: "SHORT signal for {symbol} rejected: price stretched {vwap_distance_pct}% below VWAP"
+        IF signal.direction == 'SHORT' AND features.vwap_distance_pct < -short_threshold
+            LOG: "SHORT signal for {symbol} rejected: price {vwap_distance_pct}% below VWAP"
             RETURN null
 
     // PCR filter (Improvement 2) — passed in from pipeline
@@ -2290,10 +2319,16 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
 
     explanation = buildExplanations(scoreFeature, scoreIndicator, regime, sentiment, direction)
 
+    // Resolve execution type based on direction and account type
+    { execution_type, is_executable } = resolveExecutionType(direction, ACCOUNT_TYPE)
+
     RETURN {
         symbol,
         date,
-        signal_type: 'BUY',
+        signal_type: direction == 'SHORT' ? 'SELL' : 'BUY',
+        direction,
+        execution_type,
+        is_executable,
         confidence,
         entry_price,
         stop_loss,
@@ -2313,8 +2348,9 @@ Every `RETURN null` path in `deduplicateAndGenerate` now writes to the `rejected
 
 | Gate | `reject_stage` | When |
 |------|----------------|------|
+| Duplicate check | `DUPLICATE` | Symbol already has an active signal in same direction |
 | Merged SL risk | `MERGED_RISK_ZERO` | Risk <= 0 after SL merge |
-| VWAP distance | `VWAP_FILTER` | Price stretched > ±2% from VWAP |
+| VWAP distance | `VWAP_FILTER` | Price stretched beyond per-strategy VWAP threshold (default 2%, breakout 3.5%) |
 | Put-Call Ratio | `PCR_FILTER` | PCR > 1.5 for LONG signals |
 | Confidence | `CONFIDENCE_GATE` | Confidence below `MIN_CONFIDENCE` |
 | Risk:Reward | `RR_GATE` | R:R below `MIN_RISK_REWARD` |
@@ -2666,14 +2702,20 @@ Paper trading tracks simulated trades without real money to validate the system'
 ```
 FUNCTION createPaperTrades(final_signals)
     FOR each signal in final_signals:
+        // Non-executable signals (e.g. SHORT in equity-only account) must not
+        // create paper trades — phantom wins would corrupt calibration data
+        IF NOT signal.is_executable
+            LOG info: "Paper trade skipped for {symbol}: execution_type={execution_type}"
+            CONTINUE
+
         next_candle = findNextCandle(signal.symbol, signal.date)
         actual_entry = next_candle ? next_candle.open : NULL
 
-        INSERT INTO paper_trades (signal_id, symbol, entry_date,
-            entry_price, actual_entry_price, stop_loss, target_price,
+        INSERT INTO paper_trades (signal_id, symbol, direction, execution_type,
+            entry_date, entry_price, actual_entry_price, stop_loss, target_price,
             shares_to_buy, status)
-        VALUES (signal.id, signal.symbol, signal.date,
-            signal.entry_price, actual_entry, signal.stop_loss,
+        VALUES (signal.id, signal.symbol, signal.direction, signal.execution_type,
+            signal.date, signal.entry_price, actual_entry, signal.stop_loss,
             signal.target_price, signal.shares_to_buy, 'OPEN')
     LOG info: "{count} paper trades created"
 ```
@@ -3315,7 +3357,55 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 
 ---
 
-### 17.12 Trade Decision Endpoints
+### 17.12 GET /api/v1/signals/funnel
+
+**Description:** Gate funnel audit — shows how many signals entered each pipeline gate and how many were rejected, with pass rates and over-strict warnings.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| date | string (YYYY-MM-DD) | today | Filter by pipeline date |
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "date": "2026-03-24",
+    "total_candidates": 15,
+    "final_signals": 3,
+    "overall_conversion_pct": 20.0,
+    "funnel": [
+      {
+        "gate": "CONFIDENCE_GATE",
+        "input": 15,
+        "rejected": 5,
+        "passed": 10,
+        "pass_rate_pct": 66.7
+      },
+      {
+        "gate": "RR_GATE",
+        "input": 10,
+        "rejected": 4,
+        "passed": 6,
+        "pass_rate_pct": 60.0
+      }
+    ],
+    "warnings": ["VWAP_FILTER pass rate below 40% — consider widening threshold"]
+  }
+}
+```
+
+**Key decisions:**
+- `total_candidates` = distinct rejected symbols + final signals (approximation of pipeline input).
+- `warnings` flags gates where pass rate drops below 40% with at least 5 inputs — suggests the threshold may be over-strict.
+- Gates are ordered by pipeline position (FUNDAMENTAL_FILTER through POSITION_SIZING).
+
+---
+
+### 17.13 Trade Decision Endpoints
 
 #### POST /api/v1/signals/:id/decision
 
@@ -3524,17 +3614,37 @@ FUNCTION runDailyPipeline()
         IF validation_warnings.length > 0
             LOG warn: "{count} validation warnings"
 
+        // ── DATA QUALITY LAYER ──
+
+        // Step 2b: Check candle data source quality
+        LOG info: "Step 2b/13: Checking candle data source quality"
+        suspect_symbols = SET()
+        quality = checkCandleSourceQuality(data_date)
+        IF quality.quality == 'POOR'
+            LOG warn: "Data quality POOR: {bhavcopy_count}/{total} from Bhavcopy"
+            sendTelegramAlert("⚠️ Data quality POOR — EMA/RSI unreliable for {symbols}")
+        IF quality.suspicious_gap_symbols.length > 0
+            LOG warn: "Suspicious adjusted_close gap: {symbols}"
+        suspect_symbols = quality.suspect_symbols
+        // Suspect symbols are skipped in Steps 3, 4, and 7
+
         // ── COMPUTATION LAYER ──
 
-        // Step 3: Compute Indicators
+        // Step 3: Compute Indicators (skip suspect symbols)
         LOG info: "Step 3/13: Computing indicators"
         FOR each symbol in [...nifty_50_symbols, nifty_index_symbol]:
+            IF suspect_symbols.has(symbol)
+                LOG warn: "Skipping indicators for {symbol} (suspect candle data)"
+                CONTINUE
             calculateAndStoreIndicators(symbol)
         LOG info: "Step 3 complete"
 
-        // Step 4: Extract Features (includes: RVOL, volume_tier, VWAP, delivery %, is_ranging, z_score_20d)
+        // Step 4: Extract Features (skip suspect symbols)
         LOG info: "Step 4/13: Extracting features (RVOL, VWAP, delivery, is_liquid, is_ranging, z_score_20d)"
         FOR each symbol in nifty_50_symbols:
+            IF suspect_symbols.has(symbol)
+                LOG warn: "Skipping features for {symbol} (suspect candle data)"
+                CONTINUE
             calculateAndStoreFeatures(symbol)
         LOG info: "Step 4 complete"
 
@@ -3555,9 +3665,12 @@ FUNCTION runDailyPipeline()
             GOTO Step 12   // skip signal generation entirely
 
         // Step 7: Run Strategies (4 long in BULLISH/SIDEWAYS + 2 short in BEARISH)
+        // Skip suspect symbols (from Step 2b quality check)
         LOG info: "Step 7/13: Running strategies for regime={regime}"
         raw_signals = {}
         FOR each symbol in nifty_50_symbols:
+            IF suspect_symbols.has(symbol)
+                CONTINUE
             result = runStrategies(symbol, data_date, regime)
             IF result.length > 0
                 raw_signals[symbol] = result
@@ -3657,16 +3770,17 @@ FUNCTION runDailyPipeline()
 | 1b | Fetch NSE Bhavcopy (delivery %, fail-open) | Data |
 | 1c | Fetch NIFTY PCR (NSE option chain, fail-open) | Data |
 | 2 | Validate Data | Data |
-| 3 | Compute Indicators | Computation |
-| 4 | Extract Features (RVOL, VWAP, delivery, is_ranging, z_score_20d) | Computation |
+| 2b | Check Candle Source Quality (Bhavcopy ratio, adjusted_close gaps) | Data Quality |
+| 3 | Compute Indicators (skip suspect symbols) | Computation |
+| 4 | Extract Features (skip suspect symbols) | Computation |
 | 5 | Compute Adaptive Thresholds | Computation |
 | 6 | Check Market Regime (BULLISH / SIDEWAYS / BEARISH / HIGH_VOLATILITY) | Signal Generation |
-| 7 | Run Strategies (regime-dependent) | Signal Generation |
+| 7 | Run Strategies (regime-dependent, skip suspect symbols) | Signal Generation |
 | 8 | Apply Fundamental Filter | Signal Generation |
 | 9 | Apply Sentiment Filter (FinBERT primary, keyword fallback, optional Finnhub) | Signal Generation |
 | 10 | Score + Deduplicate + VWAP/PCR filters + Sector Gate + Position Sizing | Signal Generation |
-| 11 | Store Signals + Paper Trades | Storage |
-| 12 | Update Signal Statuses + Record Outcomes (for weight calibration) | Status Update |
+| 11 | Store Signals + Paper Trades (non-executable signals skip paper trades) | Storage |
+| 12 | Update Signal Statuses + Record Outcomes (non-executable skip outcomes) | Status Update |
 | 13 | Update Paper Trade Statuses | Status Update |
 
 ### Weekly Fundamentals Job

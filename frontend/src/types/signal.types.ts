@@ -4,6 +4,8 @@ export type SignalType = 'BUY' | 'SELL';
 export type SignalDirection = 'LONG' | 'SHORT';
 export type SignalStatus = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED';
 export type ConfidenceTier = 'HIGH' | 'NORMAL' | 'LOW';
+export type ExecutionType = 'EQUITY' | 'FUTURES' | 'OPTIONS' | 'NONE';
+
 export type StrategySource =
   | 'TREND_PULLBACK'
   | 'BREAKOUT'
@@ -26,6 +28,8 @@ export interface Signal {
   date: string;
   signal_type: SignalType;
   direction: SignalDirection;
+  execution_type: ExecutionType;
+  is_executable: boolean;
   confidence: number;
   confidence_tier: ConfidenceTier | null;
   entry_price: number;
@@ -68,4 +72,21 @@ export interface ActiveSignalsResponse {
 export interface SignalListResponse {
   signals: Signal[];
   pagination: PaginationMeta;
+}
+
+export interface FunnelGate {
+  gate: string;
+  input: number;
+  rejected: number;
+  passed: number;
+  pass_rate_pct: number;
+}
+
+export interface FunnelResponse {
+  date: string;
+  total_candidates: number;
+  final_signals: number;
+  overall_conversion_pct: number;
+  funnel: FunnelGate[];
+  warnings: string[];
 }

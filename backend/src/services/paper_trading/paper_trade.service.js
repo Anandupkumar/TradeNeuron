@@ -10,6 +10,14 @@ async function createPaperTrades(signals) {
   let created = 0;
 
   for (const signal of signals) {
+    if (!signal.is_executable) {
+      logger.info(
+        `Paper trade skipped for ${signal.symbol}: ` +
+        `execution_type=${signal.execution_type}, direction=${signal.direction}`
+      );
+      continue;
+    }
+
     const next_candle = await candleModel.findNextCandle(signal.symbol, signal.date);
     const actual_entry = next_candle ? parseFloat(next_candle.open) : null;
 
@@ -23,6 +31,7 @@ async function createPaperTrades(signals) {
       stop_loss: signal.stop_loss,
       target_price: signal.target_price,
       shares_to_buy: signal.shares_to_buy || null,
+      execution_type: signal.execution_type || 'EQUITY',
       status: 'OPEN',
     });
     created++;

@@ -2,8 +2,8 @@ const { pool } = require('../config/db');
 
 async function create(signal) {
   const sql = `
-    INSERT INTO signals (symbol, date, signal_type, confidence, confidence_tier, entry_price, stop_loss, target_price, risk_reward, reasons, status, strategy_source, direction, shares_to_buy, position_value, capital_risk_inr, explanation, confidence_breakdown)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO signals (symbol, date, signal_type, confidence, confidence_tier, entry_price, stop_loss, target_price, risk_reward, reasons, status, strategy_source, direction, execution_type, is_executable, shares_to_buy, position_value, capital_risk_inr, explanation, confidence_breakdown)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     signal.symbol, signal.date, signal.signal_type || 'BUY',
@@ -14,6 +14,8 @@ async function create(signal) {
     JSON.stringify(signal.reasons), signal.status || 'ACTIVE',
     signal.strategy_source,
     signal.direction || 'LONG',
+    signal.execution_type || 'EQUITY',
+    signal.is_executable != null ? signal.is_executable : 1,
     signal.shares_to_buy || null,
     signal.position_value || null,
     signal.capital_risk_inr || null,
