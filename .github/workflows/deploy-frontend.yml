@@ -6,12 +6,12 @@ on:
     paths:
       - 'frontend/**'
 
-  # Allow manual trigger from GitHub UI
   workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: frontend
@@ -30,19 +30,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type-check and build
+      - name: Build frontend
         run: npm run build
 
-      - name: Deploy to server
-        uses: easingthemes/ssh-deploy@v4
+      # 🚀 Deploy using SCP (stable)
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0.1.7
         with:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          REMOTE_HOST: ${{ secrets.HOST }}
-          REMOTE_USER: ${{ secrets.USER }}
-          SOURCE: dist/
-          TARGET: /opt/projects/TradeNeuron/frontend/
-          ARGS: "-rlgoDzvc --delete"
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "frontend/dist/*"
+          target: "/opt/projects/TradeNeuron/frontend/"
 
+      # 🔄 Reload Nginx
       - name: Reload Nginx
         uses: appleboy/ssh-action@v1
         with:
