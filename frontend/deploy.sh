@@ -8,6 +8,7 @@ echo "====================================="
 echo "  TradeNeuron Frontend Deploy"
 echo "====================================="
 
+
 # --- Check prerequisites ---
 if ! command -v node &>/dev/null; then
   echo "ERROR: Node.js is not installed"
