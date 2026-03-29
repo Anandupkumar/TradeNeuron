@@ -147,6 +147,13 @@ backend/
     023_add_explanation_and_breakdown.sql
     024_create_rejected_signals.sql
     025_create_trade_decisions.sql
+    026_add_direction_to_paper_trades.sql
+    027_add_soft_filter_columns.sql
+    028_add_confidence_tier.sql
+    029_add_actual_entry_to_paper_trades.sql
+    030_create_strategy_config.sql
+    031_add_execution_type_to_signals.sql
+    032_add_duplicate_reject_stage.sql
   tests/
     unit/
       indicators/
@@ -165,6 +172,7 @@ backend/
       rss/                      # RSS XML fixture responses
   scripts/
     download_yahoo_data.py    # Python script: downloads OHLCV data via yfinance
+    refresh_fundamentals.py   # Python script: weekly fundamental refresh via yfinance (called by cron)
     seed_historical.js        # Reads yahoo_data.json and bulk-inserts into MySQL
     yahoo_data.json           # Downloaded data cache (gitignored)
     run_backtest.js           # Manual backtest trigger
@@ -203,7 +211,7 @@ backend/
 | axios-cookiejar-support | ^6.x | Axios adapter for tough-cookie integration |
 | concurrently | ^9.x | Run Node.js and FinBERT servers in parallel during dev/deploy |
 
-### Python Dependencies (FinBERT Microservice)
+### Python Dependencies (FinBERT Microservice + Fundamentals)
 
 | Package | Purpose |
 |---------|---------|
@@ -211,6 +219,9 @@ backend/
 | uvicorn | ASGI server to run FastAPI |
 | transformers | HuggingFace library for ProsusAI/finbert model |
 | torch (CPU) | PyTorch backend for transformer inference |
+| yfinance | Yahoo Finance data fetching (used by download_yahoo_data.py and refresh_fundamentals.py) |
+| mysql-connector-python | MySQL driver for refresh_fundamentals.py |
+| python-dotenv | .env file loading for Python scripts |
 
 `scripts/requirements.txt` includes `--extra-index-url https://download.pytorch.org/whl/cpu` to install the CPU-only build of torch (~200 MB instead of the full GPU build at ~2 GB).
 
@@ -823,8 +834,9 @@ CREATE TABLE IF NOT EXISTS rejected_signals (
     reject_stage    ENUM(
       'FUNDAMENTAL_FILTER', 'SENTIMENT_FILTER',
       'VWAP_FILTER', 'PCR_FILTER', 'SECTOR_GATE',
-      'CONFIDENCE_GATE', 'RR_GATE',
-      'MERGED_RISK_ZERO', 'ACTIVE_CAP', 'POSITION_SIZING'
+      'CONFIDENCE_GATE', 'RR_GATE', 'LIQUIDITY_GATE',
+      'MERGED_RISK_ZERO', 'ACTIVE_CAP', 'POSITION_SIZING',
+      'DUPLICATE'
     ) NOT NULL,
     reject_reason   VARCHAR(500)    NOT NULL,
     raw_confidence  DECIMAL(5,2)    DEFAULT NULL,
@@ -3796,19 +3808,57 @@ cron.schedule(FUNDAMENTAL_CRON_SCHEDULE, refreshAllFundamentals, {
 // Default: "0 18 * * 6" = Saturday 6:00 PM IST
 ```
 
+**Architecture: Python-first with Node.js fallback**
+
+The Node.js Yahoo Finance API (`fetchQuoteSummary`) uses raw HTTP to Yahoo's undocumented endpoints, which are aggressively rate-limited (429). The Python `yfinance` library handles cookie/crumb authentication more robustly and is less prone to rate limiting. The job therefore uses a two-tier approach:
+
 ```
-FUNCTION refreshAllFundamentals()
-    LOG info: "Weekly fundamentals refresh started"
+FUNCTION runWeeklyFundamentals()
+    LOG info: "Starting weekly fundamental data refresh"
+
+    TRY:
+        LOG info: "Attempting Python yfinance script"
+        stdout = SPAWN python3 scripts/refresh_fundamentals.py (timeout 10min)
+        IF exit code 0:
+            PARSE JSON summary from stdout
+            LOG success counts
+            RETURN
+    CATCH:
+        LOG warn: "Python script failed, falling back to Node.js"
+
+    // Node.js fallback with 429-aware cooldowns
+    consecutive_429s = 0
     FOR each symbol in nifty_50_symbols:
         TRY:
-            data = fetchFundamentals(symbol)        // quoteSummary() call
+            data = fetchFundamentals(symbol)
             health = computeHealthFlag(data)
             UPSERT INTO fundamentals table
-            WAIT 500ms                              // throttle Yahoo calls
+            consecutive_429s = 0
+            WAIT 2000ms ± 500ms jitter
+
         CATCH error:
-            LOG warn: "Failed to fetch fundamentals for {symbol}: {error.message}"
+            IF error is HTTP 429:
+                consecutive_429s++
+                IF consecutive_429s >= 3:
+                    LOG warn: "3 consecutive 429s — pausing 10 minutes"
+                    WAIT 600000ms
+                    consecutive_429s = 0
+                ELSE:
+                    WAIT 60000ms   // 60s cooldown per single 429
+            ELSE:
+                LOG error
+                WAIT 2000ms
+
     LOG info: "Weekly fundamentals refresh complete"
 ```
+
+**Python script:** `scripts/refresh_fundamentals.py`
+- Uses `yfinance.Ticker(symbol).info` for fundamental data
+- Reads DB credentials from `.env` via `python-dotenv`
+- Upserts directly into the `fundamentals` table via `mysql-connector-python`
+- 2-second throttle with jitter between symbols
+- Outputs a `SUMMARY:{json}` line on stdout for the Node.js caller to parse
+- Exits with code 1 if more than half the symbols fail
 
 ### Weekly Weight Calibration Job
 
@@ -4061,6 +4111,7 @@ All available scripts in `package.json`:
 | `start` | `node server.js` | Start Node.js server without hot reload (production). |
 | `migrate` | `node scripts/migrate.js` | Run pending database migrations. |
 | `download` | `python3 scripts/download_yahoo_data.py` | Download 3 years of Yahoo Finance OHLCV data. |
+| `fundamentals` | `python3 scripts/refresh_fundamentals.py` | Refresh fundamental data for all 50 symbols via yfinance. |
 | `seed` | `node scripts/seed_historical.js` | Seed downloaded data into MySQL. |
 | `pipeline` | `node scripts/run_pipeline.js` | Run the daily pipeline manually. |
 | `backtest` | `node scripts/run_backtest.js` | Run the backtesting engine. |

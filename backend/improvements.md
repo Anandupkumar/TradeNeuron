@@ -619,3 +619,64 @@ A flat ±2% VWAP distance filter was applied to all signals regardless of strate
 | `VWAP_DISTANCE_LONG_DEFAULT` | 2.0 | VWAP distance threshold for non-breakout LONG signals |
 | `VWAP_DISTANCE_BREAKOUT_LONG` | 3.5 | VWAP distance threshold for breakout LONG signals |
 | `VWAP_DISTANCE_SHORT_DEFAULT` | 2.0 | VWAP distance threshold for SHORT signals |
+
+---
+
+## 14. Fix: Missing DUPLICATE in rejected_signals ENUM (migration 032)
+
+**Status: IMPLEMENTED**
+
+### Problem
+
+The `DUPLICATE` reject stage was added to the code in `signal.service.js` (for duplicate active signal detection) without a matching database migration. The `reject_stage` ENUM in the `rejected_signals` table did not include `'DUPLICATE'`, causing MySQL to throw "Data truncated for column 'reject_stage'" errors whenever a duplicate signal rejection was logged.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `migrations/032_add_duplicate_reject_stage.sql` | ALTERs `reject_stage` ENUM to add `'DUPLICATE'` |
+
+### Key Decision
+
+The ENUM was extended (not recreated) via `MODIFY COLUMN`. Existing data is unaffected since all previously stored values remain valid ENUM members.
+
+---
+
+## 15. Fix: Yahoo Finance 429 Rate Limiting in Weekly Fundamentals
+
+**Status: IMPLEMENTED**
+
+### Problem
+
+The weekly fundamentals job used a 500ms throttle between Yahoo Finance `quoteSummary` API calls. Yahoo's undocumented API endpoints aggressively rate-limit raw HTTP requests, returning HTTP 429. The catch block in the loop made no distinction between 429 errors and other errors, and immediately continued to the next symbol with only a 500ms delay — causing cascading 429s across all symbols.
+
+### Root Cause (Two Layers)
+
+1. **Inner retry (`withRetry`):** Correctly backs off on 429 (30s+ per attempt), but after 3 failed attempts, throws and returns control to the outer loop.
+2. **Outer loop:** Logged the error and continued with only 500ms delay. No inter-symbol 429 cooldown existed.
+
+### Solution: Python-first with Node.js Fallback
+
+The Python `yfinance` library handles Yahoo's cookie/crumb authentication more robustly and is not subject to the same rate-limiting. The job now uses a two-tier approach:
+
+1. **Primary:** Spawn `python3 scripts/refresh_fundamentals.py` — fetches fundamentals via `yfinance`, upserts directly into MySQL via `mysql-connector-python`, outputs a JSON summary to stdout.
+2. **Fallback:** If Python fails (not installed, script error, etc.), fall back to the Node.js loop with hardened 429 handling:
+   - Base throttle raised from 500ms to 2000ms with ±500ms jitter
+   - Single 429: 60-second cooldown before next symbol
+   - 3 consecutive 429s: 10-minute full stop, then counter reset
+   - `consecutive_429s` counter resets on any successful fetch
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `scripts/refresh_fundamentals.py` | New Python script: fetches fundamentals via `yfinance`, computes health flag, upserts into MySQL |
+| `src/jobs/weekly_fundamentals.job.js` | Rewritten: spawns Python script first, falls back to hardened Node.js loop with 429-aware cooldowns |
+
+### Python Script Design
+
+- Uses `yfinance.Ticker(symbol).info` for fundamental data (same fields as Node.js `fetchQuoteSummary`)
+- Applies identical `computeHealthFlag()` logic (D/E ratio, EPS growth, revenue growth, promoter pledge)
+- 2-second throttle with ±0.5s jitter between symbols
+- Outputs `SUMMARY:{json}` on final line for Node.js caller to parse
+- Exits with code 1 if more than half the symbols fail (triggers Node.js fallback)
