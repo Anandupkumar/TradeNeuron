@@ -41,7 +41,7 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "frontend/dist"
-          target: "/opt/projects/TradeNeuron/frontend/"
+          target: "/opt/projects/TradeNeuron/frontend/dist/"
           strip_components: 2
 
       # 🔄 Reload Nginx

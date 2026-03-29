@@ -49,4 +49,3 @@ echo "  Press Ctrl+C to stop"
 echo ""
 
 npx vite preview --host
-
