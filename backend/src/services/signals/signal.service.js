@@ -10,6 +10,7 @@ const { calculateScoreWithBreakdown, buildExplanations } = require('../scoring/s
 const { nifty_50_symbols } = require('../../utils/symbols.util');
 const signalOutcomeModel = require('../../models/signal_outcome.model');
 const rejectedSignalModel = require('../../models/rejected_signal.model');
+const { sendTelegramAlert } = require('../../utils/notify.util');
 
 function resolveExecutionType(direction, accountType) {
   if (direction === 'LONG') {
@@ -287,6 +288,33 @@ async function updateSignalStatuses() {
         }
       }
       await recordOutcome(signal, outcome_status, today);
+
+      if (new_status === 'TARGET_HIT') {
+        await sendTelegramAlert(
+          `🎯 <b>TARGET HIT</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction}\n` +
+          `Entry: ₹${signal.entry_price} → Target: ₹${signal.target_price}\n` +
+          `Strategy: ${signal.strategy_source}\n` +
+          `Confidence: ${signal.confidence}%`
+        );
+      } else if (new_status === 'SL_HIT') {
+        await sendTelegramAlert(
+          `🛑 <b>STOP LOSS HIT</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction}\n` +
+          `Entry: ₹${signal.entry_price} → SL: ₹${signal.stop_loss}\n` +
+          `Strategy: ${signal.strategy_source}\n` +
+          `Confidence: ${signal.confidence}%`
+        );
+      } else if (new_status === 'EXPIRED') {
+        await sendTelegramAlert(
+          `⏰ <b>EXPIRED</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction}\n` +
+          `Entry: ₹${signal.entry_price}\n` +
+          `Held: ${config.holding_period_days} days\n` +
+          `Strategy: ${signal.strategy_source}`
+        );
+      }
+
       updated++;
     }
   }
