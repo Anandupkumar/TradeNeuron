@@ -12,7 +12,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { SignalCard } from '../components/signals/SignalCard';
 import { MarketRegimeBadge } from '../components/common/MarketRegimeBadge';
 import { PnLCurveChart } from '../components/paper_trading/PnLCurveChart';
-import { formatPct, formatDateTime } from '../utils/format';
+import { formatDateTime } from '../utils/format';
 import { featureFlags } from '../utils/featureFlags';
 import type { PaperTradingSummary, Signal } from '../types';
 
