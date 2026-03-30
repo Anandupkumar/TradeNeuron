@@ -336,6 +336,13 @@ VWAP_DISTANCE_LONG_DEFAULT=2.0
 VWAP_DISTANCE_BREAKOUT_LONG=3.5
 VWAP_DISTANCE_SHORT_DEFAULT=2.0
 
+# ─── Signal Frequency Controller ───
+FREQUENCY_CONTROLLER_ENABLED=true
+TARGET_WEEKLY_SIGNALS=10
+MAX_SIGNALS_PER_DAY=3
+POOL_MIN_CONFIDENCE=65
+POOL_MIN_RISK_REWARD=1.5
+
 # ─── Finnhub (Optional) ───
 FINNHUB_API_KEY=
 
@@ -939,6 +946,20 @@ CREATE TABLE IF NOT EXISTS confidence_calibration (
 ```
 
 **Key decision:** Stores weekly-computed calibration data mapping confidence score ranges (bucketed in 5-point intervals: 70, 75, 80, ...) to their actual historical win rates. The weekly calibration job populates this table. Buckets with fewer than 20 samples are skipped. This is display-only data — it does not auto-adjust scoring weights.
+
+### 4.30 FREQUENCY_CAP reject stage (migration 035)
+
+```sql
+ALTER TABLE rejected_signals
+  MODIFY COLUMN reject_stage ENUM(
+    'FUNDAMENTAL_FILTER','SENTIMENT_FILTER','VWAP_FILTER','PCR_FILTER',
+    'SECTOR_GATE','CONFIDENCE_GATE','RR_GATE','LIQUIDITY_GATE',
+    'MERGED_RISK_ZERO','ACTIVE_CAP','POSITION_SIZING','DUPLICATE',
+    'FREQUENCY_CAP'
+  ) NOT NULL;
+```
+
+**Key decision:** The frequency controller logs all candidates that passed hard gates but were not selected in the Top-N daily cut to the `rejected_signals` table with stage `FREQUENCY_CAP`. This preserves full pipeline transparency — the Funnel page shows exactly how many signals were quality-qualified but deferred due to weekly frequency targets.
 
 ### ER Diagram
 
@@ -2273,14 +2294,26 @@ The tier is stored as `confidence_tier` on the signal (ENUM: HIGH, NORMAL, LOW) 
 
 ---
 
-## 13. Signal Generation and Deduplication
+## 13. Signal Generation, Deduplication, and Frequency Control
 
 **File:** `src/services/signals/signal.service.js`
 
-### Deduplication Logic
+### Architecture
+
+When `FREQUENCY_CONTROLLER_ENABLED=true` (default), signal generation uses a two-phase approach:
+
+1. **`buildCandidate()`** — Evaluates a single symbol's raw signals through all hard gates (DUPLICATE, VWAP, PCR, sector cap, active cap, position sizing). Uses relaxed pool floor thresholds for confidence (`POOL_MIN_CONFIDENCE=65`) and R:R (`POOL_MIN_RISK_REWARD=1.5`) instead of the strict thresholds. Returns a fully-formed candidate object or null.
+
+2. **`selectTopSignals(candidates, date)`** — Takes all candidates from Phase 1, queries the weekly signal count via `signalModel.countByWeek(date)`, computes remaining slots (`TARGET_WEEKLY_SIGNALS - weekly_count`), and selects the top `min(MAX_SIGNALS_PER_DAY, remaining_slots)` candidates ranked by `confidence DESC, risk_reward DESC`. Candidates that don't make the cut are logged to `rejected_signals` with stage `FREQUENCY_CAP`.
+
+When `FREQUENCY_CONTROLLER_ENABLED=false`, `buildCandidate()` uses the strict thresholds (`MIN_CONFIDENCE`, `MIN_RISK_REWARD`) and all candidates pass through directly — identical to the pre-frequency-controller behavior.
+
+The legacy function `deduplicateAndGenerate()` is preserved as a thin wrapper around `buildCandidate()` for backward compatibility.
+
+### Deduplication Logic (buildCandidate)
 
 ```
-FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
+FUNCTION buildCandidate(symbol, date, raw_signals)
     IF raw_signals is empty
         RETURN null
 
@@ -2350,11 +2383,16 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
     // Apply soft penalties (VWAP, PCR) and sentiment adjustment from Step 9
     confidence = CLAMP(raw_confidence + soft_penalty + sentiment_adjustment, 0, 100)
 
-    IF confidence < MIN_CONFIDENCE
+    // When frequency controller is enabled, use pool floor thresholds (65, 1.5)
+    // When disabled, use strict thresholds (MIN_CONFIDENCE=70, MIN_RISK_REWARD=2.0)
+    min_conf = FREQUENCY_CONTROLLER_ENABLED ? POOL_MIN_CONFIDENCE : MIN_CONFIDENCE
+    min_rr   = FREQUENCY_CONTROLLER_ENABLED ? POOL_MIN_RISK_REWARD : MIN_RISK_REWARD
+
+    IF confidence < min_conf
         LOG + INSERT rejected_signals(CONFIDENCE_GATE)
         RETURN null
 
-    IF risk_reward < MIN_RISK_REWARD
+    IF risk_reward < min_rr
         LOG + INSERT rejected_signals(RR_GATE)
         RETURN null
 
@@ -2385,7 +2423,7 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
 
 ### Rejection Logging
 
-Every `RETURN null` path in `deduplicateAndGenerate` now writes to the `rejected_signals` table before returning. This provides full pipeline transparency. The rejection points are:
+Every `RETURN null` path in `buildCandidate` writes to the `rejected_signals` table before returning. Additionally, `selectTopSignals` logs candidates that pass all gates but are not selected in the Top-N cut. This provides full pipeline transparency. The rejection points are:
 
 | Gate | `reject_stage` | When |
 |------|----------------|------|
@@ -2393,11 +2431,12 @@ Every `RETURN null` path in `deduplicateAndGenerate` now writes to the `rejected
 | Merged SL risk | `MERGED_RISK_ZERO` | Risk <= 0 after SL merge |
 | VWAP distance | `VWAP_FILTER` | Price stretched beyond per-strategy VWAP threshold (default 2%, breakout 3.5%) |
 | Put-Call Ratio | `PCR_FILTER` | PCR > 1.5 for LONG signals |
-| Confidence | `CONFIDENCE_GATE` | Confidence below `MIN_CONFIDENCE` |
-| Risk:Reward | `RR_GATE` | R:R below `MIN_RISK_REWARD` |
+| Confidence | `CONFIDENCE_GATE` | Confidence below pool floor (65) or strict threshold (70) |
+| Risk:Reward | `RR_GATE` | R:R below pool floor (1.5) or strict threshold (2.0) |
 | Active cap | `ACTIVE_CAP` | Active signals at capacity |
 | Sector cap | `SECTOR_GATE` | Sector signals at capacity |
 | Position sizing | `POSITION_SIZING` | 0 shares after sizing |
+| Frequency cap | `FREQUENCY_CAP` | Candidate passed all gates but not selected in Top-N daily cut |
 
 ### Position Sizing (ATR-based)
 
@@ -3789,14 +3828,27 @@ FUNCTION runDailyPipeline()
         LOG info: "Step 9 complete"
 
         // Step 10: Score, Deduplicate, Position Size, and Generate Signals
-        // Passes nifty_pcr, sentiment_adjustment, and vix_close for soft scoring + regime sizing
+        // Two-phase: build candidate pool, then apply frequency-controlled Top-N selection
         LOG info: "Step 10/13: Scoring, deduplicating, position sizing, and generating signals"
-        final_signals = []
+
+        // Phase 1: Build candidate pool (uses pool floor thresholds when frequency controller is enabled)
+        candidates = []
         FOR each [symbol, signals] in post_sentiment:
             sent_adj = sentiment_adjustments[symbol] || 0
-            signal = deduplicateAndGenerate(symbol, data_date, signals, final_signals, nifty_pcr, sent_adj, vix_close)
-            IF signal != null
-                final_signals.PUSH(signal)
+            candidate = buildCandidate(symbol, data_date, signals, candidates, nifty_pcr, sent_adj, vix_close)
+            IF candidate != null
+                candidates.PUSH(candidate)
+
+        // Phase 2: Frequency-controlled selection
+        IF FREQUENCY_CONTROLLER_ENABLED:
+            weekly_count = signalModel.countByWeek(data_date)
+            remaining = TARGET_WEEKLY_SIGNALS - weekly_count
+            daily_limit = MIN(MAX_SIGNALS_PER_DAY, MAX(0, remaining))
+            candidates.SORT BY confidence DESC, risk_reward DESC
+            final_signals = candidates[0..daily_limit]
+            Log remaining candidates to rejected_signals with stage FREQUENCY_CAP
+        ELSE:
+            final_signals = candidates
         LOG info: "Step 10 complete: {count} signals generated"
 
         // ── STORAGE LAYER ──

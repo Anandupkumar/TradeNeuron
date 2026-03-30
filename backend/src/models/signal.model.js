@@ -129,6 +129,12 @@ async function countActiveBySector(sector_symbols, direction = null) {
   return rows[0].count;
 }
 
+async function countByWeek(date) {
+  const sql = `SELECT COUNT(*) as count FROM signals WHERE YEARWEEK(date, 1) = YEARWEEK(?, 1)`;
+  const [rows] = await pool.query(sql, [date]);
+  return rows[0].count;
+}
+
 async function countAllActive(direction = null) {
   let sql = `SELECT COUNT(*) as count FROM signals WHERE status = 'ACTIVE'`;
   const params = [];
@@ -150,4 +156,5 @@ module.exports = {
   countActiveBySymbol,
   countActiveBySector,
   countAllActive,
+  countByWeek,
 };

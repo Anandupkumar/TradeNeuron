@@ -93,6 +93,12 @@ const config = Object.freeze({
 
   finnhub_api_key: process.env.FINNHUB_API_KEY || '',
 
+  frequency_controller_enabled: (process.env.FREQUENCY_CONTROLLER_ENABLED || 'true').toLowerCase() === 'true',
+  target_weekly_signals: parseInt(process.env.TARGET_WEEKLY_SIGNALS || '10', 10),
+  max_signals_per_day: parseInt(process.env.MAX_SIGNALS_PER_DAY || '3', 10),
+  pool_min_confidence: parseFloat(process.env.POOL_MIN_CONFIDENCE || '65'),
+  pool_min_risk_reward: parseFloat(process.env.POOL_MIN_RISK_REWARD || '1.5'),
+
   log_level: process.env.LOG_LEVEL || 'info',
   log_dir: process.env.LOG_DIR || './logs',
 });

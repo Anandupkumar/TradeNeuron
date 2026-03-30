@@ -301,3 +301,13 @@ Candle data source quality is checked in the pipeline (Step 2b). Symbols with su
 | `src/api/signals.api.ts` | Added `calibration()` API function |
 | `src/hooks/useFunnel.ts` | Added `useCalibration()` hook (10-minute stale time) |
 | `src/components/signals/SignalDetailDrawer.tsx` | Shows "Historical Win Rate at This Confidence: X%" card when calibration data exists for the signal's confidence bucket |
+
+---
+
+## 16. Signal Pool Frequency Controller — Frontend Support
+
+**Status: IMPLEMENTED**
+
+| File | Changes |
+|------|---------|
+| `src/pages/Funnel.tsx` | Added `FREQUENCY_CAP: 'Frequency Cap'` to `GATE_LABELS` and `FREQUENCY_CAP: 'bg-emerald-500'` to `GATE_COLORS`. The Funnel page now displays frequency-controlled rejections alongside all other gate rejections. |

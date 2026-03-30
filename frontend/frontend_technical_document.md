@@ -1321,6 +1321,23 @@ Below the active and all signals sections, a collapsible "Rejected Signals" pane
 5. Detailed table — Gate name, Input count, Rejected count, Passed count, Pass Rate percentage
 6. Rejection Distribution section — period selector (7d/14d/30d/60d/90d), aggregate stats cards (total rejected, avg confidence, avg R:R), by-stage bar chart, top-10 rejected symbols table
 
+**Gate labels and colors** (defined as `GATE_LABELS` and `GATE_COLORS` records in the page):
+
+| Stage | Label | Color |
+|-------|-------|-------|
+| `DUPLICATE` | Duplicate Check | `bg-slate-500` |
+| `FUNDAMENTAL_FILTER` | Fundamental Filter | `bg-teal-500` |
+| `SENTIMENT_FILTER` | Sentiment Filter | `bg-cyan-500` |
+| `VWAP_FILTER` | VWAP Distance | `bg-amber-500` |
+| `PCR_FILTER` | Put-Call Ratio | `bg-purple-500` |
+| `CONFIDENCE_GATE` | Confidence Gate | `bg-orange-500` |
+| `RR_GATE` | Risk:Reward Gate | `bg-yellow-500` |
+| `SECTOR_GATE` | Sector Cap | `bg-indigo-500` |
+| `ACTIVE_CAP` | Active Signal Cap | `bg-blue-500` |
+| `MERGED_RISK_ZERO` | Merged Risk Zero | `bg-red-500` |
+| `POSITION_SIZING` | Position Sizing | `bg-pink-500` |
+| `FREQUENCY_CAP` | Frequency Cap | `bg-emerald-500` |
+
 **Components used:** `LoadingSkeleton`, `ErrorState`, `EmptyState`, `PassRateBar` (local to page)
 
 **New component:** `ExecutionBadge` (`src/components/signals/ExecutionBadge.tsx`) — displays execution type as a small badge. `NONE` execution type shows orange "Not Executable" badge with Ban icon. Used in SignalCard, SignalTable, and SignalDetailDrawer for non-executable signals.
