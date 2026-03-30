@@ -20,6 +20,9 @@ router.get('/health', async (req, res) => {
       );
       last_run = row?.last_run || null;
     } catch (_) {
+      // pipeline_runs table doesn't exist yet (pre-migration)
+    }
+    if (!last_run) {
       const [[row]] = await pool.query(
         `SELECT MAX(created_at) as last_run FROM signals`
       );
