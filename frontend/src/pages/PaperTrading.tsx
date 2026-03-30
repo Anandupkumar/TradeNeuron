@@ -1,14 +1,40 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search, FileBarChart } from 'lucide-react';
+import { useDebounce } from '../hooks/useDebounce';
 import { usePaperSummary, usePaperTrades } from '../hooks/usePaperTrading';
 import { PaperSummaryCards } from '../components/paper_trading/PaperSummaryCards';
 import { PnLCurveChart } from '../components/paper_trading/PnLCurveChart';
+import { DrawdownChart } from '../components/charts/DrawdownChart';
+import { ChartErrorBoundary } from '../components/errors/ChartErrorBoundary';
 import { PaperTradeTable } from '../components/paper_trading/PaperTradeTable';
 import { Pagination } from '../components/common/Pagination';
 import { LoadingSkeleton } from '../components/common/LoadingSkeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { EmptyState } from '../components/common/EmptyState';
 import { cn } from '@/lib/utils';
+import { formatDate } from '../utils/format';
+import type { PaperTrade } from '../types';
+
+function DrawdownChartSection({ trades }: { trades: PaperTrade[] }) {
+  const drawdown_data = useMemo(() => {
+    const sorted = [...trades]
+      .filter((t) => t.exit_date && t.pnl_pct != null)
+      .sort((a, b) => (a.exit_date! < b.exit_date! ? -1 : 1));
+
+    let cumulative = 0;
+    let peak = 0;
+    return sorted.map((t) => {
+      cumulative += t.pnl_pct!;
+      if (cumulative > peak) peak = cumulative;
+      const drawdown = peak > 0 ? cumulative - peak : 0;
+      return { date: formatDate(t.exit_date!), drawdown };
+    });
+  }, [trades]);
+
+  if (drawdown_data.length === 0) return null;
+  return <DrawdownChart data={drawdown_data} height={250} />;
+}
 
 const status_options = [
   { value: '', label: 'All Trades' },
@@ -17,15 +43,35 @@ const status_options = [
 ] as const;
 
 export default function PaperTradingPage() {
-  const [status_filter, set_status_filter] = useState('');
-  const [symbol_filter, set_symbol_filter] = useState('');
-  const [current_page, set_current_page] = useState(1);
-  const [page_size, set_page_size] = useState(20);
+  const [params, set_params] = useSearchParams();
+
+  const status_filter = params.get('status') ?? '';
+  const current_page = params.get('page') ? Number(params.get('page')) : 1;
+  const page_size = params.get('limit') ? Number(params.get('limit')) : 20;
+
+  const [symbol_input, set_symbol_input] = useState(params.get('symbol') ?? '');
+  const [debounced_symbol] = useDebounce(symbol_input, 300);
+
+  useEffect(() => {
+    const next = new URLSearchParams(params);
+    if (debounced_symbol) { next.set('symbol', debounced_symbol); } else { next.delete('symbol'); }
+    next.set('page', '1');
+    set_params(next, { replace: true });
+  }, [debounced_symbol]);
+
+  const update_params = (updates: Record<string, string | undefined>) => {
+    const next = new URLSearchParams(params);
+    Object.entries(updates).forEach(([k, v]) => {
+      if (v === undefined || v === '') { next.delete(k); } else { next.set(k, v); }
+    });
+    if (!('page' in updates)) next.set('page', '1');
+    set_params(next, { replace: true });
+  };
 
   const summary_query = usePaperSummary();
   const trades_query = usePaperTrades({
     status: status_filter || undefined,
-    symbol: symbol_filter || undefined,
+    symbol: debounced_symbol || undefined,
     page: current_page,
     limit: page_size,
   });
@@ -37,18 +83,19 @@ export default function PaperTradingPage() {
   const closed_trades = all_closed_query.data?.items ?? [];
 
   const handle_status_change = (value: string) => {
-    set_status_filter(value);
-    set_current_page(1);
+    update_params({ status: value || undefined });
   };
 
   const handle_symbol_change = (value: string) => {
-    set_symbol_filter(value);
-    set_current_page(1);
+    set_symbol_input(value);
+  };
+
+  const handle_page_change = (page: number) => {
+    update_params({ page: String(page) });
   };
 
   const handle_page_size_change = (size: number) => {
-    set_page_size(size);
-    set_current_page(1);
+    update_params({ limit: String(size) });
   };
 
   if (summary_query.isError || trades_query.isError) {
@@ -83,7 +130,22 @@ export default function PaperTradingPage() {
         <PaperSummaryCards summary={summary_query.data} />
       )}
 
-      {closed_trades.length > 0 && <PnLCurveChart trades={closed_trades} />}
+      {closed_trades.length > 0 && (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <ChartErrorBoundary>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-3 text-sm font-semibold text-foreground">Equity Curve</h3>
+              <PnLCurveChart trades={closed_trades} />
+            </div>
+          </ChartErrorBoundary>
+          <ChartErrorBoundary>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-3 text-sm font-semibold text-foreground">Drawdown</h3>
+              <DrawdownChartSection trades={closed_trades} />
+            </div>
+          </ChartErrorBoundary>
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -107,7 +169,7 @@ export default function PaperTradingPage() {
             <input
               type="text"
               placeholder="Filter by symbol…"
-              value={symbol_filter}
+              value={symbol_input}
               onChange={(e) => handle_symbol_change(e.target.value)}
               className={cn(
                 'rounded-md border border-border bg-muted py-2 pl-8 pr-3 text-sm text-foreground',
@@ -123,7 +185,7 @@ export default function PaperTradingPage() {
             icon={<FileBarChart className="h-8 w-8" />}
             title="No paper trades found"
             description={
-              status_filter || symbol_filter
+              status_filter || debounced_symbol
                 ? 'Try adjusting your filters.'
                 : 'Paper trades will appear here once signals are generated.'
             }
@@ -137,7 +199,7 @@ export default function PaperTradingPage() {
                 <Pagination
                   page={current_page}
                   total_pages={total_pages}
-                  onPageChange={set_current_page}
+                  onPageChange={handle_page_change}
                   page_sizes={[10, 20, 50]}
                   current_size={page_size}
                   onPageSizeChange={handle_page_size_change}

@@ -8,10 +8,13 @@ import {
   Wallet,
   FlaskConical,
   Settings,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { featureFlags } from '../../utils/featureFlags';
+import { useUiStore } from '../../store/ui.store';
 
 interface NavItem {
   path: string;
@@ -45,21 +48,25 @@ function buildNavItems(): NavItem[] {
 
 export function Sidebar() {
   const nav_items = buildNavItems();
+  const collapsed = useUiStore((s) => s.sidebarCollapsed);
+  const toggle = useUiStore((s) => s.toggleSidebar);
 
   return (
     <aside
       className={cn(
-        'flex h-full w-16 flex-col border-r border-border bg-card',
-        'lg:w-56',
+        'flex h-full flex-col border-r border-border bg-card transition-[width] duration-200',
+        collapsed ? 'w-16' : 'w-16 lg:w-56',
       )}
     >
       <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600">
           <Activity className="h-4 w-4 text-white" />
         </div>
-        <span className="hidden text-sm font-bold tracking-tight text-foreground lg:block">
-          TradeNeuron
-        </span>
+        {!collapsed && (
+          <span className="hidden text-sm font-bold tracking-tight text-foreground lg:block">
+            TradeNeuron
+          </span>
+        )}
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 px-2 py-3">
@@ -68,6 +75,7 @@ export function Sidebar() {
             key={item.path}
             to={item.path}
             end={item.path === '/'}
+            title={collapsed ? item.label : undefined}
             className={({ isActive }) =>
               cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
@@ -79,10 +87,25 @@ export function Sidebar() {
             }
           >
             <item.icon className="h-5 w-5 shrink-0" />
-            <span className="hidden lg:block">{item.label}</span>
+            {!collapsed && <span className="hidden lg:block">{item.label}</span>}
           </NavLink>
         ))}
       </nav>
+
+      <div className="hidden border-t border-border px-2 py-2 lg:block">
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex w-full items-center justify-center rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? (
+            <ChevronsRight className="h-4 w-4" />
+          ) : (
+            <ChevronsLeft className="h-4 w-4" />
+          )}
+        </button>
+      </div>
     </aside>
   );
 }

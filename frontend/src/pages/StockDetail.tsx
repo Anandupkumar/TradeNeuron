@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { subMonths, subYears, format } from 'date-fns';
 import { useStockDetail } from '../hooks/useStockDetail';
@@ -38,6 +38,7 @@ export default function StockDetailPage() {
   const { symbol: encoded_symbol } = useParams<{ symbol: string }>();
   const symbol = decodeURIComponent(encoded_symbol ?? '');
 
+  const navigate = useNavigate();
   const [timeframe, set_timeframe] = useState<Timeframe>('6M');
 
   const from_date = useMemo(() => computeFromDate(timeframe), [timeframe]);
@@ -89,13 +90,14 @@ export default function StockDetailPage() {
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center gap-3">
-        <Link
-          to="/"
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
           className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ArrowLeft className="h-5 w-5" />
-        </Link>
-        <span className="text-sm text-muted-foreground">Back to Dashboard</span>
+        </button>
+        <span className="text-sm text-muted-foreground">Back</span>
       </div>
 
       <StockHeader stock={stock} />
@@ -123,9 +125,11 @@ export default function StockDetailPage() {
         </div>
       </ChartErrorBoundary>
 
-      <div className="rounded-lg border border-border bg-card p-4">
-        <VolumeChart candles={candles} />
-      </div>
+      <ChartErrorBoundary>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <VolumeChart candles={candles} />
+        </div>
+      </ChartErrorBoundary>
 
       <IndicatorOverlay indicators={stock.indicators} />
 

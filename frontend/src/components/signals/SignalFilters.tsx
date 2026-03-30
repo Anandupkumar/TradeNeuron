@@ -59,17 +59,23 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
         />
       </div>
 
-      <select
-        value={filters.status ?? 'all'}
-        onChange={(e) => on_change({ status: e.target.value as SignalFilters['status'] })}
-        className={select_classes}
-      >
+      <div className="flex rounded-lg border border-border bg-muted p-0.5">
         {status_options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => on_change({ status: opt.value as SignalFilters['status'] })}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              (filters.status ?? 'all') === opt.value
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
             {opt.label}
-          </option>
+          </button>
         ))}
-      </select>
+      </div>
 
       {featureFlags.showDirectionFilter() && (
         <select

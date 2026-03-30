@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FlaskConical } from 'lucide-react';
 import { useBacktestResults } from '../hooks/useBacktest';
 import { BacktestResultCard } from '../components/backtest/BacktestResultCard';
@@ -20,7 +20,14 @@ const strategy_options = [
 ] as const;
 
 export default function BacktestPage() {
-  const [strategy_filter, set_strategy_filter] = useState('');
+  const [params, set_params] = useSearchParams();
+  const strategy_filter = params.get('strategy') ?? '';
+
+  const set_strategy_filter = (value: string) => {
+    const next = new URLSearchParams(params);
+    if (value) { next.set('strategy', value); } else { next.delete('strategy'); }
+    set_params(next, { replace: true });
+  };
 
   const results_query = useBacktestResults({
     strategy: strategy_filter || undefined,
