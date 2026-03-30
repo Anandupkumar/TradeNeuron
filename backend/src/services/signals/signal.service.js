@@ -55,7 +55,7 @@ function computePositionSizing(entry_price, stop_loss, direction) {
   };
 }
 
-async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null) {
+async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null) {
   if (!raw_signals || raw_signals.length === 0) return null;
 
   const direction = raw_signals[0].direction || 'LONG';
@@ -120,33 +120,59 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
 
   const feature = await featureModel.findBySymbolAndDate(symbol, date);
 
+  let soft_penalty = 0;
+
   if (feature && feature.vwap_distance_pct != null) {
     const vwap_dist = parseFloat(feature.vwap_distance_pct);
-    const is_breakout_strategy = (signal.strategy || '').toUpperCase().includes('BREAKOUT');
-    const long_threshold = is_breakout_strategy
-      ? config.vwap_distance_breakout_long
-      : config.vwap_distance_long_default;
-    const short_threshold = config.vwap_distance_short_default;
+    const vwap_hard_long = config.vwap_hard_reject_long;
+    const vwap_soft_long = config.vwap_soft_penalty_long;
+    const vwap_hard_short = config.vwap_hard_reject_short;
+    const vwap_soft_short = config.vwap_soft_penalty_short;
 
-    if (direction === 'LONG' && vwap_dist > long_threshold) {
-      logger.info(`Signal for ${symbol} rejected: price ${vwap_dist.toFixed(2)}% above VWAP (threshold: ${long_threshold}%, strategy: ${signal.strategy})`);
-      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${vwap_dist.toFixed(2)}% above VWAP, threshold ${long_threshold}%` });
+    if (direction === 'LONG' && vwap_dist > vwap_hard_long) {
+      logger.info(`Signal for ${symbol} rejected: price ${vwap_dist.toFixed(2)}% above VWAP (hard limit: ${vwap_hard_long}%)`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${vwap_dist.toFixed(2)}% above VWAP, hard limit ${vwap_hard_long}%` });
       return null;
     }
-    if (direction === 'SHORT' && vwap_dist < -short_threshold) {
-      logger.info(`Signal for ${symbol} rejected: price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP (threshold: ${short_threshold}%)`);
-      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP, threshold ${short_threshold}%` });
+    if (direction === 'SHORT' && Math.abs(vwap_dist) > vwap_hard_short) {
+      logger.info(`Signal for ${symbol} rejected: price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP (hard limit: ${vwap_hard_short}%)`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP, hard limit ${vwap_hard_short}%` });
       return null;
+    }
+
+    if (direction === 'LONG' && vwap_dist > vwap_soft_long) {
+      soft_penalty += -10;
+      logger.info(`Signal for ${symbol} penalized: VWAP distance ${vwap_dist.toFixed(2)}% > ${vwap_soft_long}% (-10 confidence)`);
+    }
+    if (direction === 'SHORT' && Math.abs(vwap_dist) > vwap_soft_short) {
+      soft_penalty += -10;
+      logger.info(`Signal for ${symbol} penalized: VWAP distance ${Math.abs(vwap_dist).toFixed(2)}% > ${vwap_soft_short}% (-10 confidence)`);
     }
   }
 
-  if (nifty_pcr != null && direction === 'LONG' && nifty_pcr > 1.5) {
-    logger.info(`Signal for ${symbol} rejected: PCR ${nifty_pcr.toFixed(3)} > 1.5 — bearish options sentiment`);
-    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'PCR_FILTER', reject_reason: `PCR ${nifty_pcr.toFixed(3)} > 1.5 — bearish options sentiment` });
-    return null;
+  if (nifty_pcr != null && direction === 'LONG') {
+    if (nifty_pcr > 1.8) {
+      logger.info(`Signal for ${symbol} rejected: PCR ${nifty_pcr.toFixed(3)} > 1.8 — extreme bearish`);
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'PCR_FILTER', reject_reason: `PCR ${nifty_pcr.toFixed(3)} > 1.8 — extreme bearish options sentiment` });
+      return null;
+    }
+    if (nifty_pcr > 1.4) {
+      soft_penalty += -10;
+      logger.info(`Signal for ${symbol} penalized: PCR ${nifty_pcr.toFixed(3)} in 1.4–1.8 range (-10 confidence)`);
+    }
+  }
+  if (nifty_pcr != null && nifty_pcr < 0.7) {
+    soft_penalty += -10;
+    logger.info(`Signal for ${symbol} penalized: PCR ${nifty_pcr.toFixed(3)} < 0.7 — bull trap risk (-10 confidence)`);
   }
 
-  const { score: confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date, direction);
+  const { score: raw_confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date, direction);
+  const confidence = Math.max(0, Math.min(100, raw_confidence + soft_penalty + sentiment_adjustment));
+
+  if (sentiment_adjustment !== 0 || soft_penalty !== 0) {
+    logger.info(`Signal for ${symbol} confidence adjusted: raw=${raw_confidence}, VWAP/PCR=${soft_penalty}, sentiment=${sentiment_adjustment}, final=${confidence}`);
+  }
+
   if (confidence < config.min_confidence) {
     logger.info(`Signal for ${symbol} rejected: confidence ${confidence} below ${config.min_confidence}`);
     await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'CONFIDENCE_GATE', reject_reason: `Confidence ${confidence} below minimum ${config.min_confidence}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
@@ -195,6 +221,30 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     return null;
   }
 
+  let regime_size_multiplier = 1.0;
+  const is_ranging = feature && feature.is_ranging != null ? parseInt(feature.is_ranging) : 0;
+  if (is_ranging === 1) {
+    regime_size_multiplier = 0.5;
+  } else if (vix_close != null && vix_close > config.vix_threshold) {
+    regime_size_multiplier = 0.7;
+  }
+
+  if (regime_size_multiplier < 1.0) {
+    sizing.shares_to_buy = Math.floor(sizing.shares_to_buy * regime_size_multiplier);
+    sizing.position_value = roundDecimal(sizing.shares_to_buy * signal.entry_price, 2);
+    const risk_per_share = direction === 'SHORT'
+      ? signal.stop_loss - signal.entry_price
+      : signal.entry_price - signal.stop_loss;
+    sizing.capital_risk_inr = roundDecimal(sizing.shares_to_buy * risk_per_share, 2);
+    logger.info(`Signal for ${symbol} regime-scaled: multiplier=${regime_size_multiplier}, shares=${sizing.shares_to_buy}`);
+  }
+
+  if (sizing.shares_to_buy <= 0) {
+    logger.info(`Signal for ${symbol} rejected: 0 shares after regime sizing (multiplier: ${regime_size_multiplier})`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'POSITION_SIZING', reject_reason: `0 shares after regime sizing (multiplier: ${regime_size_multiplier})`, raw_confidence: confidence });
+    return null;
+  }
+
   const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null, direction);
 
   const { execution_type, is_executable } = resolveExecutionType(direction, config.account_type);
@@ -218,6 +268,7 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     shares_to_buy: sizing.shares_to_buy,
     position_value: sizing.position_value,
     capital_risk_inr: sizing.capital_risk_inr,
+    regime_size_multiplier,
     confidence_breakdown: breakdown,
     explanation,
   };

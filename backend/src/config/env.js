@@ -86,6 +86,11 @@ const config = Object.freeze({
   vwap_distance_breakout_long: parseFloat(process.env.VWAP_DISTANCE_BREAKOUT_LONG || '3.5'),
   vwap_distance_short_default: parseFloat(process.env.VWAP_DISTANCE_SHORT_DEFAULT || '2.0'),
 
+  vwap_soft_penalty_long: parseFloat(process.env.VWAP_SOFT_PENALTY_LONG || '2.0'),
+  vwap_hard_reject_long: parseFloat(process.env.VWAP_HARD_REJECT_LONG || '5.0'),
+  vwap_soft_penalty_short: parseFloat(process.env.VWAP_SOFT_PENALTY_SHORT || '2.0'),
+  vwap_hard_reject_short: parseFloat(process.env.VWAP_HARD_REJECT_SHORT || '5.0'),
+
   finnhub_api_key: process.env.FINNHUB_API_KEY || '',
 
   log_level: process.env.LOG_LEVEL || 'info',

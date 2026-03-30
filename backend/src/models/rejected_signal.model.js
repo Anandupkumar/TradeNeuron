@@ -29,4 +29,59 @@ async function findByDate(date) {
   return rows;
 }
 
-module.exports = { insertRejected, findByDate };
+async function getDistribution(period_days) {
+  const [total_rows] = await pool.query(
+    `SELECT COUNT(*) AS total_rejected FROM rejected_signals WHERE date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+    [period_days]
+  );
+
+  const [by_stage] = await pool.query(
+    `SELECT reject_stage, COUNT(*) AS count
+     FROM rejected_signals
+     WHERE date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+     GROUP BY reject_stage
+     ORDER BY count DESC`,
+    [period_days]
+  );
+
+  const [by_symbol] = await pool.query(
+    `SELECT symbol, COUNT(*) AS count
+     FROM rejected_signals
+     WHERE date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+     GROUP BY symbol
+     ORDER BY count DESC
+     LIMIT 20`,
+    [period_days]
+  );
+
+  const [avg_rows] = await pool.query(
+    `SELECT
+       AVG(raw_confidence) AS avg_raw_confidence,
+       AVG(raw_rr)         AS avg_raw_rr
+     FROM rejected_signals
+     WHERE date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       AND raw_confidence IS NOT NULL`,
+    [period_days]
+  );
+
+  const total_rejected = total_rows[0].total_rejected;
+  const by_stage_pct = by_stage.map((r) => ({
+    reject_stage: r.reject_stage,
+    count: r.count,
+    pct: total_rejected > 0 ? parseFloat(((r.count / total_rejected) * 100).toFixed(1)) : 0,
+  }));
+
+  return {
+    total_rejected,
+    by_stage: by_stage_pct,
+    by_symbol,
+    avg_raw_confidence_at_rejection: avg_rows[0].avg_raw_confidence != null
+      ? parseFloat(parseFloat(avg_rows[0].avg_raw_confidence).toFixed(1))
+      : null,
+    avg_raw_rr_at_rejection: avg_rows[0].avg_raw_rr != null
+      ? parseFloat(parseFloat(avg_rows[0].avg_raw_rr).toFixed(2))
+      : null,
+  };
+}
+
+module.exports = { insertRejected, findByDate, getDistribution };

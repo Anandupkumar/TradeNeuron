@@ -262,3 +262,42 @@ VWAP distance thresholds are now per-strategy (breakout gets a wider 3.5% band v
 **Status: IMPLEMENTED (backend only)**
 
 Candle data source quality is checked in the pipeline (Step 2b). Symbols with suspect data (Bhavcopy-sourced or anomalous adjusted_close gaps) are excluded from indicator computation and signal generation. This is entirely pipeline-internal — no frontend changes needed.
+
+---
+
+## 13. Regime-Based Position Sizing — Signal Type Update
+
+**Status: IMPLEMENTED**
+
+| File | Changes |
+|------|---------|
+| `src/types/signal.types.ts` | Added `regime_size_multiplier: number \| null` to `Signal` interface |
+| `src/components/signals/SignalDetailDrawer.tsx` | Shows "Position Scale" row (e.g., "0.5x (Ranging)") when multiplier < 1.0; hidden when 1.0 |
+
+---
+
+## 14. Rejection Distribution Analytics — Funnel Page Enhancement
+
+**Status: IMPLEMENTED**
+
+| File | Changes |
+|------|---------|
+| `src/types/signal.types.ts` | Added `RejectionDistributionResponse`, `RejectionByStage`, `RejectionBySymbol` types |
+| `src/types/index.ts` | Exported new types |
+| `src/api/signals.api.ts` | Added `rejectionDistribution(period_days)` API function |
+| `src/hooks/useFunnel.ts` | Added `useRejectionDistribution(period_days)` hook |
+| `src/pages/Funnel.tsx` | Added rejection distribution section with period selector (7/14/30/60/90 days), aggregate stats cards, by-stage bar chart, top-10 rejected symbols table |
+
+---
+
+## 15. Confidence Calibration Display
+
+**Status: IMPLEMENTED**
+
+| File | Changes |
+|------|---------|
+| `src/types/signal.types.ts` | Added `CalibrationBucket`, `CalibrationResponse` types |
+| `src/types/index.ts` | Exported new types |
+| `src/api/signals.api.ts` | Added `calibration()` API function |
+| `src/hooks/useFunnel.ts` | Added `useCalibration()` hook (10-minute stale time) |
+| `src/components/signals/SignalDetailDrawer.tsx` | Shows "Historical Win Rate at This Confidence: X%" card when calibration data exists for the signal's confidence bucket |

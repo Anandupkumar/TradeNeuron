@@ -159,7 +159,7 @@ async function runDailyPipeline() {
 
     // Step 6: Check market regime
     logger.info('Step 6/13: Checking market regime');
-    const { regime, reason } = await checkMarketRegime();
+    const { regime, reason, vix_close } = await checkMarketRegime();
     logger.info(`Market regime: ${regime}${reason ? ` (${reason})` : ''}`);
 
     if (regime === 'HIGH_VOLATILITY' || regime === 'UNKNOWN') {
@@ -200,9 +200,9 @@ async function runDailyPipeline() {
     const post_fundamental = await filterByFundamentals(raw_signal_map);
     logger.info(`Step 8: ${Object.keys(post_fundamental).length} symbols passed fundamental filter`);
 
-    // Step 9: Sentiment filter (negation-aware + optional Finnhub)
+    // Step 9: Sentiment filter (soft scoring — only STRONGLY_NEGATIVE hard-rejects)
     logger.info('Step 9/13: Applying sentiment filter');
-    const post_sentiment = await filterBySentiment(post_fundamental);
+    const { passed: post_sentiment, adjustments: sentiment_adjustments } = await filterBySentiment(post_fundamental);
     logger.info(`Step 9: ${Object.keys(post_sentiment).length} symbols passed sentiment filter`);
 
     // Step 10: Score, deduplicate, position sizing, and generate signals
@@ -212,13 +212,14 @@ async function runDailyPipeline() {
       try {
         const long_signals = raw_signals.filter((s) => (s.direction || 'LONG') === 'LONG');
         const short_signals = raw_signals.filter((s) => s.direction === 'SHORT');
+        const sent_adj = sentiment_adjustments[symbol] || 0;
 
         if (long_signals.length > 0) {
-          const signal = await deduplicateAndGenerate(symbol, data_date, long_signals, new_signals, nifty_pcr);
+          const signal = await deduplicateAndGenerate(symbol, data_date, long_signals, new_signals, nifty_pcr, sent_adj, vix_close);
           if (signal) new_signals.push(signal);
         }
         if (short_signals.length > 0) {
-          const signal = await deduplicateAndGenerate(symbol, data_date, short_signals, new_signals, nifty_pcr);
+          const signal = await deduplicateAndGenerate(symbol, data_date, short_signals, new_signals, nifty_pcr, sent_adj, vix_close);
           if (signal) new_signals.push(signal);
         }
       } catch (error) {

@@ -13,6 +13,11 @@ export type {
   SignalListResponse,
   FunnelGate,
   FunnelResponse,
+  RejectionByStage,
+  RejectionBySymbol,
+  RejectionDistributionResponse,
+  CalibrationBucket,
+  CalibrationResponse,
 } from './signal.types';
 export type {
   RejectStage,

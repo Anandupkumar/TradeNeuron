@@ -50,16 +50,16 @@ async function checkMarketRegime() {
     if (ema_20 != null && ema_50 != null && ema_50 !== 0) {
       const nifty_range = Math.abs(ema_20 - ema_50) / ema_50 * 100;
       if (nifty_range < 2.0) {
-        return { regime: 'SIDEWAYS', reason: `EMAs converged (range=${nifty_range.toFixed(2)}%)` };
+        return { regime: 'SIDEWAYS', reason: `EMAs converged (range=${nifty_range.toFixed(2)}%)`, vix_close };
       }
     }
-    return { regime: 'BULLISH', reason: null };
+    return { regime: 'BULLISH', reason: null, vix_close };
   } else if (!nifty_above_ema200) {
     logger.info('NIFTY below EMA200');
-    return { regime: 'BEARISH', reason: 'NIFTY below EMA200' };
+    return { regime: 'BEARISH', reason: 'NIFTY below EMA200', vix_close };
   } else {
     logger.info(`India VIX at ${vix_close}, above threshold ${vix_threshold}`);
-    return { regime: 'HIGH_VOLATILITY', reason: `India VIX ${vix_close} > ${vix_threshold}` };
+    return { regime: 'HIGH_VOLATILITY', reason: `India VIX ${vix_close} > ${vix_threshold}`, vix_close };
   }
 }
 

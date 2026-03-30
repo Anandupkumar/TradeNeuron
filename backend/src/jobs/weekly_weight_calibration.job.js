@@ -4,6 +4,7 @@ const { SCORING_WEIGHTS } = require('../config/constants');
 const config = require('../config/env');
 const signalOutcomeModel = require('../models/signal_outcome.model');
 const strategyConfigModel = require('../models/strategy_config.model');
+const confidenceCalibrationModel = require('../models/confidence_calibration.model');
 const { formatDate } = require('../utils/date.util');
 const { roundDecimal } = require('../utils/math.util');
 const { sendTelegramAlert } = require('../utils/notify.util');
@@ -112,7 +113,49 @@ async function calibrateWeights() {
 
   await evaluateStrategyPerformance();
 
+  await calibrateConfidence();
+
   logger.info('=== Weekly Weight Calibration End ===');
+}
+
+async function calibrateConfidence() {
+  logger.info('Running confidence calibration...');
+  const MIN_BUCKET_ENTRIES = 20;
+
+  const [rows] = await pool.query(`
+    SELECT
+      FLOOR(raw_confidence / 5) * 5 AS bucket,
+      COUNT(*)                       AS total,
+      SUM(CASE WHEN outcome = 'TARGET_HIT' THEN 1 ELSE 0 END) AS wins
+    FROM signal_outcomes
+    WHERE raw_confidence IS NOT NULL
+    GROUP BY bucket
+    ORDER BY bucket
+  `);
+
+  if (rows.length === 0) {
+    logger.info('No signal_outcomes data — skipping confidence calibration');
+    return;
+  }
+
+  const has_sparse_bucket = rows.some((r) => r.total < MIN_BUCKET_ENTRIES);
+  if (has_sparse_bucket) {
+    const sparse = rows.filter((r) => r.total < MIN_BUCKET_ENTRIES).map((r) => `${r.bucket}(${r.total})`);
+    logger.info(`Sparse buckets (< ${MIN_BUCKET_ENTRIES} entries): ${sparse.join(', ')} — calibrating available buckets only`);
+  }
+
+  const today = formatDate(new Date());
+  let upserted = 0;
+
+  for (const row of rows) {
+    if (row.total < MIN_BUCKET_ENTRIES) continue;
+    const win_rate = roundDecimal((row.wins / row.total) * 100, 2);
+    await confidenceCalibrationModel.upsertBucket(row.bucket, row.total, win_rate, today);
+    upserted++;
+    logger.info(`Calibration bucket ${row.bucket}: ${row.total} signals, win rate ${win_rate}%`);
+  }
+
+  logger.info(`Confidence calibration complete — ${upserted} buckets updated`);
 }
 
 async function evaluateStrategyPerformance() {
@@ -169,4 +212,4 @@ async function evaluateStrategyPerformance() {
   }
 }
 
-module.exports = { calibrateWeights, evaluateStrategyPerformance };
+module.exports = { calibrateWeights, evaluateStrategyPerformance, calibrateConfidence };

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Filter, AlertTriangle, ArrowDown, TrendingDown } from 'lucide-react';
+import { Filter, AlertTriangle, ArrowDown, TrendingDown, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useFunnel } from '../hooks/useFunnel';
+import { useFunnel, useRejectionDistribution } from '../hooks/useFunnel';
 import { LoadingSkeleton } from '../components/common/LoadingSkeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { EmptyState } from '../components/common/EmptyState';
+import { formatPct } from '../utils/format';
 import type { FunnelGate } from '../types';
 
 const GATE_LABELS: Record<string, string> = {
@@ -81,10 +82,14 @@ function PassRateBar({ gate }: { gate: FunnelGate }) {
   );
 }
 
+const PERIOD_OPTIONS = [7, 14, 30, 60, 90];
+
 export default function FunnelPage() {
   const today = new Date().toISOString().slice(0, 10);
   const [date, set_date] = useState(today);
+  const [period_days, set_period_days] = useState(30);
   const { data, isLoading, isError, refetch } = useFunnel(date);
+  const { data: distribution, isLoading: dist_loading } = useRejectionDistribution(period_days);
 
   return (
     <div className="space-y-6 p-6">
@@ -207,6 +212,111 @@ export default function FunnelPage() {
           </div>
         </>
       )}
+
+      <div className="space-y-4 pt-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+              <BarChart3 className="h-5 w-5" />
+              Rejection Distribution
+            </h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">Aggregate rejection stats over a period</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {PERIOD_OPTIONS.map((p) => (
+              <button
+                key={p}
+                onClick={() => set_period_days(p)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  period_days === p
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {p}d
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {dist_loading && <LoadingSkeleton variant="card" count={2} />}
+
+        {distribution && (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Total Rejected</p>
+                <p className="mt-1 text-2xl font-bold text-red-400">{distribution.total_rejected}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Period</p>
+                <p className="mt-1 text-2xl font-bold text-foreground">{distribution.period_days}d</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Avg Confidence at Rejection</p>
+                <p className="mt-1 text-2xl font-bold text-amber-400">
+                  {distribution.avg_raw_confidence_at_rejection != null
+                    ? distribution.avg_raw_confidence_at_rejection.toFixed(1)
+                    : '—'}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Avg R:R at Rejection</p>
+                <p className="mt-1 text-2xl font-bold text-blue-400">
+                  {distribution.avg_raw_rr_at_rejection != null
+                    ? `${distribution.avg_raw_rr_at_rejection.toFixed(2)}x`
+                    : '—'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="space-y-3 rounded-lg border border-border bg-card p-5">
+                <h3 className="text-sm font-semibold text-foreground">By Stage</h3>
+                {distribution.by_stage.map((s) => {
+                  const max_pct = Math.max(...distribution.by_stage.map((x) => x.pct));
+                  return (
+                    <div key={s.reject_stage} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">
+                          {GATE_LABELS[s.reject_stage] ?? s.reject_stage.replaceAll('_', ' ')}
+                        </span>
+                        <span className="text-foreground">{s.count} ({formatPct(s.pct)})</span>
+                      </div>
+                      <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-red-500/70"
+                          style={{ width: `${max_pct > 0 ? (s.pct / max_pct) * 100 : 0}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-lg border border-border bg-card p-5">
+                <h3 className="mb-3 text-sm font-semibold text-foreground">Top Rejected Symbols</h3>
+                {distribution.by_symbol.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No data</p>
+                ) : (
+                  <div className="space-y-2">
+                    {distribution.by_symbol.slice(0, 10).map((s, i) => (
+                      <div key={s.symbol} className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          <span className="mr-2 text-xs text-muted-foreground/50">{i + 1}.</span>
+                          {s.symbol.replace('.NS', '')}
+                        </span>
+                        <span className="font-medium text-foreground">{s.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

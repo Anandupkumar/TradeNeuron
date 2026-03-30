@@ -917,6 +917,29 @@ ALTER TABLE paper_trades
 - `is_executable` flags whether the signal can actually be taken given the current account type (`ACCOUNT_TYPE` env var). SHORT signals in equity-only accounts are marked `is_executable = false`.
 - Non-executable signals are still generated and stored for analysis, but they do NOT create paper trades and their outcomes do NOT feed into the weekly weight calibration. This prevents phantom wins from corrupting the self-improvement loop.
 
+### 4.28 regime_size_multiplier on signals (migration 033)
+
+```sql
+ALTER TABLE signals ADD COLUMN regime_size_multiplier DECIMAL(4,2) DEFAULT 1.00 AFTER capital_risk_inr;
+```
+
+**Key decision:** Regime-based position sizing scales `shares_to_buy` and `position_value` down when market conditions are unfavorable. `is_ranging = true` reduces to 0.5x, VIX above threshold reduces to 0.7x. The multiplier is stored on the signal for auditability. A value of 1.00 means no regime adjustment was applied.
+
+### 4.29 confidence_calibration (migration 034)
+
+```sql
+CREATE TABLE IF NOT EXISTS confidence_calibration (
+    id                  INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    confidence_bucket   INT NOT NULL,
+    total_signals       INT NOT NULL,
+    actual_win_rate     DECIMAL(5,2) NOT NULL,
+    computed_at         DATE NOT NULL,
+    UNIQUE INDEX uq_bucket_date (confidence_bucket, computed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**Key decision:** Stores weekly-computed calibration data mapping confidence score ranges (bucketed in 5-point intervals: 70, 75, 80, ...) to their actual historical win rates. The weekly calibration job populates this table. Buckets with fewer than 20 samples are skipped. This is display-only data — it does not auto-adjust scoring weights.
+
 ### ER Diagram
 
 ```
@@ -933,6 +956,7 @@ rejected_signals                   (standalone audit log, populated per pipeline
 nifty50_composition                (standalone, referenced by backtest.service.js)
 adaptive_thresholds                (stores adaptive RSI/volume thresholds + scoring weights)
 strategy_config                    (stores per-strategy enable/disable state)
+confidence_calibration             (weekly calibration: confidence bucket → actual win rate)
 ```
 
 ### Migration Strategy
@@ -2293,33 +2317,38 @@ FUNCTION deduplicateAndGenerate(symbol, date, raw_signals)
         }
 
     features = FETCH features for symbol, date
+    soft_penalty = 0
 
-    // VWAP distance filter — per-strategy thresholds
-    // Breakout strategies get a wider band (default 3.5%) since breakouts move away from mean
+    // VWAP distance filter — soft penalty + hard reject
     IF features.vwap_distance_pct != null
-        long_threshold = isBreakoutStrategy ? VWAP_DISTANCE_BREAKOUT_LONG (3.5) : VWAP_DISTANCE_LONG_DEFAULT (2.0)
-        short_threshold = VWAP_DISTANCE_SHORT_DEFAULT (2.0)
-        IF signal.direction == 'LONG' AND features.vwap_distance_pct > long_threshold
-            LOG: "LONG signal for {symbol} rejected: price {vwap_distance_pct}% above VWAP (threshold: {long_threshold}%)"
-            RETURN null
-        IF signal.direction == 'SHORT' AND features.vwap_distance_pct < -short_threshold
-            LOG: "SHORT signal for {symbol} rejected: price {vwap_distance_pct}% below VWAP"
-            RETURN null
+        IF direction == 'LONG' AND vwap_dist > VWAP_HARD_REJECT_LONG (5.0%)
+            LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
+        IF direction == 'SHORT' AND |vwap_dist| > VWAP_HARD_REJECT_SHORT (5.0%)
+            LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
+        IF direction == 'LONG' AND vwap_dist > VWAP_SOFT_PENALTY_LONG (2.0%)
+            soft_penalty += -10
+        IF direction == 'SHORT' AND |vwap_dist| > VWAP_SOFT_PENALTY_SHORT (2.0%)
+            soft_penalty += -10
 
-    // PCR filter (Improvement 2) — passed in from pipeline
-    IF nifty_pcr != null AND nifty_pcr > 1.5 AND signal.direction == 'LONG'
-        LOG: "LONG signal for {symbol} suppressed: NIFTY PCR {nifty_pcr} > 1.5 (bearish options)"
-        RETURN null
+    // PCR filter — soft penalty + hard reject
+    IF nifty_pcr != null AND direction == 'LONG'
+        IF nifty_pcr > 1.8 → LOG + INSERT rejected_signals(PCR_FILTER) → RETURN null
+        IF nifty_pcr > 1.4 → soft_penalty += -10
+    IF nifty_pcr != null AND nifty_pcr < 0.7
+        soft_penalty += -10   // bull trap risk
 
-    // Sector correlation gate (Improvement 6) — enhanced with intra-batch counting
+    // Sector correlation gate — enhanced with intra-batch counting
     sector = getSector(symbol)
     active_sector_count = countActiveBySector(sector) + batch_sector_count
     IF active_sector_count >= MAX_SIGNALS_PER_SECTOR
         LOG: "Signal for {symbol} suppressed: sector {sector} at limit"
         RETURN null
 
-    { confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator }
+    { raw_confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator }
         = calculateScoreWithBreakdown(symbol, date, direction)
+
+    // Apply soft penalties (VWAP, PCR) and sentiment adjustment from Step 9
+    confidence = CLAMP(raw_confidence + soft_penalty + sentiment_adjustment, 0, 100)
 
     IF confidence < MIN_CONFIDENCE
         LOG + INSERT rejected_signals(CONFIDENCE_GATE)
@@ -2576,15 +2605,18 @@ For SHORT signals, the SL/target logic is inverted compared to LONG:
 
 ### Cost Model
 
-Applied to every trade during backtesting:
+Applied to every trade during backtesting with **direction-aware slippage**:
 
 ```
-slippage_cost   = entry_price * (SLIPPAGE_PCT / 100)          // default 0.1%
-brokerage_cost  = entry_price * (BROKERAGE_PCT / 100)         // default 0.05%
-total_cost      = slippage_cost + brokerage_cost
+cost = (SLIPPAGE_PCT + BROKERAGE_PCT) / 100                   // default 0.15% combined
 
-effective_entry = entry_price + total_cost                     // for BUY
-effective_exit  = exit_price - total_cost                      // for SELL
+LONG:
+  effective_entry = entry_price * (1 + cost)                   // buying costs more
+  effective_exit  = exit_price  * (1 - cost)                   // selling receives less
+
+SHORT:
+  effective_entry = entry_price * (1 - cost)                   // selling receives less
+  effective_exit  = exit_price  * (1 + cost)                   // buying back costs more
 
 net_return_pct  = (effective_exit - effective_entry) / effective_entry * 100
 ```
@@ -3417,7 +3449,55 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 
 ---
 
-### 17.13 Trade Decision Endpoints
+### 17.13 GET /api/v1/signals/rejected/distribution
+
+**Description:** Aggregate rejection statistics over a configurable period. Complements the per-date funnel endpoint with a period-based view.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `period_days` | number | 30 | Number of days to look back (1–365) |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "period_days": 30,
+    "total_rejected": 312,
+    "by_stage": [{ "reject_stage": "VWAP_FILTER", "count": 140, "pct": 44.9 }],
+    "by_symbol": [{ "symbol": "RELIANCE.NS", "count": 12 }],
+    "avg_raw_confidence_at_rejection": 61.4,
+    "avg_raw_rr_at_rejection": 1.3
+  }
+}
+```
+
+---
+
+### 17.14 GET /api/v1/signals/calibration
+
+**Description:** Returns the latest confidence calibration data — mapping confidence score buckets to actual historical win rates.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "buckets": [
+      { "confidence_bucket": 70, "total_signals": 45, "actual_win_rate": 42.50, "computed_at": "2026-03-23" },
+      { "confidence_bucket": 75, "total_signals": 38, "actual_win_rate": 51.20, "computed_at": "2026-03-23" }
+    ]
+  }
+}
+```
+
+---
+
+### 17.15 Trade Decision Endpoints
 
 #### POST /api/v1/signals/:id/decision
 
@@ -3699,26 +3779,23 @@ FUNCTION runDailyPipeline()
                 LOG info: "Signal for {symbol} rejected: fundamental filter"
         LOG info: "Step 8 complete: {rejected_fundamental} rejected"
 
-        // Step 9: Apply News Sentiment Filter (improved negation-aware + optional Finnhub)
-        LOG info: "Step 9/13: Checking news sentiment (only for remaining raw signals)"
-        rejected_sentiment = 0
-        FOR each [symbol, signals] in raw_signals:
-            sentiment = scoreSentiment(symbol, fetchHeadlines(symbol))
-            STORE sentiment_flag in DB (audit log, includes confidence + finnhub_score + overridden)
-            IF sentiment.sentiment = 'NEGATIVE'
-                DELETE symbol from raw_signals
-                rejected_sentiment++
-                LOG info: "Signal for {symbol} suppressed: {sentiment.headline}"
-        LOG info: "Step 9 complete: {rejected_sentiment} suppressed"
+        // Step 9: Sentiment Filter (soft scoring — only STRONGLY_NEGATIVE hard-rejects)
+        LOG info: "Step 9/13: Applying sentiment filter"
+        { passed: post_sentiment, adjustments: sentiment_adjustments } = filterBySentiment(raw_signals)
+        // STRONGLY_NEGATIVE (FinBERT < -0.6 or 3+ keyword matches): hard reject
+        // NEGATIVE: passes through with -12 confidence penalty
+        // POSITIVE (FinBERT > 0.3): +5 confidence bonus
+        // NEUTRAL: no adjustment
+        LOG info: "Step 9 complete"
 
         // Step 10: Score, Deduplicate, Position Size, and Generate Signals
-        // Passes nifty_pcr (from Step 1c) and batch_signals for intra-batch sector correlation
+        // Passes nifty_pcr, sentiment_adjustment, and vix_close for soft scoring + regime sizing
         LOG info: "Step 10/13: Scoring, deduplicating, position sizing, and generating signals"
         final_signals = []
-        FOR each [symbol, signals] in raw_signals:
-            signal = deduplicateAndGenerate(symbol, data_date, signals, final_signals, nifty_pcr)
+        FOR each [symbol, signals] in post_sentiment:
+            sent_adj = sentiment_adjustments[symbol] || 0
+            signal = deduplicateAndGenerate(symbol, data_date, signals, final_signals, nifty_pcr, sent_adj, vix_close)
             IF signal != null
-                computePositionSizing(signal)
                 final_signals.PUSH(signal)
         LOG info: "Step 10 complete: {count} signals generated"
 
@@ -3891,6 +3968,18 @@ FUNCTION calibrateWeights()
 
     // Paper trade feedback loop — auto-disable underperforming strategies
     CALL evaluateStrategyPerformance()
+
+    // Confidence calibration — display only, no auto-adjustment
+    CALL calibrateConfidence()
+
+FUNCTION calibrateConfidence()
+    buckets = QUERY signal_outcomes
+        GROUP BY FLOOR(raw_confidence / 5) * 5
+        WHERE raw_confidence IS NOT NULL
+    FOR each bucket:
+        IF bucket.total < 20 → SKIP (insufficient data)
+        win_rate = (wins / total) * 100
+        UPSERT INTO confidence_calibration (bucket, total, win_rate, today)
 
 FUNCTION evaluateStrategyPerformance()
     strategyStats = QUERY paper_trades JOIN signals

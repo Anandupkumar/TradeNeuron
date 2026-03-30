@@ -39,6 +39,7 @@ export interface Signal {
   shares_to_buy: number;
   position_value: number;
   capital_risk_inr: number;
+  regime_size_multiplier: number | null;
   reasons: string[];
   status: SignalStatus;
   strategy_source: StrategySource;
@@ -89,4 +90,35 @@ export interface FunnelResponse {
   overall_conversion_pct: number;
   funnel: FunnelGate[];
   warnings: string[];
+}
+
+export interface RejectionByStage {
+  reject_stage: string;
+  count: number;
+  pct: number;
+}
+
+export interface RejectionBySymbol {
+  symbol: string;
+  count: number;
+}
+
+export interface RejectionDistributionResponse {
+  period_days: number;
+  total_rejected: number;
+  by_stage: RejectionByStage[];
+  by_symbol: RejectionBySymbol[];
+  avg_raw_confidence_at_rejection: number | null;
+  avg_raw_rr_at_rejection: number | null;
+}
+
+export interface CalibrationBucket {
+  confidence_bucket: number;
+  total_signals: number;
+  actual_win_rate: number;
+  computed_at: string;
+}
+
+export interface CalibrationResponse {
+  buckets: CalibrationBucket[];
 }
