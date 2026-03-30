@@ -312,3 +312,31 @@ These are explicitly out of scope for this upgrade cycle. Adding any of the foll
 | Confidence meaning | Internal score | Calibrated probability |
 
 ---
+
+## Priority 6: Signal Pool and Frequency Controller — IMPLEMENTED
+
+**Goal:** Maintain 5–15 trades/week without breaking strategy logic, overfitting thresholds, or manual tweaking.
+
+**Core change:** Introduced a two-phase Step 10 with a "Candidate Pool + Top-N Frequency Controller" between scoring/filtering and final signal storage.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `src/config/env.js` | Added 5 new config vars: `FREQUENCY_CONTROLLER_ENABLED`, `TARGET_WEEKLY_SIGNALS`, `MAX_SIGNALS_PER_DAY`, `POOL_MIN_CONFIDENCE`, `POOL_MIN_RISK_REWARD` |
+| `.env.example` | Added the 5 new vars with defaults and comments |
+| `migrations/035_add_frequency_cap_reject_stage.sql` | Added `FREQUENCY_CAP` to `rejected_signals` ENUM |
+| `src/models/signal.model.js` | Added `countByWeek(date)` — counts signals in the same ISO week |
+| `src/services/signals/signal.service.js` | Renamed `deduplicateAndGenerate` logic to `buildCandidate` (uses pool floor thresholds when frequency controller is enabled). Added `selectTopSignals(candidates, date)` for Top-N ranking. Preserved `deduplicateAndGenerate` as backward-compatible wrapper. |
+| `src/jobs/daily_pipeline.job.js` | Step 10 now runs in two phases: Phase 1 builds candidate pool via `buildCandidate`, Phase 2 applies `selectTopSignals` when frequency controller is enabled |
+| `frontend/src/pages/Funnel.tsx` | Added `FREQUENCY_CAP` to `GATE_LABELS` and `GATE_COLORS` |
+
+### Key Decisions
+
+- **Pool floor thresholds** (`POOL_MIN_CONFIDENCE=65`, `POOL_MIN_RISK_REWARD=1.5`) are intentionally lower than strict thresholds (`MIN_CONFIDENCE=70`, `MIN_RISK_REWARD=2.0`). This widens the candidate pool for ranking without accepting junk trades.
+- **Top-N selection** ranks candidates by `confidence DESC, risk_reward DESC` and selects `min(MAX_SIGNALS_PER_DAY, TARGET_WEEKLY_SIGNALS - weekly_count)` per day.
+- **Feature flag** `FREQUENCY_CONTROLLER_ENABLED=false` reverts to exact pre-controller behavior — strict thresholds, no daily/weekly caps.
+- **Deferred candidates** are logged to `rejected_signals` with stage `FREQUENCY_CAP` for full Funnel page transparency.
+- **No strategy logic changes** — all 6 strategies remain untouched.
+
+---

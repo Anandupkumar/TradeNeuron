@@ -55,8 +55,12 @@ function computePositionSizing(entry_price, stop_loss, direction) {
   };
 }
 
-async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null) {
+async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null) {
   if (!raw_signals || raw_signals.length === 0) return null;
+
+  const use_pool = config.frequency_controller_enabled;
+  const min_conf = use_pool ? config.pool_min_confidence : config.min_confidence;
+  const min_rr = use_pool ? config.pool_min_risk_reward : config.min_risk_reward;
 
   const direction = raw_signals[0].direction || 'LONG';
   const is_short = direction === 'SHORT';
@@ -173,9 +177,9 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     logger.info(`Signal for ${symbol} confidence adjusted: raw=${raw_confidence}, VWAP/PCR=${soft_penalty}, sentiment=${sentiment_adjustment}, final=${confidence}`);
   }
 
-  if (confidence < config.min_confidence) {
-    logger.info(`Signal for ${symbol} rejected: confidence ${confidence} below ${config.min_confidence}`);
-    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'CONFIDENCE_GATE', reject_reason: `Confidence ${confidence} below minimum ${config.min_confidence}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
+  if (confidence < min_conf) {
+    logger.info(`Signal for ${symbol} rejected: confidence ${confidence} below ${min_conf}${use_pool ? ' (pool floor)' : ''}`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'CONFIDENCE_GATE', reject_reason: `Confidence ${confidence} below minimum ${min_conf}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
     return null;
   }
 
@@ -186,9 +190,9 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     confidence_tier = 'NORMAL';
   }
 
-  if (signal.risk_reward < config.min_risk_reward) {
-    logger.info(`Signal for ${symbol} rejected: R:R ${signal.risk_reward} below ${config.min_risk_reward}`);
-    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'RR_GATE', reject_reason: `R:R ${signal.risk_reward} below minimum ${config.min_risk_reward}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
+  if (signal.risk_reward < min_rr) {
+    logger.info(`Signal for ${symbol} rejected: R:R ${signal.risk_reward} below ${min_rr}${use_pool ? ' (pool floor)' : ''}`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'RR_GATE', reject_reason: `R:R ${signal.risk_reward} below minimum ${min_rr}`, raw_confidence: confidence, raw_rr: signal.risk_reward });
     return null;
   }
 
@@ -272,6 +276,61 @@ async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals =
     confidence_breakdown: breakdown,
     explanation,
   };
+}
+
+async function selectTopSignals(candidates, date) {
+  if (candidates.length === 0) return [];
+
+  const weekly_count = await signalModel.countByWeek(date);
+  const remaining_slots = config.target_weekly_signals - weekly_count;
+  const daily_limit = Math.min(config.max_signals_per_day, Math.max(0, remaining_slots));
+
+  logger.info(`Frequency controller: weekly=${weekly_count}/${config.target_weekly_signals}, remaining=${remaining_slots}, daily_limit=${daily_limit}, candidates=${candidates.length}`);
+
+  if (daily_limit <= 0) {
+    logger.info(`Frequency controller: weekly target reached — all ${candidates.length} candidates deferred`);
+    for (const c of candidates) {
+      await rejectedSignalModel.insertRejected({
+        symbol: c.symbol,
+        date: c.date,
+        strategy_source: c.strategy_source,
+        reject_stage: 'FREQUENCY_CAP',
+        reject_reason: `Weekly target ${config.target_weekly_signals} reached (${weekly_count} this week)`,
+        raw_confidence: c.confidence,
+        raw_rr: c.risk_reward,
+      });
+    }
+    return [];
+  }
+
+  candidates.sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return b.risk_reward - a.risk_reward;
+  });
+
+  const selected = candidates.slice(0, daily_limit);
+  const deferred = candidates.slice(daily_limit);
+
+  if (deferred.length > 0) {
+    logger.info(`Frequency controller: selected top ${selected.length}, deferred ${deferred.length} candidates`);
+    for (const c of deferred) {
+      await rejectedSignalModel.insertRejected({
+        symbol: c.symbol,
+        date: c.date,
+        strategy_source: c.strategy_source,
+        reject_stage: 'FREQUENCY_CAP',
+        reject_reason: `Ranked #${candidates.indexOf(c) + 1} but daily limit is ${daily_limit} (confidence=${c.confidence}, R:R=${c.risk_reward})`,
+        raw_confidence: c.confidence,
+        raw_rr: c.risk_reward,
+      });
+    }
+  }
+
+  return selected;
+}
+
+async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null) {
+  return buildCandidate(symbol, date, raw_signals, batch_signals, nifty_pcr, sentiment_adjustment, vix_close);
 }
 
 async function recordOutcome(signal, outcome, resolved_at) {
@@ -374,4 +433,4 @@ async function updateSignalStatuses() {
   return updated;
 }
 
-module.exports = { deduplicateAndGenerate, updateSignalStatuses, computePositionSizing };
+module.exports = { deduplicateAndGenerate, buildCandidate, selectTopSignals, updateSignalStatuses, computePositionSizing };

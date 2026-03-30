@@ -20,6 +20,7 @@ const GATE_LABELS: Record<string, string> = {
   ACTIVE_CAP: 'Active Signal Cap',
   MERGED_RISK_ZERO: 'Merged Risk Zero',
   POSITION_SIZING: 'Position Sizing',
+  FREQUENCY_CAP: 'Frequency Cap',
 };
 
 const GATE_COLORS: Record<string, string> = {
@@ -34,6 +35,7 @@ const GATE_COLORS: Record<string, string> = {
   ACTIVE_CAP: 'bg-blue-500',
   MERGED_RISK_ZERO: 'bg-red-500',
   POSITION_SIZING: 'bg-pink-500',
+  FREQUENCY_CAP: 'bg-emerald-500',
 };
 
 function PassRateBar({ gate }: { gate: FunnelGate }) {

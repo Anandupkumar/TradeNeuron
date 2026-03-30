@@ -11,7 +11,7 @@ const { filterByFundamentals } = require('../services/fundamentals/fundamental.f
 const { filterBySentiment } = require('../services/sentiment/sentiment.service');
 const { fetchBhavcopy } = require('../services/data_ingestion/bhavcopy.service');
 const { fetchPCR } = require('../services/data_ingestion/fno.service');
-const { deduplicateAndGenerate, updateSignalStatuses } = require('../services/signals/signal.service');
+const { buildCandidate, selectTopSignals, deduplicateAndGenerate, updateSignalStatuses } = require('../services/signals/signal.service');
 const { createPaperTrades, updatePaperTrades } = require('../services/paper_trading/paper_trade.service');
 const candleModel = require('../models/candle.model');
 const signalModel = require('../models/signal.model');
@@ -207,7 +207,9 @@ async function runDailyPipeline() {
 
     // Step 10: Score, deduplicate, position sizing, and generate signals
     logger.info('Step 10/13: Scoring, deduplicating, and generating signals');
-    const new_signals = [];
+
+    // Phase 1: Build candidate pool
+    const candidates = [];
     for (const [symbol, raw_signals] of Object.entries(post_sentiment)) {
       try {
         const long_signals = raw_signals.filter((s) => (s.direction || 'LONG') === 'LONG');
@@ -215,18 +217,27 @@ async function runDailyPipeline() {
         const sent_adj = sentiment_adjustments[symbol] || 0;
 
         if (long_signals.length > 0) {
-          const signal = await deduplicateAndGenerate(symbol, data_date, long_signals, new_signals, nifty_pcr, sent_adj, vix_close);
-          if (signal) new_signals.push(signal);
+          const candidate = await buildCandidate(symbol, data_date, long_signals, candidates, nifty_pcr, sent_adj, vix_close);
+          if (candidate) candidates.push(candidate);
         }
         if (short_signals.length > 0) {
-          const signal = await deduplicateAndGenerate(symbol, data_date, short_signals, new_signals, nifty_pcr, sent_adj, vix_close);
-          if (signal) new_signals.push(signal);
+          const candidate = await buildCandidate(symbol, data_date, short_signals, candidates, nifty_pcr, sent_adj, vix_close);
+          if (candidate) candidates.push(candidate);
         }
       } catch (error) {
         logger.error(`Step 10 failed for ${symbol}: ${error.message}`);
       }
     }
-    logger.info(`Step 10: ${new_signals.length} signals generated`);
+
+    // Phase 2: Frequency-controlled selection (or pass-through when disabled)
+    let new_signals;
+    if (config.frequency_controller_enabled) {
+      new_signals = await selectTopSignals(candidates, data_date);
+      logger.info(`Step 10: ${candidates.length} candidates → ${new_signals.length} signals after frequency control`);
+    } else {
+      new_signals = candidates;
+      logger.info(`Step 10: ${new_signals.length} signals generated (frequency controller disabled)`);
+    }
 
     // Step 11: Store signals + create paper trades
     logger.info('Step 11/13: Storing signals and creating paper trades');
