@@ -961,6 +961,25 @@ ALTER TABLE rejected_signals
 
 **Key decision:** The frequency controller logs all candidates that passed hard gates but were not selected in the Top-N daily cut to the `rejected_signals` table with stage `FREQUENCY_CAP`. This preserves full pipeline transparency — the Funnel page shows exactly how many signals were quality-qualified but deferred due to weekly frequency targets.
 
+### 4.31 pipeline_runs (migration 036)
+
+```sql
+CREATE TABLE pipeline_runs (
+    id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    run_date        DATE            NOT NULL,
+    started_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at    TIMESTAMP       NULL,
+    status          ENUM('running', 'completed', 'failed') NOT NULL DEFAULT 'running',
+    duration_ms     INT UNSIGNED    NULL,
+    signals_generated INT UNSIGNED  NOT NULL DEFAULT 0,
+    regime          VARCHAR(20)     NULL,
+    INDEX idx_status (status),
+    INDEX idx_completed_at (completed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**Key decision:** Tracks actual pipeline execution independently of signal creation. The health endpoint queries `MAX(completed_at) WHERE status = 'completed'` instead of `MAX(signals.created_at)`. This fixes a bug where the frontend showed "Data may be stale" when the pipeline ran but generated 0 signals (no new rows in `signals` meant the old `MAX(created_at)` query returned a stale timestamp). Falls back to `signals.created_at` if the table doesn't exist (pre-migration).
+
 ### ER Diagram
 
 ```
@@ -978,6 +997,7 @@ nifty50_composition                (standalone, referenced by backtest.service.j
 adaptive_thresholds                (stores adaptive RSI/volume thresholds + scoring weights)
 strategy_config                    (stores per-strategy enable/disable state)
 confidence_calibration             (weekly calibration: confidence bucket → actual win rate)
+pipeline_runs                      (tracks daily pipeline execution completion timestamps)
 ```
 
 ### Migration Strategy

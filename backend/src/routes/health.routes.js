@@ -10,9 +10,21 @@ router.get('/health', async (req, res) => {
       `SELECT COUNT(*) as count FROM signals WHERE status = 'ACTIVE'`
     );
 
-    const [[{ last_run }]] = await pool.query(
-      `SELECT MAX(created_at) as last_run FROM signals`
-    );
+    let last_run = null;
+    try {
+      const [[row]] = await pool.query(
+        `SELECT completed_at as last_run FROM pipeline_runs
+         WHERE status = 'completed'
+         ORDER BY completed_at DESC
+         LIMIT 1`
+      );
+      last_run = row?.last_run || null;
+    } catch (_) {
+      const [[row]] = await pool.query(
+        `SELECT MAX(created_at) as last_run FROM signals`
+      );
+      last_run = row?.last_run || null;
+    }
 
     const [[{ count: weekly_signal_count }]] = await pool.query(
       `SELECT COUNT(*) as count FROM signals WHERE YEARWEEK(date, 1) = YEARWEEK(CURDATE(), 1)`

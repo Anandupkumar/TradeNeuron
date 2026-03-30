@@ -15,6 +15,7 @@ const { buildCandidate, selectTopSignals, deduplicateAndGenerate, updateSignalSt
 const { createPaperTrades, updatePaperTrades } = require('../services/paper_trading/paper_trade.service');
 const candleModel = require('../models/candle.model');
 const signalModel = require('../models/signal.model');
+const pipelineRunModel = require('../models/pipeline_run.model');
 const config = require('../config/env');
 const { sendTelegramAlert } = require('../utils/notify.util');
 
@@ -25,6 +26,13 @@ async function runDailyPipeline() {
   const start_time = Date.now();
   const today = formatDate(new Date());
   logger.info(`=== Daily Pipeline Start: ${today} (13 steps) ===`);
+
+  let pipeline_run_id = null;
+  try {
+    pipeline_run_id = await pipelineRunModel.create(today);
+  } catch (err) {
+    logger.warn(`Failed to create pipeline_run record: ${err.message}`);
+  }
 
   try {
     // Step 1: Fetch candles (skip if Yahoo API is unreachable)
@@ -172,6 +180,9 @@ async function runDailyPipeline() {
       await updatePaperTrades();
 
       const elapsed = Date.now() - start_time;
+      if (pipeline_run_id) {
+        await pipelineRunModel.markCompleted(pipeline_run_id, { duration_ms: elapsed, signals_generated: 0, regime });
+      }
       logger.info(`=== Daily Pipeline Complete: ${elapsed}ms (skipped signal generation) ===`);
       await sendTelegramAlert(
         `⚠️ <b>TradeNeuron pipeline</b>\n${regime} regime — skipped signal generation.\nDuration: ${(elapsed / 1000).toFixed(1)}s`
@@ -265,6 +276,9 @@ async function runDailyPipeline() {
     await updatePaperTrades();
 
     const elapsed = Date.now() - start_time;
+    if (pipeline_run_id) {
+      await pipelineRunModel.markCompleted(pipeline_run_id, { duration_ms: elapsed, signals_generated: new_signals.length, regime });
+    }
     logger.info(`=== Daily Pipeline Complete: ${elapsed}ms ===`);
 
     if (new_signals.length === 0 && regime !== 'HIGH_VOLATILITY') {
@@ -277,6 +291,10 @@ async function runDailyPipeline() {
       );
     }
   } catch (error) {
+    const elapsed = Date.now() - start_time;
+    if (pipeline_run_id) {
+      try { await pipelineRunModel.markFailed(pipeline_run_id, elapsed); } catch (_) { /* best-effort */ }
+    }
     logger.error(`Pipeline fatal error: ${error.message}`, { stack: error.stack });
     await sendTelegramAlert(
       `❌ <b>TradeNeuron pipeline FAILED</b>\nError: ${error.message}`
