@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Filter, AlertTriangle, ArrowDown, TrendingDown, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFunnel, useRejectionDistribution } from '../hooks/useFunnel';
@@ -88,8 +88,20 @@ const PERIOD_OPTIONS = [7, 14, 30, 60, 90];
 
 export default function FunnelPage() {
   const today = new Date().toISOString().slice(0, 10);
-  const [date, set_date] = useState(today);
-  const [period_days, set_period_days] = useState(30);
+  const [params, set_params] = useSearchParams();
+  const date = params.get('date') ?? today;
+  const period_days = params.get('period') ? Number(params.get('period')) : 30;
+
+  const set_date = (d: string) => {
+    const next = new URLSearchParams(params);
+    if (d === today) { next.delete('date'); } else { next.set('date', d); }
+    set_params(next, { replace: true });
+  };
+  const set_period_days = (p: number) => {
+    const next = new URLSearchParams(params);
+    if (p === 30) { next.delete('period'); } else { next.set('period', String(p)); }
+    set_params(next, { replace: true });
+  };
   const { data, isLoading, isError, refetch } = useFunnel(date);
   const { data: distribution, isLoading: dist_loading } = useRejectionDistribution(period_days);
 

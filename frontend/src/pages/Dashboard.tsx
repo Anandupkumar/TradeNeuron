@@ -1,6 +1,5 @@
-import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Star, BarChart3 } from 'lucide-react';
+import { Activity, Star, BarChart3, Calendar } from 'lucide-react';
 import { useActiveSignals } from '../hooks/useActiveSignals';
 import { useHealth } from '../hooks/useHealth';
 import { useFavorites } from '../hooks/useFavorites';
@@ -13,9 +12,9 @@ import { EmptyState } from '../components/common/EmptyState';
 import { SignalCard } from '../components/signals/SignalCard';
 import { MarketRegimeBadge } from '../components/common/MarketRegimeBadge';
 import { PnLCurveChart } from '../components/paper_trading/PnLCurveChart';
-import { formatPct } from '../utils/format';
+import { formatPct, formatDateTime } from '../utils/format';
 import { featureFlags } from '../utils/featureFlags';
-import type { MarketRegime, PaperTradingSummary, HealthData, Signal } from '../types';
+import type { PaperTradingSummary, Signal } from '../types';
 
 function ThirdStatCard({
   paper_enabled,
@@ -38,34 +37,6 @@ function ThirdStatCard({
   return <StatCard label="Watchlist" value={favorites_count} sub_text="symbols tracked" />;
 }
 
-function FourthStatCard({
-  paper_enabled,
-  paper_summary,
-  health,
-}: {
-  paper_enabled: boolean;
-  paper_summary: PaperTradingSummary | undefined;
-  health: HealthData | undefined;
-}) {
-  if (paper_enabled && paper_summary) {
-    const pnl = paper_summary.total_pnl_pct ?? 0;
-    return (
-      <StatCard
-        label="Total PnL"
-        value={formatPct(pnl, true)}
-        trend={pnl >= 0 ? 'up' : 'down'}
-        sub_text={`Win rate: ${formatPct(paper_summary.win_rate_pct)}`}
-      />
-    );
-  }
-  return (
-    <StatCard
-      label="System Status"
-      value={health?.status === 'ok' ? 'Healthy' : 'Degraded'}
-      sub_text={health?.db === 'connected' ? 'DB connected' : 'DB issue'}
-    />
-  );
-}
 
 function SignalSection({
   is_loading,
@@ -135,10 +106,8 @@ export default function DashboardPage() {
   const paper_summary = paper_summary_query.data;
   const closed_trades = paper_trades_query.data?.items ?? [];
 
-  const derived_regime: MarketRegime = useMemo(() => {
-    if (active_count > 0) return 'BULLISH';
-    return 'SIDEWAYS';
-  }, [active_count]);
+  const regime = health_query.data?.market_regime ?? null;
+  const weekly_count = health_query.data?.weekly_signal_count ?? 0;
 
   if (has_error) {
     return (
@@ -169,24 +138,60 @@ export default function DashboardPage() {
           <LoadingSkeleton variant="card" count={4} />
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard
-            label="Active Signals"
-            value={active_count}
-            sub_text={active_count > 0 ? `${active_count} opportunities` : 'No signals today'}
-          />
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className="text-sm text-muted-foreground">Market Regime</p>
-            <div className="mt-2">
-              <MarketRegimeBadge regime={derived_regime} />
+        <>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <StatCard
+              label="Active Signals"
+              value={active_count}
+              sub_text={active_count > 0 ? `${active_count} opportunities` : 'No signals today'}
+            />
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-sm text-muted-foreground">Market Regime</p>
+              <div className="mt-2">
+                {regime ? (
+                  <MarketRegimeBadge regime={regime} />
+                ) : (
+                  <span className="text-sm text-muted-foreground">—</span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {market_status.pipelineRanToday ? 'Pipeline ran today' : 'Awaiting pipeline'}
+              </p>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {market_status.pipelineRanToday ? 'Pipeline ran today' : 'Awaiting pipeline'}
-            </p>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-sm text-muted-foreground">Weekly Budget</p>
+              <div className="mt-1 flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-foreground">{weekly_count}</span>
+                <span className="text-sm text-muted-foreground">/ 10 signals</span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-all"
+                  style={{ width: `${Math.min(100, (weekly_count / 10) * 100)}%` }}
+                />
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                <Calendar className="h-3 w-3" />
+                <span>This week</span>
+              </div>
+            </div>
+            <ThirdStatCard paper_enabled={paper_enabled} paper_summary={paper_summary} favorites_count={favorites.length} />
           </div>
-          <ThirdStatCard paper_enabled={paper_enabled} paper_summary={paper_summary} favorites_count={favorites.length} />
-          <FourthStatCard paper_enabled={paper_enabled} paper_summary={paper_summary} health={health_query.data} />
-        </div>
+
+          {health_query.data && (
+            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+              <span>
+                Last pipeline: {health_query.data.last_pipeline_run
+                  ? formatDateTime(health_query.data.last_pipeline_run)
+                  : 'Never'}
+              </span>
+              <span>·</span>
+              <span>System: {health_query.data.status === 'ok' ? 'Healthy' : 'Degraded'}</span>
+              <span>·</span>
+              <span>DB: {health_query.data.db === 'connected' ? 'Connected' : 'Disconnected'}</span>
+            </div>
+          )}
+        </>
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

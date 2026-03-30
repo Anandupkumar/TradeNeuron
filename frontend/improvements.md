@@ -311,3 +311,41 @@ Candle data source quality is checked in the pipeline (Step 2b). Symbols with su
 | File | Changes |
 |------|---------|
 | `src/pages/Funnel.tsx` | Added `FREQUENCY_CAP: 'Frequency Cap'` to `GATE_LABELS` and `FREQUENCY_CAP: 'bg-emerald-500'` to `GATE_COLORS`. The Funnel page now displays frequency-controlled rejections alongside all other gate rejections. |
+
+---
+
+## 17. Frontend UX Improvements
+
+**Status: IMPLEMENTED**
+
+### P0 — Critical Fixes
+
+| Change | Files |
+|--------|-------|
+| Wrapped `VolumeChart` in `ChartErrorBoundary` on StockDetail page | `src/pages/StockDetail.tsx` |
+| Debounced Paper Trading symbol filter at 300ms | `src/pages/PaperTrading.tsx` |
+| URL-synced filters on Funnel, Paper Trading, and Backtest pages | `src/pages/Funnel.tsx`, `src/pages/PaperTrading.tsx`, `src/pages/Backtest.tsx` |
+| Dashboard uses real `market_regime` from health API instead of fake derived regime | `src/pages/Dashboard.tsx` |
+
+### P1 — High Impact
+
+| Change | Files |
+|--------|-------|
+| Global symbol search in Topbar with `/` keyboard shortcut | `src/components/layout/Topbar.tsx` |
+| Signal status filter replaced with segmented tab-style buttons | `src/components/signals/SignalFilters.tsx` |
+| Weekly Budget card on Dashboard | `src/pages/Dashboard.tsx` |
+| Pipeline run summary bar on Dashboard | `src/pages/Dashboard.tsx` |
+
+### P2 — Polish
+
+| Change | Files |
+|--------|-------|
+| Sidebar collapse toggle wired to `ui.store` | `src/components/layout/Sidebar.tsx` |
+| DrawdownChart added to Paper Trading page | `src/pages/PaperTrading.tsx` |
+
+### Backend Changes
+
+| Change | Files |
+|--------|-------|
+| Health endpoint returns `weekly_signal_count` and `market_regime` | `backend/src/routes/health.routes.js` |
+| `HealthData` type updated | `frontend/src/types/health.types.ts` |

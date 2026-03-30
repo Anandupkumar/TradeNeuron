@@ -580,8 +580,11 @@ export interface PaperTradingSummary {
 export interface HealthData {
   status: 'ok' | 'degraded';
   db: 'connected' | 'disconnected';
+  uptime: number;
   last_pipeline_run: string | null;   // ISO timestamp, null if never run
   active_signals_count: number;
+  weekly_signal_count: number;
+  market_regime: 'BULLISH' | 'SIDEWAYS' | 'BEARISH' | 'HIGH_VOLATILITY' | null;
 }
 ```
 
@@ -1204,9 +1207,10 @@ const symbol = decodeURIComponent(encodedSymbol ?? '');
 **Purpose:** Answer "what should I do today?"
 
 **Layout:** 3-section page:
-1. Top row — 4 stat cards: Active Signals count, Today's Market Regime, Open Paper Trades, Portfolio-at-Risk (INR)
-2. Middle — Active Signals table (latest 5) + Quick Watchlist panel
-3. Bottom — Paper Trading Summary mini-chart (equity curve, last 30 days)
+1. Top row — 4 stat cards: Active Signals count, Market Regime (live from health API), Weekly Budget (signals this week / target), Open Paper Trades or Watchlist count
+2. Pipeline status bar — last pipeline run time, system health, DB status
+3. Middle — Active Signals cards (latest 5) + Quick Watchlist panel
+4. Bottom — Paper Trading equity curve (last 50 closed trades)
 
 **Data sources:**
 - `GET /api/v1/signals/active`
@@ -1214,10 +1218,14 @@ const symbol = decodeURIComponent(encodedSymbol ?? '');
 - `GET /api/v1/paper-trading/summary` (only if `FEATURES.paperTrading`)
 - `GET /api/v1/favorites`
 
-**Market Regime badge (prominent):**
+**Market Regime badge (live from `GET /api/v1/health` → `market_regime` field):**
 - BULLISH → green pill
 - SIDEWAYS → amber pill
 - BEARISH → red pill
+- HIGH_VOLATILITY → red pill
+- `null` (regime unavailable) → dash
+
+**Weekly Budget card:** Shows `weekly_signal_count / TARGET_WEEKLY_SIGNALS` with a progress bar. Data from `GET /api/v1/health` → `weekly_signal_count`.
 - HIGH_VOLATILITY → red pill with warning icon
 
 ---
@@ -1387,10 +1395,12 @@ Only rendered if `FEATURES.paperTrading` is true.
 
 **Layout:**
 1. Summary stat row: Total Trades / Win Rate / Avg PnL% / Total PnL (₹) / Max Drawdown
-2. Equity curve chart (cumulative PnL, closed trades only)
-3. Trades table — filterable by status, symbol
+2. Side-by-side charts: Equity curve (left) + Drawdown chart (right), both wrapped in `ChartErrorBoundary`
+3. Trades table — filterable by status (URL-synced), symbol (debounced at 300ms, URL-synced), page and limit (URL-synced)
 
 **Equity curve:** Recharts `AreaChart`. Closed trades sorted by `exit_date`, running sum of `pnl_pct` plotted. Open trades excluded.
+
+**Drawdown chart:** Uses the existing `DrawdownChart` component from `src/components/charts/DrawdownChart.tsx`. Computes running peak and drawdown from cumulative PnL of closed trades.
 
 ---
 
@@ -1624,6 +1634,18 @@ type DataTableProps<T> = {
 // Available sizes: 20, 50, 100
 // Shows "Showing 1–20 of 45 results" footer text
 ```
+
+### Global Symbol Search (Topbar)
+
+The Topbar contains a command-palette style symbol search. Pressing `/` opens a dropdown that filters all 50 NIFTY symbols by name or sector. Arrow keys navigate, Enter selects, Escape closes.
+
+- Source: client-side filtering of `NIFTY_50_SYMBOLS` from `src/utils/symbols.ts` — no API call
+- Clicking a result navigates to `/stock/{encodedSymbol}`
+- Collapsed sidebar does not affect the search
+
+### Collapsible Sidebar
+
+The sidebar supports manual collapse/expand via a toggle button (ChevronsLeft/ChevronsRight). State is managed by `useUiStore().sidebarCollapsed`. When collapsed, only icons are shown with `title` tooltips. The toggle is visible at `lg` breakpoint and above.
 
 ---
 
@@ -2017,10 +2039,19 @@ useSignals({ ...otherFilters, symbol: debouncedSymbol });
 
 ### URL state sync
 
-All filter state on the Signals page is synced to URL query params. This means:
+All filter state on the Signals, Funnel, Paper Trading, and Backtest pages is synced to URL query params. This means:
 - Filters survive page refresh
 - URLs can be shared and reproduce the same view
 - Browser back/forward button navigates filter history
+
+**Pages with URL-synced filters:**
+
+| Page | Synced params |
+|------|--------------|
+| Signals | `status`, `direction`, `symbol`, `from_date`, `to_date`, `min_confidence`, `favorites_only`, `page`, `limit`, `sort_by`, `sort_order`, `confidence_tier` |
+| Funnel | `date`, `period` |
+| Paper Trading | `status`, `symbol`, `page`, `limit` |
+| Backtest | `strategy` |
 
 **File:** `src/hooks/useFilterUrlSync.ts`
 
@@ -2249,7 +2280,7 @@ export function useKeyboardShortcuts() {
 | `P` | Go to Paper Trading |
 | `B` | Go to Backtest |
 | `,` | Go to Settings |
-| `/` | Focus symbol search |
+| `/` | Open global symbol search (Topbar command palette) |
 | `F` | Toggle filter panel |
 | `Esc` | Close drawer / dialog |
 
@@ -2347,7 +2378,7 @@ Follow Tailwind's default breakpoints. Target at minimum:
 
 ### Layout adjustments at tablet width
 
-**Sidebar:** Collapses to icon-only mode at `< lg`. Icons are clickable with tooltips for labels.
+**Sidebar:** Collapses to icon-only mode at `< lg`, and has a manual collapse/expand toggle (ChevronsLeft/ChevronsRight) controlled via `useUiStore().sidebarCollapsed` state. Icons have tooltips when collapsed.
 
 **Signal cards:** Switch from a 2-column grid to a 1-column stack at `< md`.
 

@@ -2967,11 +2967,16 @@ Error responses:
   "data": {
     "status": "ok",
     "db": "connected",
+    "uptime": 86400,
     "last_pipeline_run": "2026-03-23T16:45:00.000Z",
-    "active_signals_count": 7
+    "active_signals_count": 7,
+    "weekly_signal_count": 4,
+    "market_regime": "BULLISH"
   }
 }
 ```
+
+`weekly_signal_count` — number of signals created in the current ISO week. `market_regime` — live regime from `checkMarketRegime()` (fail-open, null if unavailable).
 
 ---
 
