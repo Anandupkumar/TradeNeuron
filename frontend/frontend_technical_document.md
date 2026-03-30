@@ -379,6 +379,7 @@ export interface Signal {
   shares_to_buy: number;
   position_value: number;
   capital_risk_inr: number;
+  regime_size_multiplier: number | null;  // 0.5 (ranging), 0.7 (high VIX), 1.0 (normal)
   reasons: string[];
   status: SignalStatus;
   strategy_source: StrategySource;
@@ -386,6 +387,26 @@ export interface Signal {
   created_at: string;              // ISO timestamp
   explanation: string[] | null;
   confidence_breakdown: ConfidenceBreakdown | null;
+}
+
+export interface RejectionDistributionResponse {
+  period_days: number;
+  total_rejected: number;
+  by_stage: { reject_stage: string; count: number; pct: number }[];
+  by_symbol: { symbol: string; count: number }[];
+  avg_raw_confidence_at_rejection: number | null;
+  avg_raw_rr_at_rejection: number | null;
+}
+
+export interface CalibrationBucket {
+  confidence_bucket: number;
+  total_signals: number;
+  actual_win_rate: number;
+  computed_at: string;
+}
+
+export interface CalibrationResponse {
+  buckets: CalibrationBucket[];
 }
 
 export interface SignalFilters {
@@ -840,6 +861,12 @@ export const signalsApi = {
     apiClient.get('/signals/active'),
   rejected: (date?: string): Promise<RejectedSignalsResponse> =>
     apiClient.get('/signals/rejected', { params: date ? { date } : {} }),
+  funnel:   (date?: string): Promise<FunnelResponse> =>
+    apiClient.get('/signals/funnel', { params: date ? { date } : {} }),
+  rejectionDistribution: (period_days?: number): Promise<RejectionDistributionResponse> =>
+    apiClient.get('/signals/rejected/distribution', { params: { period_days } }),
+  calibration: (): Promise<CalibrationResponse> =>
+    apiClient.get('/signals/calibration'),
 };
 ```
 
@@ -1261,6 +1288,8 @@ Clicking any row opens a `SignalDetailDrawer`.
 - Explainability panel with human-readable sentences
 - All price levels with visual price bar (entry / SL / target relative to each other)
 - Position sizing: Shares · Position value · Capital at risk
+- Position Scale row — shows regime_size_multiplier as "0.5x (Ranging)" or "0.7x (High VIX)" when < 1.0, hidden when 1.0
+- Confidence calibration card — "Historical win rate at this confidence: X%" when the matching confidence bucket (FLOOR(confidence/5)*5) has calibration data. Uses `useCalibration()` hook
 - Trade checklist with pass/warn/fail status for key attributes
 - Decision override panel for logging TAKEN / SKIPPED / MODIFIED with notes
 - Link to stock detail page
@@ -1276,9 +1305,13 @@ Below the active and all signals sections, a collapsible "Rejected Signals" pane
 
 **Purpose:** Pipeline observability — understand which gates are filtering out the most signal candidates and whether any thresholds are over-strict.
 
-**Data source:** `GET /api/v1/signals/funnel?date=YYYY-MM-DD`
+**Data sources:**
+- `GET /api/v1/signals/funnel?date=YYYY-MM-DD` — per-day gate breakdown
+- `GET /api/v1/signals/rejected/distribution?period_days=30` — aggregate rejection stats
 
-**Hook:** `useFunnel(date?)` — TanStack Query with 5-minute stale time.
+**Hooks:**
+- `useFunnel(date?)` — TanStack Query with 5-minute stale time
+- `useRejectionDistribution(period_days)` — TanStack Query with 5-minute stale time
 
 **Layout:**
 1. Header with date picker input
@@ -1286,6 +1319,7 @@ Below the active and all signals sections, a collapsible "Rejected Signals" pane
 3. Warnings panel — amber alert box when any gate has pass rate < 40% with 5+ inputs
 4. Gate breakdown — visual pass rate bars per gate with color coding (green >= 80%, blue >= 60%, amber >= 40%, red < 40%)
 5. Detailed table — Gate name, Input count, Rejected count, Passed count, Pass Rate percentage
+6. Rejection Distribution section — period selector (7d/14d/30d/60d/90d), aggregate stats cards (total rejected, avg confidence, avg R:R), by-stage bar chart, top-10 rejected symbols table
 
 **Components used:** `LoadingSkeleton`, `ErrorState`, `EmptyState`, `PassRateBar` (local to page)
 

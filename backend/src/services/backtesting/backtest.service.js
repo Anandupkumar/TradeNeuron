@@ -60,11 +60,14 @@ function evaluateOutcome(signal, future_candles) {
   return { result: 'NEUTRAL', exit_price, realistic_entry, days: future_candles.length };
 }
 
-function calculateNetReturn(entry_price, exit_price) {
-  const slippage = config.slippage_pct / 100;
-  const brokerage = config.brokerage_pct / 100;
-  const effective_entry = entry_price * (1 + slippage + brokerage);
-  const effective_exit = exit_price * (1 - slippage - brokerage);
+function calculateNetReturn(entry_price, exit_price, direction = 'LONG') {
+  const cost = (config.slippage_pct + config.brokerage_pct) / 100;
+  const effective_entry = direction === 'SHORT'
+    ? entry_price * (1 - cost)
+    : entry_price * (1 + cost);
+  const effective_exit = direction === 'SHORT'
+    ? exit_price * (1 + cost)
+    : exit_price * (1 - cost);
   return ((effective_exit - effective_entry) / effective_entry) * 100;
 }
 
@@ -139,14 +142,14 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
       const short_trend = trendPullbackShort.evaluate(symbol, date_str, candle, indicators[i], features[i], past_candles);
       if (short_trend) {
         const outcome = evaluateOutcome(short_trend, future_candles);
-        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
+        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price, 'SHORT');
         results_by_strategy.TREND_PULLBACK_SHORT.push({ ...outcome, net_return, days: outcome.days });
       }
 
       const breakdown_signal = breakdown.evaluate(symbol, date_str, candle, indicators[i], features[i], past_candles);
       if (breakdown_signal) {
         const outcome = evaluateOutcome(breakdown_signal, future_candles);
-        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
+        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price, 'SHORT');
         results_by_strategy.BREAKDOWN.push({ ...outcome, net_return, days: outcome.days });
       }
 

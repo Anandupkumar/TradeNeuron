@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const signalModel = require('../models/signal.model');
 const rejectedSignalModel = require('../models/rejected_signal.model');
+const confidenceCalibrationModel = require('../models/confidence_calibration.model');
 const { pool } = require('../config/db');
 const { listSignalsSchema } = require('../validations/signal.validation');
 const { ValidationError } = require('../utils/errors');
@@ -85,6 +86,24 @@ router.get('/signals/funnel', async (req, res, next) => {
   }
 });
 
+router.get('/signals/rejected/distribution', async (req, res, next) => {
+  try {
+    const period_days = parseInt(req.query.period_days) || 30;
+    if (period_days < 1 || period_days > 365) {
+      throw new ValidationError('period_days must be between 1 and 365');
+    }
+
+    const distribution = await rejectedSignalModel.getDistribution(period_days);
+    res.json({
+      success: true,
+      data: { period_days, ...distribution },
+      error: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/signals/rejected', async (req, res, next) => {
   try {
     const date = req.query.date || null;
@@ -137,6 +156,19 @@ router.get('/signals', async (req, res, next) => {
           total_pages: Math.ceil(result.total / result.limit),
         },
       },
+      error: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/signals/calibration', async (req, res, next) => {
+  try {
+    const buckets = await confidenceCalibrationModel.getLatest();
+    res.json({
+      success: true,
+      data: { buckets },
       error: null,
     });
   } catch (err) {

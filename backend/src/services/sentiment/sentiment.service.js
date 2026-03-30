@@ -85,6 +85,7 @@ async function fetchFinnhubSentiment(symbol) {
 
 async function filterBySentiment(signal_map) {
   const passed = {};
+  const adjustments = {};
   const today = formatDate(new Date());
 
   for (const [symbol, signals] of Object.entries(signal_map)) {
@@ -96,16 +97,28 @@ async function filterBySentiment(signal_map) {
     let confidence = 'HIGH';
     let finnhub_score = null;
     let overridden = false;
+    let is_strongly_negative = false;
+    let finbert_aggregate = null;
 
     const finbert_result = await queryFinBERT(headlines);
     if (finbert_result) {
       source = 'FINBERT';
-      if (finbert_result.aggregate_score < -0.3) {
+      finbert_aggregate = finbert_result.aggregate_score;
+      if (finbert_result.aggregate_score < -0.6) {
+        final_sentiment = 'STRONGLY_NEGATIVE';
+        is_strongly_negative = true;
+        const worst = finbert_result.results
+          .filter((r) => r.label === 'negative')
+          .sort((a, b) => a.score - b.score)[0];
+        matched_headline = worst ? worst.text : null;
+      } else if (finbert_result.aggregate_score < -0.3) {
         final_sentiment = 'NEGATIVE';
         const worst = finbert_result.results
           .filter((r) => r.label === 'negative')
           .sort((a, b) => a.score - b.score)[0];
         matched_headline = worst ? worst.text : null;
+      } else if (finbert_result.aggregate_score > 0.3) {
+        final_sentiment = 'POSITIVE';
       }
     } else {
       const keyword_result = scoreSentiment(symbol, headlines);
@@ -113,6 +126,17 @@ async function filterBySentiment(signal_map) {
       matched_headline = keyword_result.headline;
       source = keyword_result.source;
       confidence = keyword_result.confidence;
+
+      if (final_sentiment === 'NEGATIVE') {
+        const neg_count = headlines.filter((h) => {
+          const t = h.title.toLowerCase();
+          return NEGATIVE_KEYWORDS.some((kw) => t.includes(kw) && !hasNearbyNegation(t, kw));
+        }).length;
+        if (neg_count >= 3) {
+          is_strongly_negative = true;
+          final_sentiment = 'STRONGLY_NEGATIVE';
+        }
+      }
     }
 
     if (final_sentiment === 'NEGATIVE' && config.finnhub_api_key) {
@@ -124,10 +148,11 @@ async function filterBySentiment(signal_map) {
       }
     }
 
+    const stored_sentiment = is_strongly_negative ? 'NEGATIVE' : final_sentiment;
     await sentimentFlagModel.upsert({
       symbol,
       flag_date: today,
-      sentiment: final_sentiment,
+      sentiment: stored_sentiment === 'POSITIVE' ? 'NEUTRAL' : stored_sentiment,
       headline: matched_headline,
       source,
       confidence,
@@ -135,14 +160,23 @@ async function filterBySentiment(signal_map) {
       overridden,
     });
 
-    if (final_sentiment === 'NEGATIVE') {
-      logger.info(`Signal for ${symbol} suppressed: negative news — ${matched_headline}`);
+    if (is_strongly_negative) {
+      logger.info(`Signal for ${symbol} hard-rejected: strongly negative news — ${matched_headline}`);
     } else {
       passed[symbol] = signals;
+      if (final_sentiment === 'NEGATIVE') {
+        adjustments[symbol] = -12;
+        logger.info(`Signal for ${symbol} penalized: negative sentiment (-12 confidence) — ${matched_headline}`);
+      } else if (final_sentiment === 'POSITIVE') {
+        adjustments[symbol] = 5;
+        logger.info(`Signal for ${symbol} boosted: positive sentiment (+5 confidence)`);
+      } else {
+        adjustments[symbol] = 0;
+      }
     }
   }
 
-  return passed;
+  return { passed, adjustments };
 }
 
 module.exports = { scoreSentiment, filterBySentiment, hasNearbyNegation, fetchFinnhubSentiment, queryFinBERT };

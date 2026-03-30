@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatINR, formatDate, formatRR, formatDateTime } from '../../utils/format';
+import { formatINR, formatDate, formatRR, formatDateTime, formatPct } from '../../utils/format';
 import { SignalBadge } from './SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
 import { ExecutionBadge } from './ExecutionBadge';
@@ -8,6 +8,7 @@ import { ConfidenceBreakdownBar } from './ConfidenceBreakdownBar';
 import { ExplainabilityPanel } from './ExplainabilityPanel';
 import { TradeChecklist } from './TradeChecklist';
 import { DecisionOverridePanel } from './DecisionOverridePanel';
+import { useCalibration } from '../../hooks/useFunnel';
 import type { Signal } from '../../types';
 
 interface SignalDetailDrawerProps {
@@ -34,8 +35,22 @@ function detailRow(label: string, value: React.ReactNode) {
   );
 }
 
+function regimeLabel(multiplier: number | null): string {
+  if (multiplier == null || multiplier === 1) return '1.0x';
+  if (multiplier === 0.5) return '0.5x (Ranging)';
+  if (multiplier === 0.7) return '0.7x (High VIX)';
+  return `${multiplier}x`;
+}
+
 export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawerProps) {
+  const { data: calibration } = useCalibration();
+
   if (!signal) return null;
+
+  const bucket_value = Math.floor(signal.confidence / 5) * 5;
+  const matched_bucket = calibration?.buckets?.find(
+    (b) => b.confidence_bucket === bucket_value
+  );
 
   return (
     <>
@@ -92,7 +107,24 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
             {detailRow('Shares', (typeof signal.shares_to_buy === 'string' ? Number.parseInt(signal.shares_to_buy, 10) : signal.shares_to_buy).toLocaleString('en-IN'))}
             {detailRow('Position Value', formatINR(signal.position_value))}
             {detailRow('Capital at Risk', formatINR(signal.capital_risk_inr))}
+            {signal.regime_size_multiplier != null && signal.regime_size_multiplier < 1 &&
+              detailRow('Position Scale', (
+                <span className="text-amber-400">{regimeLabel(signal.regime_size_multiplier)}</span>
+              ))
+            }
           </div>
+
+          {matched_bucket && (
+            <div className="rounded-lg border border-border bg-card px-4 py-3">
+              <p className="text-xs text-muted-foreground">Historical Win Rate at This Confidence</p>
+              <p className="mt-1 text-lg font-bold text-foreground">
+                {formatPct(Number(matched_bucket.actual_win_rate))}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Based on {matched_bucket.total_signals} signals in the {matched_bucket.confidence_bucket}–{matched_bucket.confidence_bucket + 4} range
+              </p>
+            </div>
+          )}
 
           <div className="divide-y divide-border/50 rounded-lg border border-border bg-card px-4">
             {detailRow('Strategy', signal.strategy_source.replaceAll('_', ' '))}
