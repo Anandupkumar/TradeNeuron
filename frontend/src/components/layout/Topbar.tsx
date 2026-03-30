@@ -4,7 +4,7 @@ import { Sun, Moon, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PipelineStatusBar } from './PipelineStatusBar';
 import { useThemeStore } from '../../store/theme.store';
-import { NIFTY_50_SYMBOLS, SECTOR_MAP, type NiftySymbol } from '../../utils/symbols';
+import { NIFTY_50_SYMBOLS, SECTOR_MAP } from '../../utils/symbols';
 
 export function Topbar() {
   const theme = useThemeStore((s) => s.theme);
