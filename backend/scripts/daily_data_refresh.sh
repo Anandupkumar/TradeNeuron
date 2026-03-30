@@ -1,5 +1,10 @@
 #!/bin/bash
+set -e
 cd /opt/projects/TradeNeuron/backend
+
+# Load nvm if available (needed for non-interactive shells like cron)
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
 LOG_FILE="/opt/projects/TradeNeuron/backend/logs/data_refresh.log"
 
