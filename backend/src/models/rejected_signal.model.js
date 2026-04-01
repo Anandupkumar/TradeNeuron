@@ -84,4 +84,23 @@ async function getDistribution(period_days) {
   };
 }
 
-module.exports = { insertRejected, findByDate, getDistribution };
+async function getVwapQualityAudit(period_days) {
+  const [rows] = await pool.query(
+    `SELECT
+       COUNT(*) AS total_vwap_rejected,
+       AVG(raw_confidence) AS avg_confidence,
+       AVG(raw_rr) AS avg_rr
+     FROM rejected_signals
+     WHERE reject_stage = 'VWAP_FILTER'
+       AND date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+    [period_days]
+  );
+  const row = rows[0];
+  return {
+    total_vwap_rejected: row.total_vwap_rejected,
+    avg_confidence: row.avg_confidence != null ? parseFloat(parseFloat(row.avg_confidence).toFixed(1)) : null,
+    avg_rr: row.avg_rr != null ? parseFloat(parseFloat(row.avg_rr).toFixed(2)) : null,
+  };
+}
+
+module.exports = { insertRejected, findByDate, getDistribution, getVwapQualityAudit };
