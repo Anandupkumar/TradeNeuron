@@ -90,6 +90,13 @@ const config = Object.freeze({
   vwap_hard_reject_long: parseFloat(process.env.VWAP_HARD_REJECT_LONG || '5.0'),
   vwap_soft_penalty_short: parseFloat(process.env.VWAP_SOFT_PENALTY_SHORT || '2.0'),
   vwap_hard_reject_short: parseFloat(process.env.VWAP_HARD_REJECT_SHORT || '5.0'),
+  vwap_score_near: parseInt(process.env.VWAP_SCORE_NEAR || '3', 10),
+  vwap_soft_penalty_moderate: parseInt(process.env.VWAP_SOFT_PENALTY_MODERATE || '3', 10),
+  vwap_soft_penalty_below: parseInt(process.env.VWAP_SOFT_PENALTY_BELOW || '8', 10),
+  vwap_breakout_rvol_min: parseFloat(process.env.VWAP_BREAKOUT_RVOL_MIN || '1.5'),
+  vwap_trend_override_zone: parseFloat(process.env.VWAP_TREND_OVERRIDE_ZONE || '3.5'),
+  min_ema50_slope: parseFloat(process.env.MIN_EMA50_SLOPE || '0.5'),
+  vwap_max_bonus_cap: parseInt(process.env.VWAP_MAX_BONUS_CAP || '6', 10),
 
   finnhub_api_key: process.env.FINNHUB_API_KEY || '',
 

@@ -3,6 +3,7 @@ const indicatorModel = require('../../models/indicator.model');
 const featureModel = require('../../models/feature.model');
 const { clamp } = require('../../utils/math.util');
 const { pool } = require('../../config/db');
+const config = require('../../config/env');
 
 let cached_adaptive_weights = null;
 let adaptive_weights_loaded_at = 0;
@@ -88,6 +89,11 @@ async function _scoreInternal(symbol, date, direction = 'LONG') {
     if (is_high_delivery && is_breakdown) {
       quality += 10;
     }
+
+    const is_near_vwap_short = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
+    if (is_near_vwap_short) {
+      quality += config.vwap_score_near;
+    }
   } else {
     const w_trend = adaptive ? adaptive.trend : SCORING_WEIGHTS.TREND;
     const w_rsi = adaptive ? adaptive.rsi : SCORING_WEIGHTS.RSI_PULLBACK;
@@ -117,6 +123,11 @@ async function _scoreInternal(symbol, date, direction = 'LONG') {
 
     if (is_high_delivery && is_breakout) {
       quality += 10;
+    }
+
+    const is_near_vwap_long = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
+    if (is_near_vwap_long) {
+      quality += config.vwap_score_near;
     }
   }
 
@@ -201,6 +212,11 @@ function buildExplanations(feature, indicator, regime, sentiment, direction = 'L
     if (is_high_delivery && is_breakdown) {
       sentences.push('High delivery percentage on a breakdown candle adds a quality bonus (+10) — institutional selling pressure.');
     }
+
+    const is_near_vwap_s = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
+    if (is_near_vwap_s) {
+      sentences.push(`Price is near VWAP — ideal entry quality bonus (+${config.vwap_score_near}).`);
+    }
   } else {
     if (is_uptrend && ema_20 != null && ema_50 != null && ema_20 > ema_50) {
       if (ema50_slope != null && ema50_slope <= 0) {
@@ -233,6 +249,11 @@ function buildExplanations(feature, indicator, regime, sentiment, direction = 'L
 
     if (is_high_delivery && is_breakout) {
       sentences.push('High delivery percentage on a breakout day adds a quality bonus (+10).');
+    }
+
+    const is_near_vwap_l = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
+    if (is_near_vwap_l) {
+      sentences.push(`Price is near VWAP — ideal entry quality bonus (+${config.vwap_score_near}).`);
     }
   }
 

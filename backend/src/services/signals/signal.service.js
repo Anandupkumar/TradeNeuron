@@ -124,34 +124,68 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
 
   const feature = await featureModel.findBySymbolAndDate(symbol, date);
 
-  let soft_penalty = 0;
+  let vwap_effect = 0;
+  let pcr_effect = 0;
 
   if (feature && feature.vwap_distance_pct != null) {
     const vwap_dist = parseFloat(feature.vwap_distance_pct);
-    const vwap_hard_long = config.vwap_hard_reject_long;
-    const vwap_soft_long = config.vwap_soft_penalty_long;
-    const vwap_hard_short = config.vwap_hard_reject_short;
-    const vwap_soft_short = config.vwap_soft_penalty_short;
+    const is_breakout = feature.is_breakout === 1 || feature.is_breakout === true;
+    const is_uptrend = feature.is_uptrend === 1 || feature.is_uptrend === true;
+    const rvol = feature.rvol != null ? parseFloat(feature.rvol) : 0;
+    const ema50_slope = feature.ema50_slope != null ? parseFloat(feature.ema50_slope) : 0;
+    const is_breakout_confirmed = is_breakout && rvol >= config.vwap_breakout_rvol_min;
+    const strong_uptrend = is_uptrend && ema50_slope > config.min_ema50_slope;
 
-    if (direction === 'LONG' && vwap_dist > vwap_hard_long) {
-      logger.info(`Signal for ${symbol} rejected: price ${vwap_dist.toFixed(2)}% above VWAP (hard limit: ${vwap_hard_long}%)`);
-      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${vwap_dist.toFixed(2)}% above VWAP, hard limit ${vwap_hard_long}%` });
-      return null;
-    }
-    if (direction === 'SHORT' && Math.abs(vwap_dist) > vwap_hard_short) {
-      logger.info(`Signal for ${symbol} rejected: price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP (hard limit: ${vwap_hard_short}%)`);
-      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${Math.abs(vwap_dist).toFixed(2)}% below VWAP, hard limit ${vwap_hard_short}%` });
-      return null;
+    if (direction === 'LONG') {
+      if (vwap_dist > config.vwap_hard_reject_long) {
+        logger.info(`Signal for ${symbol} rejected: price ${vwap_dist.toFixed(2)}% above VWAP (hard limit: ${config.vwap_hard_reject_long}%)`);
+        await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${vwap_dist.toFixed(2)}% above VWAP, hard limit ${config.vwap_hard_reject_long}%`, raw_confidence: null, raw_rr: signal.risk_reward });
+        return null;
+      } else if (vwap_dist > config.vwap_soft_penalty_long) {
+        if (is_breakout_confirmed || strong_uptrend) {
+          logger.info(`Signal for ${symbol} VWAP override: dist=${vwap_dist.toFixed(2)}%, breakout=${is_breakout_confirmed}, uptrend=${strong_uptrend} — no penalty`);
+        } else if (vwap_dist > config.vwap_trend_override_zone) {
+          vwap_effect = -config.vwap_soft_penalty_moderate;
+          logger.info(`Signal for ${symbol} penalized: VWAP distance ${vwap_dist.toFixed(2)}% > ${config.vwap_trend_override_zone}% stretched (-${config.vwap_soft_penalty_moderate})`);
+        } else {
+          vwap_effect = -config.vwap_soft_penalty_moderate;
+          logger.info(`Signal for ${symbol} penalized: VWAP distance ${vwap_dist.toFixed(2)}% above soft threshold, no trend/breakout override (-${config.vwap_soft_penalty_moderate})`);
+        }
+      } else if (vwap_dist < -config.vwap_soft_penalty_long) {
+        if (strong_uptrend) {
+          vwap_effect = -3;
+          logger.info(`Signal for ${symbol} penalized mildly: below VWAP (${vwap_dist.toFixed(2)}%) but strong uptrend — pullback entry (-3)`);
+        } else {
+          vwap_effect = -config.vwap_soft_penalty_below;
+          logger.info(`Signal for ${symbol} penalized: ${vwap_dist.toFixed(2)}% below VWAP, weak stock (-${config.vwap_soft_penalty_below})`);
+        }
+      } else {
+        vwap_effect = config.vwap_score_near;
+        logger.info(`Signal for ${symbol} bonus: near VWAP (${vwap_dist.toFixed(2)}%) — ideal entry (+${config.vwap_score_near})`);
+      }
     }
 
-    if (direction === 'LONG' && vwap_dist > vwap_soft_long) {
-      soft_penalty += -10;
-      logger.info(`Signal for ${symbol} penalized: VWAP distance ${vwap_dist.toFixed(2)}% > ${vwap_soft_long}% (-10 confidence)`);
+    if (direction === 'SHORT') {
+      const abs_dist = Math.abs(vwap_dist);
+      if (abs_dist > config.vwap_hard_reject_short) {
+        logger.info(`Signal for ${symbol} rejected: price ${abs_dist.toFixed(2)}% from VWAP (hard limit: ${config.vwap_hard_reject_short}%)`);
+        await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${abs_dist.toFixed(2)}% from VWAP, hard limit ${config.vwap_hard_reject_short}%`, raw_confidence: null, raw_rr: signal.risk_reward });
+        return null;
+      } else if (vwap_dist > config.vwap_soft_penalty_short) {
+        vwap_effect = config.vwap_score_near;
+        logger.info(`Signal for ${symbol} bonus: price above VWAP (${vwap_dist.toFixed(2)}%) — good short entry (+${config.vwap_score_near})`);
+      } else if (vwap_dist < -config.vwap_soft_penalty_short) {
+        const is_downtrend = !is_uptrend && ema50_slope < -config.min_ema50_slope;
+        if (is_downtrend) {
+          logger.info(`Signal for ${symbol} VWAP override (SHORT): dist=${vwap_dist.toFixed(2)}%, strong downtrend — no penalty`);
+        } else {
+          vwap_effect = -config.vwap_soft_penalty_below;
+          logger.info(`Signal for ${symbol} penalized: ${vwap_dist.toFixed(2)}% below VWAP, overextended short (-${config.vwap_soft_penalty_below})`);
+        }
+      }
     }
-    if (direction === 'SHORT' && Math.abs(vwap_dist) > vwap_soft_short) {
-      soft_penalty += -10;
-      logger.info(`Signal for ${symbol} penalized: VWAP distance ${Math.abs(vwap_dist).toFixed(2)}% > ${vwap_soft_short}% (-10 confidence)`);
-    }
+
+    vwap_effect = Math.max(-config.vwap_max_bonus_cap, Math.min(config.vwap_max_bonus_cap, vwap_effect));
   }
 
   if (nifty_pcr != null && direction === 'LONG') {
@@ -161,20 +195,23 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
       return null;
     }
     if (nifty_pcr > 1.4) {
-      soft_penalty += -10;
+      pcr_effect = -10;
       logger.info(`Signal for ${symbol} penalized: PCR ${nifty_pcr.toFixed(3)} in 1.4–1.8 range (-10 confidence)`);
     }
   }
   if (nifty_pcr != null && nifty_pcr < 0.7) {
-    soft_penalty += -10;
+    pcr_effect = -10;
     logger.info(`Signal for ${symbol} penalized: PCR ${nifty_pcr.toFixed(3)} < 0.7 — bull trap risk (-10 confidence)`);
   }
 
-  const { score: raw_confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date, direction);
-  const confidence = Math.max(0, Math.min(100, raw_confidence + soft_penalty + sentiment_adjustment));
+  const effects = { vwap: vwap_effect, pcr: pcr_effect, sentiment: sentiment_adjustment };
+  const soft_penalty = effects.vwap + effects.pcr + effects.sentiment;
 
-  if (sentiment_adjustment !== 0 || soft_penalty !== 0) {
-    logger.info(`Signal for ${symbol} confidence adjusted: raw=${raw_confidence}, VWAP/PCR=${soft_penalty}, sentiment=${sentiment_adjustment}, final=${confidence}`);
+  const { score: raw_confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date, direction);
+  const confidence = Math.max(0, Math.min(100, raw_confidence + soft_penalty));
+
+  if (soft_penalty !== 0) {
+    logger.info(`Signal for ${symbol} confidence adjusted: raw=${raw_confidence}, vwap=${effects.vwap}, pcr=${effects.pcr}, sentiment=${effects.sentiment}, total=${soft_penalty}, final=${confidence}`);
   }
 
   if (confidence < min_conf) {

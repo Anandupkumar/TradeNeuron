@@ -336,11 +336,20 @@ VWAP_DISTANCE_LONG_DEFAULT=2.0
 VWAP_DISTANCE_BREAKOUT_LONG=3.5
 VWAP_DISTANCE_SHORT_DEFAULT=2.0
 
+# ─── VWAP Scoring ───
+VWAP_SCORE_NEAR=3                    # bonus when price within 2% of VWAP
+VWAP_SOFT_PENALTY_MODERATE=3         # penalty for 2-3.5% above VWAP without trend/breakout override
+VWAP_SOFT_PENALTY_BELOW=8            # penalty when price below VWAP in weak stock
+VWAP_BREAKOUT_RVOL_MIN=1.5           # RVOL required for breakout override
+VWAP_TREND_OVERRIDE_ZONE=3.5         # above this %, only trend/breakout override avoids penalty
+MIN_EMA50_SLOPE=0.5                  # minimum EMA50 slope for strong trend qualification
+VWAP_MAX_BONUS_CAP=6                 # cap on total VWAP adjustment (+/-)
+
 # ─── Signal Frequency Controller ───
 FREQUENCY_CONTROLLER_ENABLED=true
 TARGET_WEEKLY_SIGNALS=10
 MAX_SIGNALS_PER_DAY=3
-POOL_MIN_CONFIDENCE=65
+POOL_MIN_CONFIDENCE=60
 POOL_MIN_RISK_REWARD=1.5
 
 # ─── Finnhub (Optional) ───
@@ -780,7 +789,7 @@ ALTER TABLE features
   ADD COLUMN is_near_vwap BOOLEAN DEFAULT NULL;
 ```
 
-**Key decision:** `vwap_distance_pct = ((close - vwap) / vwap) * 100`. Signals where price is stretched >2% from VWAP are filtered out in `signal.service.js`.
+**Key decision:** `vwap_distance_pct = ((close - vwap) / vwap) * 100`. VWAP is used as a context-aware quality filter in `signal.service.js` with breakout and trend overrides, not as a flat reject/penalty gate. `is_near_vwap` also contributes +3 to the quality bucket in `scoring.service.js`.
 
 ### 4.20 Delivery percentage (migration 020)
 
@@ -1563,7 +1572,7 @@ vwap_distance_pct = ((adjusted_close - vwap) / vwap) * 100
 is_near_vwap = ABS(vwap_distance_pct) < 2.0
 ```
 
-Used as a signal quality filter in `signal.service.js` — signals where price is stretched beyond 2% from VWAP are rejected.
+Used as a context-aware signal quality filter in `signal.service.js`. LONG signals above 5% from VWAP are hard-rejected. Between 2-5%, penalties are context-aware: breakout-confirmed signals (with RVOL >= 1.5) and strong uptrend signals (ema50_slope > 0.5) receive no penalty. Near-VWAP entries (within 2%) receive a +3 bonus in both `signal.service.js` and `scoring.service.js` (max +6 total). SHORT logic is intentionally asymmetric — above VWAP is a good short entry (+3), below VWAP in a downtrend gets no penalty.
 
 ### High Delivery
 
@@ -2322,7 +2331,7 @@ The tier is stored as `confidence_tier` on the signal (ENUM: HIGH, NORMAL, LOW) 
 
 When `FREQUENCY_CONTROLLER_ENABLED=true` (default), signal generation uses a two-phase approach:
 
-1. **`buildCandidate()`** — Evaluates a single symbol's raw signals through all hard gates (DUPLICATE, VWAP, PCR, sector cap, active cap, position sizing). Uses relaxed pool floor thresholds for confidence (`POOL_MIN_CONFIDENCE=65`) and R:R (`POOL_MIN_RISK_REWARD=1.5`) instead of the strict thresholds. Returns a fully-formed candidate object or null.
+1. **`buildCandidate()`** — Evaluates a single symbol's raw signals through all hard gates (DUPLICATE, VWAP, PCR, sector cap, active cap, position sizing). Uses relaxed pool floor thresholds for confidence (`POOL_MIN_CONFIDENCE=60`) and R:R (`POOL_MIN_RISK_REWARD=1.5`) instead of the strict thresholds. Returns a fully-formed candidate object or null.
 
 2. **`selectTopSignals(candidates, date)`** — Takes all candidates from Phase 1, queries the weekly signal count via `signalModel.countByWeek(date)`, computes remaining slots (`TARGET_WEEKLY_SIGNALS - weekly_count`), and selects the top `min(MAX_SIGNALS_PER_DAY, remaining_slots)` candidates ranked by `confidence DESC, risk_reward DESC`. Candidates that don't make the cut are logged to `rejected_signals` with stage `FREQUENCY_CAP`.
 
@@ -2370,25 +2379,49 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
         }
 
     features = FETCH features for symbol, date
-    soft_penalty = 0
+    vwap_effect = 0
+    pcr_effect = 0
 
-    // VWAP distance filter — soft penalty + hard reject
+    // VWAP distance filter — context-aware penalties with breakout/trend overrides
+    // vwap_effect is isolated and capped independently so it never limits PCR/sentiment
     IF features.vwap_distance_pct != null
-        IF direction == 'LONG' AND vwap_dist > VWAP_HARD_REJECT_LONG (5.0%)
-            LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
-        IF direction == 'SHORT' AND |vwap_dist| > VWAP_HARD_REJECT_SHORT (5.0%)
-            LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
-        IF direction == 'LONG' AND vwap_dist > VWAP_SOFT_PENALTY_LONG (2.0%)
-            soft_penalty += -10
-        IF direction == 'SHORT' AND |vwap_dist| > VWAP_SOFT_PENALTY_SHORT (2.0%)
-            soft_penalty += -10
+        vwap_dist = features.vwap_distance_pct
+        is_breakout_confirmed = features.is_breakout AND features.rvol >= VWAP_BREAKOUT_RVOL_MIN (1.5)
+        strong_uptrend = features.is_uptrend AND features.ema50_slope > MIN_EMA50_SLOPE (0.5)
 
-    // PCR filter — soft penalty + hard reject
+        IF direction == 'LONG'
+            IF vwap_dist > VWAP_HARD_REJECT_LONG (5.0%)
+                LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
+            ELSE IF vwap_dist > VWAP_SOFT_PENALTY_LONG (2.0%)
+                IF is_breakout_confirmed OR strong_uptrend → no penalty (override)
+                ELSE IF vwap_dist > VWAP_TREND_OVERRIDE_ZONE (3.5%) → vwap_effect = -3
+                ELSE → vwap_effect = -3  (moderate, context-aware)
+            ELSE IF vwap_dist < -VWAP_SOFT_PENALTY_LONG
+                IF strong_uptrend → vwap_effect = -3 (pullback entry)
+                ELSE → vwap_effect = -VWAP_SOFT_PENALTY_BELOW (-8)
+            ELSE → vwap_effect = +VWAP_SCORE_NEAR (+3, ideal entry)
+
+        IF direction == 'SHORT' (intentionally asymmetric, not mirrored)
+            IF |vwap_dist| > VWAP_HARD_REJECT_SHORT (5.0%)
+                LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
+            ELSE IF vwap_dist > VWAP_SOFT_PENALTY_SHORT (above VWAP)
+                vwap_effect = +VWAP_SCORE_NEAR (+3, good short entry)
+            ELSE IF vwap_dist < -VWAP_SOFT_PENALTY_SHORT (below VWAP)
+                IF strong downtrend → no penalty (trend continuation)
+                ELSE → vwap_effect = -VWAP_SOFT_PENALTY_BELOW (-8)
+
+        vwap_effect = CLAMP(vwap_effect, -VWAP_MAX_BONUS_CAP, +VWAP_MAX_BONUS_CAP)
+
+    // PCR filter — isolated effect, not subject to VWAP cap
     IF nifty_pcr != null AND direction == 'LONG'
         IF nifty_pcr > 1.8 → LOG + INSERT rejected_signals(PCR_FILTER) → RETURN null
-        IF nifty_pcr > 1.4 → soft_penalty += -10
+        IF nifty_pcr > 1.4 → pcr_effect = -10
     IF nifty_pcr != null AND nifty_pcr < 0.7
-        soft_penalty += -10   // bull trap risk
+        pcr_effect = -10   // bull trap risk
+
+    // Compose effects — each source is isolated, only VWAP is capped
+    effects = { vwap: vwap_effect, pcr: pcr_effect, sentiment: sentiment_adjustment }
+    soft_penalty = effects.vwap + effects.pcr + effects.sentiment
 
     // Sector correlation gate — enhanced with intra-batch counting
     sector = getSector(symbol)
@@ -2400,10 +2433,12 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
     { raw_confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator }
         = calculateScoreWithBreakdown(symbol, date, direction)
 
-    // Apply soft penalties (VWAP, PCR) and sentiment adjustment from Step 9
-    confidence = CLAMP(raw_confidence + soft_penalty + sentiment_adjustment, 0, 100)
+    // Final confidence = raw score + isolated effects (VWAP capped, PCR/sentiment uncapped)
+    confidence = CLAMP(raw_confidence + soft_penalty, 0, 100)
+    IF soft_penalty != 0
+        LOG: "confidence adjusted: raw={raw_confidence}, vwap={effects.vwap}, pcr={effects.pcr}, sentiment={effects.sentiment}, total={soft_penalty}, final={confidence}"
 
-    // When frequency controller is enabled, use pool floor thresholds (65, 1.5)
+    // When frequency controller is enabled, use pool floor thresholds (60, 1.5)
     // When disabled, use strict thresholds (MIN_CONFIDENCE=70, MIN_RISK_REWARD=2.0)
     min_conf = FREQUENCY_CONTROLLER_ENABLED ? POOL_MIN_CONFIDENCE : MIN_CONFIDENCE
     min_rr   = FREQUENCY_CONTROLLER_ENABLED ? POOL_MIN_RISK_REWARD : MIN_RISK_REWARD
@@ -2449,9 +2484,9 @@ Every `RETURN null` path in `buildCandidate` writes to the `rejected_signals` ta
 |------|----------------|------|
 | Duplicate check | `DUPLICATE` | Symbol already has an active signal in same direction |
 | Merged SL risk | `MERGED_RISK_ZERO` | Risk <= 0 after SL merge |
-| VWAP distance | `VWAP_FILTER` | Price stretched beyond per-strategy VWAP threshold (default 2%, breakout 3.5%) |
-| Put-Call Ratio | `PCR_FILTER` | PCR > 1.5 for LONG signals |
-| Confidence | `CONFIDENCE_GATE` | Confidence below pool floor (65) or strict threshold (70) |
+| VWAP distance | `VWAP_FILTER` | Price stretched beyond hard VWAP threshold (5.0%). Context-aware penalties for 2-5% range with breakout/trend overrides |
+| Put-Call Ratio | `PCR_FILTER` | PCR > 1.8 for LONG signals (hard reject), 1.4-1.8 soft penalty |
+| Confidence | `CONFIDENCE_GATE` | Confidence below pool floor (60) or strict threshold (20) |
 | Risk:Reward | `RR_GATE` | R:R below pool floor (1.5) or strict threshold (2.0) |
 | Active cap | `ACTIVE_CAP` | Active signals at capacity |
 | Sector cap | `SECTOR_GATE` | Sector signals at capacity |

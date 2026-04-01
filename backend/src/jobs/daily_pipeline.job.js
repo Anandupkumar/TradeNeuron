@@ -16,6 +16,7 @@ const { createPaperTrades, updatePaperTrades } = require('../services/paper_trad
 const candleModel = require('../models/candle.model');
 const signalModel = require('../models/signal.model');
 const pipelineRunModel = require('../models/pipeline_run.model');
+const rejectedSignalModel = require('../models/rejected_signal.model');
 const config = require('../config/env');
 const { sendTelegramAlert } = require('../utils/notify.util');
 
@@ -281,13 +282,28 @@ async function runDailyPipeline() {
     }
     logger.info(`=== Daily Pipeline Complete: ${elapsed}ms ===`);
 
+    let rejection_summary = '';
+    try {
+      const dist = await rejectedSignalModel.getDistribution(1);
+      if (dist.total_rejected > 0) {
+        const stage_lines = dist.by_stage.map((s) => `  ${s.reject_stage}: ${s.count} (${s.pct}%)`).join('\n');
+        rejection_summary = `\n\n<b>Rejections today:</b> ${dist.total_rejected}\n${stage_lines}`;
+      }
+      const vwap_audit = await rejectedSignalModel.getVwapQualityAudit(7);
+      if (vwap_audit.total_vwap_rejected > 0) {
+        rejection_summary += `\n\n<b>VWAP quality (7d):</b> ${vwap_audit.total_vwap_rejected} rejected, avg conf=${vwap_audit.avg_confidence ?? '—'}, avg R:R=${vwap_audit.avg_rr ?? '—'}`;
+      }
+    } catch (err) {
+      logger.warn(`Failed to build rejection summary: ${err.message}`);
+    }
+
     if (new_signals.length === 0 && regime !== 'HIGH_VOLATILITY') {
       await sendTelegramAlert(
-        `⚠️ <b>TradeNeuron pipeline</b>\nPipeline ran but generated 0 signals.\nRegime: ${regime}\nDuration: ${(elapsed / 1000).toFixed(1)}s`
+        `⚠️ <b>TradeNeuron pipeline</b>\nPipeline ran but generated 0 signals.\nRegime: ${regime}\nDuration: ${(elapsed / 1000).toFixed(1)}s${rejection_summary}`
       );
     } else {
       await sendTelegramAlert(
-        `✅ <b>TradeNeuron pipeline complete</b>\nSignals generated: ${new_signals.length}\nMarket regime: ${regime}\nDuration: ${(elapsed / 1000).toFixed(1)}s`
+        `✅ <b>TradeNeuron pipeline complete</b>\nSignals generated: ${new_signals.length}\nMarket regime: ${regime}\nDuration: ${(elapsed / 1000).toFixed(1)}s${rejection_summary}`
       );
     }
   } catch (error) {

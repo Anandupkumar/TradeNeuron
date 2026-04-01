@@ -67,7 +67,7 @@ describe('buildCandidate', () => {
 
     expect(result).not.toBeNull();
     expect(result.symbol).toBe('RELIANCE.NS');
-    expect(result.confidence).toBe(80);
+    expect(result.confidence).toBe(83);
     expect(result.direction).toBe('LONG');
     expect(result.signal_type).toBe('BUY');
     expect(result.status).toBe('ACTIVE');
@@ -96,13 +96,13 @@ describe('buildCandidate', () => {
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', raw, []);
 
     expect(result).not.toBeNull();
-    expect(result.confidence).toBe(67);
+    expect(result.confidence).toBe(70);
   });
 
-  test('should reject below pool floor confidence (65)', async () => {
+  test('should reject below pool floor confidence (60)', async () => {
     calculateScoreWithBreakdown.mockResolvedValue({
-      score: 60,
-      breakdown: { trend: 0, rsi: 20, volume: 30, breakout: 10 },
+      score: 53,
+      breakdown: { trend: 0, rsi: 20, volume: 30, breakout: 3 },
       feature: {},
       indicator: {},
     });

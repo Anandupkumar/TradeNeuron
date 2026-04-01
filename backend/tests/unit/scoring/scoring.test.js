@@ -284,6 +284,50 @@ describe('SHORT Scoring Breakdown', () => {
   });
 });
 
+describe('VWAP near-entry quality bonus', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('should add +3 quality bonus for LONG when is_near_vwap is true', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue({
+      is_uptrend: 1, rsi_zone: 'NEUTRAL', is_breakout: 0,
+      volume_tier: 'normal', ema50_slope: 0.5, is_near_vwap: 1,
+    });
+    indicatorModel.findBySymbolAndDate.mockResolvedValue({
+      ema_20: 110, ema_50: 100,
+    });
+
+    const score = await calculateScore('RELIANCE.NS', '2026-03-23');
+    expect(score).toBe(33); // 30 trend + 3 vwap quality
+  });
+
+  test('should add +3 quality bonus for SHORT when is_near_vwap is true', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue({
+      is_uptrend: 0, rsi_zone: 'NEUTRAL', is_breakout: 0,
+      volume_tier: 'normal', ema50_slope: -0.5, close_position: 0.5,
+      is_near_vwap: 1,
+    });
+    indicatorModel.findBySymbolAndDate.mockResolvedValue({
+      ema_20: 90, ema_50: 100,
+    });
+
+    const score = await calculateScore('RELIANCE.NS', '2026-03-23', 'SHORT');
+    expect(score).toBe(33); // 30 trend + 3 vwap quality
+  });
+
+  test('should NOT add vwap bonus when is_near_vwap is 0', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue({
+      is_uptrend: 1, rsi_zone: 'NEUTRAL', is_breakout: 0,
+      volume_tier: 'normal', ema50_slope: 0.5, is_near_vwap: 0,
+    });
+    indicatorModel.findBySymbolAndDate.mockResolvedValue({
+      ema_20: 110, ema_50: 100,
+    });
+
+    const score = await calculateScore('RELIANCE.NS', '2026-03-23');
+    expect(score).toBe(30); // just trend, no vwap bonus
+  });
+});
+
 describe('buildExplanations direction-aware', () => {
   test('should produce SHORT-specific sentences', () => {
     const feature = {
