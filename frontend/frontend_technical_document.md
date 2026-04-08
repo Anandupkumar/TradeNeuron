@@ -2064,6 +2064,7 @@ export function useSignalFilters(): [SignalFilters, (f: Partial<SignalFilters>) 
   const filters: SignalFilters = {
     status:         (params.get('status') as SignalStatus) ?? 'all',
     direction:      (params.get('direction') as SignalDirection) ?? 'all',
+    confidence_tier:(params.get('confidence_tier') as ConfidenceTier | 'all') ?? undefined,
     symbol:         params.get('symbol') ?? undefined,
     from_date:      params.get('from_date') ?? undefined,
     to_date:        params.get('to_date') ?? undefined,

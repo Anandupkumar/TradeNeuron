@@ -1,9 +1,10 @@
 import { cn } from '@/lib/utils';
 import { formatINR, formatPct, toNum } from '../../utils/format';
-import type { StockIndicators } from '../../types';
+import type { StockIndicators, StockFeatures } from '../../types';
 
 interface IndicatorGridProps {
   indicators: StockIndicators;
+  features?: StockFeatures | null;
   className?: string;
 }
 
@@ -20,10 +21,25 @@ function rsiColor(v: number): string {
   return 'text-foreground';
 }
 
-export function IndicatorGrid({ indicators, className }: IndicatorGridProps) {
+function slopeColor(v: number): string {
+  return v > 0 ? 'text-emerald-400' : 'text-red-400';
+}
+
+function formatSlope(v: number): string {
+  const sign = v > 0 ? '+' : '';
+  return `${sign}${v.toFixed(2)}`;
+}
+
+export function IndicatorGrid({ indicators, features, className }: IndicatorGridProps) {
   const cards: IndicatorCardData[] = [
     { label: 'EMA 20', value: toNum(indicators.ema_20), formatter: formatINR },
     { label: 'EMA 50', value: toNum(indicators.ema_50), formatter: formatINR },
+    {
+      label: 'EMA50 Slope',
+      value: features?.ema50_slope != null ? toNum(features.ema50_slope) : null,
+      formatter: formatSlope,
+      color_fn: slopeColor,
+    },
     { label: 'EMA 200', value: toNum(indicators.ema_200), formatter: formatINR },
     {
       label: 'RSI',

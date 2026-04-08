@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
-import type { SignalFilters, SignalStatus, SignalDirection } from '../types';
+import type { SignalFilters, SignalStatus, SignalDirection, ConfidenceTier } from '../types';
 import { PAGINATION } from '../utils/constants';
 
 export function useSignalFilters(): [SignalFilters, (f: Partial<SignalFilters>) => void] {
@@ -8,6 +8,7 @@ export function useSignalFilters(): [SignalFilters, (f: Partial<SignalFilters>) 
   const filters: SignalFilters = {
     status: (params.get('status') as SignalStatus) ?? 'all',
     direction: (params.get('direction') as SignalDirection) ?? 'all',
+    confidence_tier: (params.get('confidence_tier') as ConfidenceTier | 'all') ?? undefined,
     symbol: params.get('symbol') ?? undefined,
     from_date: params.get('from_date') ?? undefined,
     to_date: params.get('to_date') ?? undefined,

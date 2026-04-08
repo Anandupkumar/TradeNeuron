@@ -41,15 +41,18 @@ async function createPaperTrades(signals) {
   return created;
 }
 
-function calculateNetPnl(entry_price, exit_price) {
-  const slippage = config.slippage_pct / 100;
-  const brokerage = config.brokerage_pct / 100;
+function calculateNetPnl(entry_price, exit_price, direction = 'LONG') {
+  const cost = (config.slippage_pct + config.brokerage_pct) / 100;
 
-  const effective_entry = entry_price * (1 + slippage + brokerage);
-  const effective_exit = exit_price * (1 - slippage - brokerage);
-  const pnl_pct = ((effective_exit - effective_entry) / effective_entry) * 100;
+  if (direction === 'SHORT') {
+    const effective_sell = entry_price * (1 - cost);
+    const effective_buyback = exit_price * (1 + cost);
+    return roundDecimal(((effective_sell - effective_buyback) / effective_sell) * 100, 4);
+  }
 
-  return roundDecimal(pnl_pct, 4);
+  const effective_entry = entry_price * (1 + cost);
+  const effective_exit = exit_price * (1 - cost);
+  return roundDecimal(((effective_exit - effective_entry) / effective_entry) * 100, 4);
 }
 
 function computeGrossPnlInr(entry_price, exit_price, shares_to_buy, direction) {
@@ -124,7 +127,7 @@ async function updatePaperTrades() {
       }
     }
 
-    let pnl_pct = calculateNetPnl(entry_price, exit_price);
+    let pnl_pct = calculateNetPnl(entry_price, exit_price, direction);
     const gross_pnl_inr = computeGrossPnlInr(entry_price, exit_price, shares, direction);
 
     if (exit_reason === 'EXPIRED' && Math.abs(pnl_pct) < config.expired_movement_threshold) {

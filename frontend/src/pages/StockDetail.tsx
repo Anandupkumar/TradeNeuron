@@ -136,7 +136,7 @@ export default function StockDetailPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
           <h2 className="mb-3 text-lg font-semibold text-foreground">Indicators</h2>
-          <IndicatorGrid indicators={stock.indicators} />
+          <IndicatorGrid indicators={stock.indicators} features={stock.features} />
         </div>
         <div>
           <h2 className="mb-3 text-lg font-semibold text-foreground">Features</h2>

@@ -72,6 +72,24 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       ),
     },
     {
+      key: 'tier',
+      label: 'Tier',
+      render: (signal: Signal) => {
+        if (!signal.confidence_tier) return <span className="text-muted-foreground">—</span>;
+        const styles: Record<string, string> = {
+          HIGH: 'bg-emerald-500/15 text-emerald-400',
+          NORMAL: 'bg-blue-500/15 text-blue-400',
+          LOW: 'bg-amber-500/15 text-amber-400',
+        };
+        const labels: Record<string, string> = { HIGH: 'High', NORMAL: 'Normal', LOW: 'Low' };
+        return (
+          <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', styles[signal.confidence_tier])}>
+            {labels[signal.confidence_tier]}
+          </span>
+        );
+      },
+    },
+    {
       key: 'entry',
       label: 'Entry',
       align: 'right' as const,

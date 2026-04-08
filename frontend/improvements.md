@@ -33,6 +33,8 @@ A new `close_position` field (0.0 – 1.0) on each stock's features, representin
 
 ## 2. Confidence Tier System — UI Changes
 
+**Status: IMPLEMENTED**
+
 ### What the Backend Adds
 
 A new `confidence_tier` field (`'HIGH' | 'NORMAL' | 'LOW'`) on each signal, computed from the confidence score.
@@ -73,6 +75,8 @@ The existing `ConfidenceBar` uses color thresholds (70-79 amber, 80-89 light gre
 
 ## 3. Trend Slope — UI Changes
 
+**Status: IMPLEMENTED**
+
 ### What the Backend Adds
 
 A new `ema50_slope` field (positive = rising, negative = falling) on each stock's features.
@@ -104,6 +108,8 @@ Improvement 4 is entirely backend (calibration job logic). No types, components,
 ---
 
 ## 5. Smart Expiry Handling — UI Changes
+
+**Status: IMPLEMENTED**
 
 ### What the Backend Adds
 
