@@ -154,6 +154,11 @@ backend/
     030_create_strategy_config.sql
     031_add_execution_type_to_signals.sql
     032_add_duplicate_reject_stage.sql
+    033_add_raw_score_to_rejected_signals.sql
+    034_create_confidence_calibration.sql
+    035_add_frequency_cap.sql
+    036_create_pipeline_runs.sql
+    037_add_min_confidence_to_strategy_config.sql
   tests/
     unit/
       indicators/
@@ -343,7 +348,7 @@ VWAP_SOFT_PENALTY_BELOW=8            # penalty when price below VWAP in weak sto
 VWAP_BREAKOUT_RVOL_MIN=1.5           # RVOL required for breakout override
 VWAP_TREND_OVERRIDE_ZONE=3.5         # above this %, only trend/breakout override avoids penalty
 MIN_EMA50_SLOPE=0.5                  # minimum EMA50 slope for strong trend qualification
-VWAP_MAX_BONUS_CAP=6                 # cap on total VWAP adjustment (+/-)
+VWAP_MAX_BONUS_CAP=10                # cap on total VWAP adjustment (+/-), raised for BREAKDOWN momentum scoring
 
 # ─── Signal Frequency Controller ───
 FREQUENCY_CONTROLLER_ENABLED=true
@@ -903,6 +908,7 @@ CREATE TABLE IF NOT EXISTS strategy_config (
   id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   strategy_name   VARCHAR(100) NOT NULL UNIQUE,
   is_enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+  min_confidence  INT          NOT NULL DEFAULT 65,
   disabled_at     TIMESTAMP    NULL,
   disabled_reason VARCHAR(500) NULL,
   updated_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -911,9 +917,10 @@ CREATE TABLE IF NOT EXISTS strategy_config (
 INSERT INTO strategy_config (strategy_name) VALUES
   ('TREND_PULLBACK'), ('BREAKOUT'), ('RANGE'),
   ('MEAN_REVERSION'), ('TREND_PULLBACK_SHORT'), ('BREAKDOWN');
+-- Migration 037 adds min_confidence and sets BREAKDOWN=58, TREND_PULLBACK_SHORT=65
 ```
 
-**Key decision:** The weekly calibration job auto-disables strategies with low win rates from paper trade data and auto-re-enables them when performance recovers. The table tracks when and why each strategy was disabled. Strategy enablement is checked at the start of `runStrategies()` — disabled strategies are skipped entirely. Telegram alerts fire on state changes.
+**Key decision:** The weekly calibration job auto-disables strategies with low win rates from paper trade data and auto-re-enables them when performance recovers. The table tracks when and why each strategy was disabled. Strategy enablement is checked at the start of `runStrategies()` — disabled strategies are skipped entirely. Telegram alerts fire on state changes. The `min_confidence` column allows per-strategy confidence thresholds — BREAKDOWN uses 58 (lower than the default 65) because its momentum-driven signals have naturally lower base scores but higher Sharpe ratios.
 
 ### 4.27 execution_type on signals and paper_trades (migration 031)
 
@@ -1004,7 +1011,7 @@ sentiment_flags *──1 candles       (symbol, logical reference)
 rejected_signals                   (standalone audit log, populated per pipeline run)
 nifty50_composition                (standalone, referenced by backtest.service.js)
 adaptive_thresholds                (stores adaptive RSI/volume thresholds + scoring weights)
-strategy_config                    (stores per-strategy enable/disable state)
+strategy_config                    (stores per-strategy enable/disable state + min_confidence threshold)
 confidence_calibration             (weekly calibration: confidence bucket → actual win rate)
 pipeline_runs                      (tracks daily pipeline execution completion timestamps)
 ```
@@ -1572,7 +1579,7 @@ vwap_distance_pct = ((adjusted_close - vwap) / vwap) * 100
 is_near_vwap = ABS(vwap_distance_pct) < 2.0
 ```
 
-Used as a context-aware signal quality filter in `signal.service.js`. LONG signals above 5% from VWAP are hard-rejected. Between 2-5%, penalties are context-aware: breakout-confirmed signals (with RVOL >= 1.5) and strong uptrend signals (ema50_slope > 0.5) receive no penalty. Near-VWAP entries (within 2%) receive a +3 bonus in both `signal.service.js` and `scoring.service.js` (max +6 total). SHORT logic is intentionally asymmetric — above VWAP is a good short entry (+3), below VWAP in a downtrend gets no penalty.
+Used as a context-aware signal quality filter in `signal.service.js`. LONG signals above 5% from VWAP are hard-rejected. Between 2-5%, penalties are context-aware: breakout-confirmed signals (with RVOL >= 1.5) and strong uptrend signals (ema50_slope > 0.5) receive no penalty. Near-VWAP entries (within 2%) receive a +3 bonus in both `signal.service.js` and `scoring.service.js` (max +6 total). SHORT logic is strategy-aware: BREAKDOWN signals are rewarded for being deep below VWAP (+10 at <= -5%, +5 at <= -2%) as this confirms momentum, while TREND_PULLBACK_SHORT retains the 5% hard-reject. A `strongDowntrend` (ema50_slope < -0.5) with deep VWAP distance gives BREAKDOWN an extra +5, capped at +10 total via `VWAP_MAX_BONUS_CAP`.
 
 ### High Delivery
 
@@ -2378,6 +2385,14 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
             reasons: COLLECT all triggering factor names
         }
 
+    // Determine primary strategy — BREAKDOWN takes priority when merged
+    primaryStrategy = signal.strategy includes 'BREAKDOWN' ? 'BREAKDOWN' : first strategy
+    strongDowntrend = NOT is_uptrend AND ema50_slope < -MIN_EMA50_SLOPE
+
+    // Per-strategy confidence threshold from strategy_config table
+    strategyConfig = getByName(primaryStrategy)
+    min_conf = strategyConfig.min_confidence ?? default_min_conf
+
     features = FETCH features for symbol, date
     vwap_effect = 0
     pcr_effect = 0
@@ -2388,6 +2403,7 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
         vwap_dist = features.vwap_distance_pct
         is_breakout_confirmed = features.is_breakout AND features.rvol >= VWAP_BREAKOUT_RVOL_MIN (1.5)
         strong_uptrend = features.is_uptrend AND features.ema50_slope > MIN_EMA50_SLOPE (0.5)
+        strongDowntrend = NOT is_uptrend AND ema50_slope < -MIN_EMA50_SLOPE
 
         IF direction == 'LONG'
             IF vwap_dist > VWAP_HARD_REJECT_LONG (5.0%)
@@ -2401,14 +2417,23 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
                 ELSE → vwap_effect = -VWAP_SOFT_PENALTY_BELOW (-8)
             ELSE → vwap_effect = +VWAP_SCORE_NEAR (+3, ideal entry)
 
-        IF direction == 'SHORT' (intentionally asymmetric, not mirrored)
-            IF |vwap_dist| > VWAP_HARD_REJECT_SHORT (5.0%)
-                LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
-            ELSE IF vwap_dist > VWAP_SOFT_PENALTY_SHORT (above VWAP)
-                vwap_effect = +VWAP_SCORE_NEAR (+3, good short entry)
-            ELSE IF vwap_dist < -VWAP_SOFT_PENALTY_SHORT (below VWAP)
-                IF strong downtrend → no penalty (trend continuation)
-                ELSE → vwap_effect = -VWAP_SOFT_PENALTY_BELOW (-8)
+        IF direction == 'SHORT'
+            IF primaryStrategy == 'BREAKDOWN'
+                // No hard reject — deep below VWAP = momentum confirmation
+                IF |vwap_dist| > 20% → reject (data anomaly ceiling)
+                IF vwap_dist <= -5% → vwap_effect = +10 (strong momentum)
+                ELSE IF vwap_dist <= -2% → vwap_effect = +5 (moderate momentum)
+                ELSE → vwap_effect = -5 (weak setup, price near/above VWAP)
+                IF strongDowntrend AND vwap_dist <= -5% → vwap_effect += 5 (extra conviction)
+            ELSE (TREND_PULLBACK_SHORT)
+                IF |vwap_dist| > VWAP_HARD_REJECT_SHORT (5.0%)
+                    LOG + INSERT rejected_signals(VWAP_FILTER) → RETURN null
+                ELSE IF vwap_dist > VWAP_SOFT_PENALTY_SHORT (above VWAP)
+                    vwap_effect = +VWAP_SCORE_NEAR (+3, good short entry)
+                ELSE IF vwap_dist < -VWAP_SOFT_PENALTY_SHORT (below VWAP)
+                    IF strongDowntrend → no penalty (trend continuation)
+                    ELSE → vwap_effect = -VWAP_SOFT_PENALTY_BELOW (-8)
+            LOG: VWAP_EVALUATION { symbol, strategy, vwap_dist, vwap_effect, strongDowntrend }
 
         vwap_effect = CLAMP(vwap_effect, -VWAP_MAX_BONUS_CAP, +VWAP_MAX_BONUS_CAP)
 
@@ -2438,10 +2463,9 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
     IF soft_penalty != 0
         LOG: "confidence adjusted: raw={raw_confidence}, vwap={effects.vwap}, pcr={effects.pcr}, sentiment={effects.sentiment}, total={soft_penalty}, final={confidence}"
 
-    // When frequency controller is enabled, use pool floor thresholds (60, 1.5)
-    // When disabled, use strict thresholds (MIN_CONFIDENCE=70, MIN_RISK_REWARD=2.0)
-    min_conf = FREQUENCY_CONTROLLER_ENABLED ? POOL_MIN_CONFIDENCE : MIN_CONFIDENCE
-    min_rr   = FREQUENCY_CONTROLLER_ENABLED ? POOL_MIN_RISK_REWARD : MIN_RISK_REWARD
+    // Per-strategy confidence threshold (from strategy_config.min_confidence)
+    // Falls back to pool floor (60) or strict threshold (70) when not set
+    min_rr = FREQUENCY_CONTROLLER_ENABLED ? POOL_MIN_RISK_REWARD : MIN_RISK_REWARD
 
     IF confidence < min_conf
         LOG + INSERT rejected_signals(CONFIDENCE_GATE)
@@ -2490,7 +2514,7 @@ Every `RETURN null` path in `buildCandidate` writes to the `rejected_signals` ta
 | Risk:Reward | `RR_GATE` | R:R below pool floor (1.5) or strict threshold (2.0) |
 | Active cap | `ACTIVE_CAP` | Active signals at capacity |
 | Sector cap | `SECTOR_GATE` | Sector signals at capacity |
-| Position sizing | `POSITION_SIZING` | 0 shares after sizing |
+| Position sizing | `POSITION_SIZING` | Null sizing result (non-positive risk_per_share). Note: 0-share results are floored to 1 share instead of rejected |
 | Frequency cap | `FREQUENCY_CAP` | Candidate passed all gates but not selected in Top-N daily cut |
 
 ### Position Sizing (ATR-based)

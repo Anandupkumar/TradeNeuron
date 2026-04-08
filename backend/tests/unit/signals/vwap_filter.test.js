@@ -27,6 +27,10 @@ jest.mock('../../../src/utils/notify.util', () => ({
   sendTelegramAlert: jest.fn().mockResolvedValue(),
 }));
 
+jest.mock('../../../src/models/strategy_config.model', () => ({
+  getByName: jest.fn().mockResolvedValue(null),
+}));
+
 const featureModel = require('../../../src/models/feature.model');
 const rejectedSignalModel = require('../../../src/models/rejected_signal.model');
 const { calculateScoreWithBreakdown } = require('../../../src/services/scoring/scoring.service');
@@ -159,7 +163,7 @@ describe('VWAP Filter — LONG direction', () => {
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
 
     expect(result).not.toBeNull();
-    expect(result.confidence).toBe(74);
+    expect(result.confidence).toBe(72);
   });
 
   test('bonus capped at VWAP_MAX_BONUS_CAP', async () => {
@@ -167,7 +171,7 @@ describe('VWAP Filter — LONG direction', () => {
       makeFeature({ vwap_distance_pct: '0.5' })
     );
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
-    expect(result.confidence).toBeLessThanOrEqual(80 + 6);
+    expect(result.confidence).toBeLessThanOrEqual(80 + 10);
   });
 });
 
@@ -220,7 +224,7 @@ describe('VWAP Filter — SHORT direction', () => {
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [raw], []);
 
     expect(result).not.toBeNull();
-    expect(result.confidence).toBe(74);
+    expect(result.confidence).toBe(72);
   });
 });
 
@@ -297,11 +301,142 @@ describe('VWAP Filter — edge cases', () => {
     const nifty_pcr = 1.5;
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], [], nifty_pcr);
 
-    // vwap_effect = -8 (below VWAP, weak stock), capped to -6
+    // vwap_effect = -8 (below VWAP, weak stock), cap is 10 so -8 passes through
     // PCR penalty = -10 (PCR 1.5 in 1.4–1.8 range), NOT capped
-    // total soft_penalty = -6 + -10 = -16
-    // confidence = 80 - 16 = 64
+    // total soft_penalty = -8 + -10 = -18
+    // confidence = 80 - 18 = 62
     expect(result).not.toBeNull();
-    expect(result.confidence).toBe(64);
+    expect(result.confidence).toBe(62);
+  });
+});
+
+
+describe('VWAP Filter — BREAKDOWN strategy', () => {
+  function makeBreakdownRaw(overrides = {}) {
+    return {
+      symbol: 'RELIANCE.NS',
+      date: '2026-03-24',
+      entry_price: 2500,
+      stop_loss: 2600,
+      target_price: 2300,
+      risk_reward: 2.0,
+      strategy: 'BREAKDOWN',
+      reasons: ['breakdown_close_below_support'],
+      direction: 'SHORT',
+      ...overrides,
+    };
+  }
+
+  test('BREAKDOWN: deep below VWAP (<= -5%) gets +10 momentum bonus', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-7.0' })
+    );
+
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
+
+    expect(result).not.toBeNull();
+    // vwap_effect = +10, capped at +10
+    expect(result.confidence).toBe(90);
+  });
+
+  test('BREAKDOWN: moderate below VWAP (-2% to -5%) gets +5 bonus', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-3.5' })
+    );
+
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
+
+    expect(result).not.toBeNull();
+    // vwap_effect = +5
+    expect(result.confidence).toBe(85);
+  });
+
+  test('BREAKDOWN: near/above VWAP gets -5 penalty (weak setup)', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '0.5' })
+    );
+
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
+
+    expect(result).not.toBeNull();
+    // vwap_effect = -5
+    expect(result.confidence).toBe(75);
+  });
+
+  test('BREAKDOWN: strongDowntrend + deep below VWAP gets extra +5 (capped at +10)', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-7.0', is_uptrend: 0, ema50_slope: -0.8 })
+    );
+
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
+
+    expect(result).not.toBeNull();
+    // vwap_effect = +10 (deep) + 5 (strongDowntrend) = +15, capped at +10
+    expect(result.confidence).toBe(90);
+  });
+
+  test('BREAKDOWN: strongDowntrend but only moderate below VWAP — no extra boost', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-3.0', is_uptrend: 0, ema50_slope: -0.8 })
+    );
+
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
+
+    expect(result).not.toBeNull();
+    // vwap_effect = +5 (moderate), no extra (vwap_dist > -5), total = +5
+    expect(result.confidence).toBe(85);
+  });
+
+  test('BREAKDOWN: data anomaly > 20% — still rejected', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-22.0' })
+    );
+
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
+
+    expect(result).toBeNull();
+    expect(rejectedSignalModel.insertRejected).toHaveBeenCalledWith(
+      expect.objectContaining({ reject_stage: 'VWAP_FILTER' })
+    );
+  });
+
+  test('BREAKDOWN: NOT hard-rejected at 5% (unlike TREND_PULLBACK_SHORT)', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-8.0' })
+    );
+
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
+
+    expect(result).not.toBeNull();
+    // vwap_effect = +10 (deep below)
+    expect(result.confidence).toBe(90);
+  });
+
+  test('TREND_PULLBACK_SHORT: still hard-rejected at 5%', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-6.0' })
+    );
+
+    const raw = makeRaw({ direction: 'SHORT', stop_loss: 2600, target_price: 2300, strategy: 'TREND_PULLBACK_SHORT' });
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [raw], []);
+
+    expect(result).toBeNull();
+    expect(rejectedSignalModel.insertRejected).toHaveBeenCalledWith(
+      expect.objectContaining({ reject_stage: 'VWAP_FILTER' })
+    );
+  });
+
+  test('BREAKDOWN+TREND_PULLBACK_SHORT merged: uses BREAKDOWN path', async () => {
+    featureModel.findBySymbolAndDate.mockResolvedValue(
+      makeFeature({ vwap_distance_pct: '-7.0' })
+    );
+
+    const raw = makeBreakdownRaw({ strategy: 'BREAKDOWN+TREND_PULLBACK_SHORT' });
+    const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [raw], []);
+
+    expect(result).not.toBeNull();
+    // primaryStrategy = 'BREAKDOWN' because strategy string includes 'BREAKDOWN'
+    // vwap_effect = +10 (deep below)
+    expect(result.confidence).toBe(90);
   });
 });

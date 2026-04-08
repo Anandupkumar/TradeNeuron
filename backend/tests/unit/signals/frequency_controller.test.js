@@ -27,6 +27,10 @@ jest.mock('../../../src/utils/notify.util', () => ({
   sendTelegramAlert: jest.fn().mockResolvedValue(),
 }));
 
+jest.mock('../../../src/models/strategy_config.model', () => ({
+  getByName: jest.fn().mockResolvedValue(null),
+}));
+
 const signalModel = require('../../../src/models/signal.model');
 const rejectedSignalModel = require('../../../src/models/rejected_signal.model');
 const { calculateScoreWithBreakdown } = require('../../../src/services/scoring/scoring.service');

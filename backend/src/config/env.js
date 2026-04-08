@@ -96,7 +96,7 @@ const config = Object.freeze({
   vwap_breakout_rvol_min: parseFloat(process.env.VWAP_BREAKOUT_RVOL_MIN || '1.5'),
   vwap_trend_override_zone: parseFloat(process.env.VWAP_TREND_OVERRIDE_ZONE || '3.5'),
   min_ema50_slope: parseFloat(process.env.MIN_EMA50_SLOPE || '0.5'),
-  vwap_max_bonus_cap: parseInt(process.env.VWAP_MAX_BONUS_CAP || '6', 10),
+  vwap_max_bonus_cap: parseInt(process.env.VWAP_MAX_BONUS_CAP || '10', 10),
 
   finnhub_api_key: process.env.FINNHUB_API_KEY || '',
 

@@ -26,4 +26,12 @@ async function setEnabled(strategy_name, is_enabled, reason = null) {
   return result;
 }
 
-module.exports = { getEnabled, getAll, setEnabled };
+async function getByName(strategy_name) {
+  const [rows] = await pool.query(
+    'SELECT * FROM strategy_config WHERE strategy_name = ? LIMIT 1',
+    [strategy_name]
+  );
+  return rows[0] || null;
+}
+
+module.exports = { getEnabled, getAll, setEnabled, getByName };
