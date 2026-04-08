@@ -11,6 +11,7 @@ const { nifty_50_symbols } = require('../../utils/symbols.util');
 const signalOutcomeModel = require('../../models/signal_outcome.model');
 const rejectedSignalModel = require('../../models/rejected_signal.model');
 const { sendTelegramAlert } = require('../../utils/notify.util');
+const strategyConfigModel = require('../../models/strategy_config.model');
 
 function resolveExecutionType(direction, accountType) {
   if (direction === 'LONG') {
@@ -59,7 +60,7 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
   if (!raw_signals || raw_signals.length === 0) return null;
 
   const use_pool = config.frequency_controller_enabled;
-  const min_conf = use_pool ? config.pool_min_confidence : config.min_confidence;
+  const default_min_conf = use_pool ? config.pool_min_confidence : config.min_confidence;
   const min_rr = use_pool ? config.pool_min_risk_reward : config.min_risk_reward;
 
   const direction = raw_signals[0].direction || 'LONG';
@@ -122,6 +123,13 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     };
   }
 
+  const primaryStrategy = signal.strategy.includes('BREAKDOWN')
+    ? 'BREAKDOWN'
+    : signal.strategy.split('+')[0];
+
+  const strategyConfig = await strategyConfigModel.getByName(primaryStrategy);
+  const min_conf = strategyConfig?.min_confidence ?? default_min_conf;
+
   const feature = await featureModel.findBySymbolAndDate(symbol, date);
 
   let vwap_effect = 0;
@@ -135,6 +143,7 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     const ema50_slope = feature.ema50_slope != null ? parseFloat(feature.ema50_slope) : 0;
     const is_breakout_confirmed = is_breakout && rvol >= config.vwap_breakout_rvol_min;
     const strong_uptrend = is_uptrend && ema50_slope > config.min_ema50_slope;
+    const strongDowntrend = !is_uptrend && ema50_slope < -config.min_ema50_slope;
 
     if (direction === 'LONG') {
       if (vwap_dist > config.vwap_hard_reject_long) {
@@ -166,23 +175,44 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     }
 
     if (direction === 'SHORT') {
-      const abs_dist = Math.abs(vwap_dist);
-      if (abs_dist > config.vwap_hard_reject_short) {
-        logger.info(`Signal for ${symbol} rejected: price ${abs_dist.toFixed(2)}% from VWAP (hard limit: ${config.vwap_hard_reject_short}%)`);
-        await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${abs_dist.toFixed(2)}% from VWAP, hard limit ${config.vwap_hard_reject_short}%`, raw_confidence: null, raw_rr: signal.risk_reward });
-        return null;
-      } else if (vwap_dist > config.vwap_soft_penalty_short) {
-        vwap_effect = config.vwap_score_near;
-        logger.info(`Signal for ${symbol} bonus: price above VWAP (${vwap_dist.toFixed(2)}%) — good short entry (+${config.vwap_score_near})`);
-      } else if (vwap_dist < -config.vwap_soft_penalty_short) {
-        const is_downtrend = !is_uptrend && ema50_slope < -config.min_ema50_slope;
-        if (is_downtrend) {
-          logger.info(`Signal for ${symbol} VWAP override (SHORT): dist=${vwap_dist.toFixed(2)}%, strong downtrend — no penalty`);
+      if (primaryStrategy === 'BREAKDOWN') {
+        if (Math.abs(vwap_dist) > 20) {
+          logger.warn(`Signal for ${symbol} rejected: VWAP distance ${vwap_dist.toFixed(2)}% is a data anomaly (>20%)`);
+          await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `VWAP distance ${vwap_dist.toFixed(2)}% exceeds 20% anomaly ceiling`, raw_confidence: null, raw_rr: signal.risk_reward });
+          return null;
+        }
+
+        if (vwap_dist <= -5) {
+          vwap_effect = 10;
+        } else if (vwap_dist <= -2) {
+          vwap_effect = 5;
         } else {
-          vwap_effect = -config.vwap_soft_penalty_below;
-          logger.info(`Signal for ${symbol} penalized: ${vwap_dist.toFixed(2)}% below VWAP, overextended short (-${config.vwap_soft_penalty_below})`);
+          vwap_effect = -5;
+        }
+
+        if (strongDowntrend && vwap_dist <= -5) {
+          vwap_effect += 5;
+        }
+      } else {
+        const abs_dist = Math.abs(vwap_dist);
+        if (abs_dist > config.vwap_hard_reject_short) {
+          logger.info(`Signal for ${symbol} rejected: price ${abs_dist.toFixed(2)}% from VWAP (hard limit: ${config.vwap_hard_reject_short}%)`);
+          await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'VWAP_FILTER', reject_reason: `Price ${abs_dist.toFixed(2)}% from VWAP, hard limit ${config.vwap_hard_reject_short}%`, raw_confidence: null, raw_rr: signal.risk_reward });
+          return null;
+        } else if (vwap_dist > config.vwap_soft_penalty_short) {
+          vwap_effect = config.vwap_score_near;
+          logger.info(`Signal for ${symbol} bonus: price above VWAP (${vwap_dist.toFixed(2)}%) — good short entry (+${config.vwap_score_near})`);
+        } else if (vwap_dist < -config.vwap_soft_penalty_short) {
+          if (strongDowntrend) {
+            logger.info(`Signal for ${symbol} VWAP override (SHORT): dist=${vwap_dist.toFixed(2)}%, strong downtrend — no penalty`);
+          } else {
+            vwap_effect = -config.vwap_soft_penalty_below;
+            logger.info(`Signal for ${symbol} penalized: ${vwap_dist.toFixed(2)}% below VWAP, overextended short (-${config.vwap_soft_penalty_below})`);
+          }
         }
       }
+
+      logger.info({ symbol, strategy: primaryStrategy, vwap_dist, vwap_effect, strongDowntrend, reason: 'VWAP_EVALUATION' });
     }
 
     vwap_effect = Math.max(-config.vwap_max_bonus_cap, Math.min(config.vwap_max_bonus_cap, vwap_effect));
@@ -256,10 +286,19 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
   }
 
   const sizing = computePositionSizing(signal.entry_price, signal.stop_loss, direction);
-  if (!sizing || sizing.shares_to_buy <= 0) {
-    logger.info(`Signal for ${symbol} rejected: position sizing resulted in 0 shares`);
-    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'POSITION_SIZING', reject_reason: 'Position sizing resulted in 0 shares', raw_confidence: confidence });
+  if (!sizing) {
+    logger.info(`Signal for ${symbol} rejected: position sizing returned null (non-positive risk_per_share)`);
+    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'POSITION_SIZING', reject_reason: 'Position sizing returned null (non-positive risk_per_share)', raw_confidence: confidence });
     return null;
+  }
+  if (sizing.shares_to_buy < 1) {
+    sizing.shares_to_buy = 1;
+    const risk_per_share = direction === 'SHORT'
+      ? signal.stop_loss - signal.entry_price
+      : signal.entry_price - signal.stop_loss;
+    sizing.position_value = roundDecimal(signal.entry_price, 2);
+    sizing.capital_risk_inr = roundDecimal(risk_per_share, 2);
+    logger.info({ symbol, strategy: primaryStrategy, reason: 'POSITION_SIZING_FLOOR_APPLIED' });
   }
 
   let regime_size_multiplier = 1.0;
@@ -280,10 +319,14 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     logger.info(`Signal for ${symbol} regime-scaled: multiplier=${regime_size_multiplier}, shares=${sizing.shares_to_buy}`);
   }
 
-  if (sizing.shares_to_buy <= 0) {
-    logger.info(`Signal for ${symbol} rejected: 0 shares after regime sizing (multiplier: ${regime_size_multiplier})`);
-    await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'POSITION_SIZING', reject_reason: `0 shares after regime sizing (multiplier: ${regime_size_multiplier})`, raw_confidence: confidence });
-    return null;
+  if (sizing.shares_to_buy < 1) {
+    sizing.shares_to_buy = 1;
+    const risk_per_share_floor = direction === 'SHORT'
+      ? signal.stop_loss - signal.entry_price
+      : signal.entry_price - signal.stop_loss;
+    sizing.position_value = roundDecimal(signal.entry_price, 2);
+    sizing.capital_risk_inr = roundDecimal(risk_per_share_floor, 2);
+    logger.info({ symbol, strategy: primaryStrategy, regime_size_multiplier, reason: 'POSITION_SIZING_FLOOR_APPLIED_AFTER_REGIME' });
   }
 
   const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null, direction);
