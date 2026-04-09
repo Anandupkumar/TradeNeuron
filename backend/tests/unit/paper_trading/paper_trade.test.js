@@ -22,6 +22,29 @@ describe('Paper Trade PnL Calculation', () => {
     const pnl = calculateNetPnl(1000, 1001);
     expect(pnl).toBeLessThan(0.1);
   });
+
+  test('should calculate positive net PnL for winning SHORT trade (exit < entry)', () => {
+    const pnl = calculateNetPnl(1000, 900, 'SHORT');
+    expect(pnl).toBeGreaterThan(9);
+    expect(pnl).toBeLessThan(11);
+  });
+
+  test('should calculate negative net PnL for losing SHORT trade (exit > entry)', () => {
+    const pnl = calculateNetPnl(1000, 1100, 'SHORT');
+    expect(pnl).toBeLessThan(-9);
+  });
+
+  test('SHORT costs should mirror LONG costs for symmetric moves', () => {
+    const long_pnl = calculateNetPnl(1000, 1100, 'LONG');
+    const short_pnl = calculateNetPnl(1000, 900, 'SHORT');
+    expect(Math.abs(long_pnl - short_pnl)).toBeLessThan(1);
+  });
+
+  test('should default to LONG when direction not provided', () => {
+    const pnl_default = calculateNetPnl(1000, 1100);
+    const pnl_long = calculateNetPnl(1000, 1100, 'LONG');
+    expect(pnl_default).toBe(pnl_long);
+  });
 });
 
 describe('Gross PnL INR Calculation', () => {

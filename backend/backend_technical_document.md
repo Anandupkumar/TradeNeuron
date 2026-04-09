@@ -50,6 +50,9 @@ backend/
       nifty50_composition.model.js  # Historical NIFTY 50 index composition
       rejected_signal.model.js      # Stores rejected signal candidates with rejection reason
       trade_decision.model.js       # Manual trader decisions (TAKEN/SKIPPED/MODIFIED)
+      strategy_config.model.js      # Per-strategy enable/disable + min_confidence
+      pipeline_run.model.js         # Tracks daily pipeline execution timestamps
+      confidence_calibration.model.js  # Weekly calibration: confidence bucket → actual win rate
     services/
       data_ingestion/
         yahoo.service.js      # Yahoo Finance fetcher
@@ -99,6 +102,7 @@ backend/
       favorite.routes.js
       paper_trade.routes.js
       health.routes.js
+      strategy.routes.js            # Strategy config enable/disable + list
       tradeDecision.routes.js       # Manual trade decision CRUD
     middlewares/
       error_handler.middleware.js
@@ -154,11 +158,12 @@ backend/
     030_create_strategy_config.sql
     031_add_execution_type_to_signals.sql
     032_add_duplicate_reject_stage.sql
-    033_add_raw_score_to_rejected_signals.sql
+    033_add_regime_size_multiplier.sql
     034_create_confidence_calibration.sql
-    035_add_frequency_cap.sql
+    035_add_frequency_cap_reject_stage.sql
     036_create_pipeline_runs.sql
     037_add_min_confidence_to_strategy_config.sql
+    038_add_expired_penalized.sql
   tests/
     unit/
       indicators/
@@ -168,23 +173,28 @@ backend/
       fundamentals/
       sentiment/
       paper_trading/
+      signals/                  # VWAP filter, frequency controller, position sizing tests
+      backtesting/              # Metrics tests
+      utils/                    # Date, math utility tests
+      validations/              # Joi schema tests
     integration/
-      pipeline.test.js
       api.test.js
     fixtures/
-      candles/                  # OHLCV fixture data per symbol
-      fundamentals/             # quoteSummary fixture responses
-      rss/                      # RSS XML fixture responses
+      candles.fixture.js        # OHLCV fixture data per symbol
+      fundamentals.fixture.js   # quoteSummary fixture responses
+      rss.fixture.js            # RSS XML fixture responses
   scripts/
     download_yahoo_data.py    # Python script: downloads OHLCV data via yfinance
     refresh_fundamentals.py   # Python script: weekly fundamental refresh via yfinance (called by cron)
     seed_historical.js        # Reads yahoo_data.json and bulk-inserts into MySQL
     yahoo_data.json           # Downloaded data cache (gitignored)
     run_backtest.js           # Manual backtest trigger
+    run_pipeline.js           # Manual pipeline trigger
     migrate.js                # Run SQL migrations
+    daily_data_refresh.sh     # Shell script: downloads data and runs seed (called by cron)
     sentiment_server.py       # FinBERT FastAPI microservice for sentiment analysis
     requirements.txt          # Python dependencies for sentiment_server.py
-    seed_nifty50_composition.js  # Seeds historical NIFTY 50 composition table
+    seed_nifty50_composition.js  # Seeds historical NIFTY 50 index composition
   .env.example
   package.json
   server.js                   # Express entry point
@@ -340,6 +350,10 @@ ACCOUNT_TYPE=EQUITY
 VWAP_DISTANCE_LONG_DEFAULT=2.0
 VWAP_DISTANCE_BREAKOUT_LONG=3.5
 VWAP_DISTANCE_SHORT_DEFAULT=2.0
+VWAP_SOFT_PENALTY_LONG=2.0               # soft threshold for LONG VWAP penalty
+VWAP_HARD_REJECT_LONG=5.0                # hard reject for LONG above this % from VWAP
+VWAP_SOFT_PENALTY_SHORT=2.0              # soft threshold for SHORT VWAP penalty
+VWAP_HARD_REJECT_SHORT=5.0               # hard reject for TREND_PULLBACK_SHORT (not BREAKDOWN)
 
 # ─── VWAP Scoring ───
 VWAP_SCORE_NEAR=3                    # bonus when price within 2% of VWAP
@@ -677,7 +691,7 @@ CREATE TABLE paper_trades (
     target_price        DECIMAL(12,2)   NOT NULL,
     exit_date           DATE,
     exit_price          DECIMAL(12,2),
-    exit_reason         ENUM('TARGET_HIT', 'SL_HIT', 'EXPIRED', 'MANUAL'),
+    exit_reason         ENUM('TARGET_HIT', 'SL_HIT', 'EXPIRED', 'MANUAL', 'EXPIRED_PENALIZED'),
     pnl_pct             DECIMAL(8,4),
     status              ENUM('OPEN', 'CLOSED') NOT NULL DEFAULT 'OPEN',
     created_at          TIMESTAMP       DEFAULT CURRENT_TIMESTAMP,
@@ -692,7 +706,7 @@ CREATE TABLE paper_trades (
 **Key decisions:**
 - `signal_id` links back to the signals table for traceability. Not a foreign key constraint in MVP to avoid cascade complexity.
 - `actual_entry_price` stores the next-day open price as the realistic entry. `entry_price` retains the signal's theoretical close-based entry. All PnL calculations use `actual_entry_price` when available, falling back to `entry_price`. This eliminates the look-ahead bias of entering at the signal day's close.
-- `pnl_pct` stores net return after transaction costs: `((effective_exit - effective_entry) / effective_entry) * 100`. The effective prices include slippage and brokerage deductions matching the backtesting cost model. See Section 16 for the full calculation.
+- `pnl_pct` stores **direction-aware** net return after transaction costs. LONG uses `(effective_exit - effective_entry) / effective_entry * 100`; SHORT uses `(effective_sell - effective_buyback) / effective_sell * 100`. Both formulas produce positive values for profitable trades and negative for losses, regardless of direction. See Section 16 for the full calculation.
 - Paper trades run in parallel with real signals -- they don't affect signal generation. They exist solely to validate live system performance before committing capital.
 
 ### 4.10 features table alteration
@@ -811,7 +825,7 @@ ALTER TABLE features ADD COLUMN is_high_delivery BOOLEAN DEFAULT NULL;
 CREATE TABLE IF NOT EXISTS signal_outcomes (
     id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     signal_id   BIGINT UNSIGNED NOT NULL,
-    outcome     ENUM('TARGET_HIT','SL_HIT','EXPIRED') NOT NULL,
+    outcome     ENUM('TARGET_HIT','SL_HIT','EXPIRED','EXPIRED_PENALIZED') NOT NULL,
     strategy    VARCHAR(100),
     features_json JSON,
     resolved_at DATE NOT NULL,
@@ -920,6 +934,8 @@ INSERT INTO strategy_config (strategy_name) VALUES
 -- Migration 037 adds min_confidence and sets BREAKDOWN=58, TREND_PULLBACK_SHORT=65
 ```
 
+**Fail-open behavior:** All reads from `strategy_config` are wrapped in a broad `try/catch`. If the query fails for any reason — table not yet migrated, connection error, schema mismatch — the code falls back to treating all 6 strategies as enabled with default thresholds. This applies to both strategy enable/disable checks (`runStrategies`) and per-strategy `min_confidence` lookups (`buildCandidate`). The rationale is that config failures should never silently halt signal generation.
+
 **Key decision:** The weekly calibration job auto-disables strategies with low win rates from paper trade data and auto-re-enables them when performance recovers. The table tracks when and why each strategy was disabled. Strategy enablement is checked at the start of `runStrategies()` — disabled strategies are skipped entirely. Telegram alerts fire on state changes. The `min_confidence` column allows per-strategy confidence thresholds — BREAKDOWN uses 58 (lower than the default 65) because its momentum-driven signals have naturally lower base scores but higher Sharpe ratios.
 
 ### 4.27 execution_type on signals and paper_trades (migration 031)
@@ -995,6 +1011,18 @@ CREATE TABLE pipeline_runs (
 ```
 
 **Key decision:** Tracks actual pipeline execution independently of signal creation. The health endpoint queries `MAX(completed_at) WHERE status = 'completed'` instead of `MAX(signals.created_at)`. This fixes a bug where the frontend showed "Data may be stale" when the pipeline ran but generated 0 signals (no new rows in `signals` meant the old `MAX(created_at)` query returned a stale timestamp). Falls back to `signals.created_at` if the table doesn't exist (pre-migration).
+
+### 4.32 EXPIRED_PENALIZED ENUM extension (migration 038)
+
+```sql
+ALTER TABLE paper_trades
+  MODIFY COLUMN exit_reason ENUM('TARGET_HIT','SL_HIT','EXPIRED','MANUAL','EXPIRED_PENALIZED');
+
+ALTER TABLE signal_outcomes
+  MODIFY COLUMN outcome ENUM('TARGET_HIT','SL_HIT','EXPIRED','EXPIRED_PENALIZED') NOT NULL;
+```
+
+**Key decision:** The runtime code in `paper_trade.service.js` and `signal.service.js` already writes `EXPIRED_PENALIZED` for trades that expire with negligible price movement (below `expired_movement_threshold`). This migration aligns the DB ENUM definitions with the application logic to prevent insert failures on strict MySQL configurations.
 
 ### ER Diagram
 
@@ -1661,6 +1689,7 @@ The `VIX_THRESHOLD` is configurable via `.env` and should be tuned using backtes
 | SIDEWAYS | Range, Mean Reversion | BUY (LONG) |
 | BEARISH | Trend Pullback SHORT, Breakdown SHORT | SELL (SHORT) |
 | HIGH_VOLATILITY | None — skip to status updates | — |
+| UNKNOWN | None — skip to status updates (missing NIFTY/VIX/EMA200 data) | — |
 
 ### 9.2 Strategy 1: Trend Pullback
 
@@ -1851,7 +1880,9 @@ direction   = 'SHORT'
 ```
 FUNCTION runStrategies(symbol, date, market_regime)
     enabled_strategies = FETCH strategy_config WHERE is_enabled = true
-    // Fail-open: if strategy_config table doesn't exist, run all strategies
+    // Fail-open: if strategy_config query fails for ANY reason (table missing,
+    // connection error, schema mismatch), fall back to all 6 strategies enabled.
+    // This ensures the pipeline never stops generating signals due to config issues.
 
     raw_signals = []
 
@@ -1882,7 +1913,7 @@ FUNCTION runStrategies(symbol, date, market_regime)
     RETURN raw_signals
 ```
 
-Strategies are dynamically enabled/disabled via the `strategy_config` table. The weekly calibration job evaluates per-strategy paper trade performance and auto-disables underperforming strategies (win rate < 40% with >= 15 trades). See Section 18 for calibration details.
+Strategies are dynamically enabled/disabled via the `strategy_config` table (fail-open: any query error falls back to all 6 enabled). The weekly calibration job evaluates per-strategy paper trade performance and auto-disables underperforming strategies (win rate < 40% with >= 15 trades). See Section 18 for calibration details.
 
 ---
 
@@ -2236,6 +2267,9 @@ FUNCTION _scoreInternal(symbol, date, direction = 'LONG')
         IF features.is_high_delivery AND is_breakdown
             quality += 10
 
+        IF features.is_near_vwap
+            quality += VWAP_SCORE_NEAR   // +3 — ideal entry quality bonus
+
     ELSE:    // LONG
         w_trend    = adaptive ? adaptive.trend    : SCORING_WEIGHTS.TREND        // 30
         w_rsi      = adaptive ? adaptive.rsi      : SCORING_WEIGHTS.RSI_PULLBACK // 20
@@ -2258,6 +2292,9 @@ FUNCTION _scoreInternal(symbol, date, direction = 'LONG')
 
         IF features.is_high_delivery AND features.is_breakout
             quality += 10
+
+        IF features.is_near_vwap
+            quality += VWAP_SCORE_NEAR   // +3 — ideal entry quality bonus
 
     // Volume scoring — same for both directions
     volume_tier = features.volume_tier OR 'normal'
@@ -2291,30 +2328,32 @@ The breakdown object stored on each signal has this shape:
 | technical | Trend alignment (`w_trend`) + Breakout (`w_breakout`) | 50 |
 | momentum | RSI pullback (`w_rsi`) | 20 |
 | volume | Volume tier score (RVOL-based) | 30 |
-| quality | High delivery + breakout bonus | 10 |
+| quality | High delivery + breakout/breakdown bonus (+10), VWAP entry quality bonus (+VWAP_SCORE_NEAR) | 13 |
 
 ### Explainability (buildExplanations)
 
-A companion function `buildExplanations(feature, indicator, regime, sentiment, direction)` produces an array of plain-English sentences using the same feature and indicator data that `calculateScore` evaluates. It is direction-aware: for LONG it covers trend alignment, RSI pullback, breakout, and delivery quality; for SHORT it covers downtrend alignment, RSI overbought, breakdown confirmation, and institutional selling. Volume tier and sentiment explanations are shared. The result is stored as `explanation` JSON on the signal.
+A companion function `buildExplanations(feature, indicator, regime, sentiment, direction)` produces an array of plain-English sentences using the same feature and indicator data that `calculateScore` evaluates. It is direction-aware: for LONG it covers trend alignment, RSI pullback, breakout, delivery quality, and VWAP entry quality; for SHORT it covers downtrend alignment, RSI overbought, breakdown confirmation, institutional selling, and VWAP entry quality. Volume tier and sentiment explanations are shared. The result is stored as `explanation` JSON on the signal.
 
-### Normalization for Merged Signals
+### Scoring for Merged Signals
 
-When the same symbol triggers multiple strategies on the same date, scores are combined:
+When the same symbol triggers multiple strategies on the same date, the strategies are merged (SL, target, strategy names combined) but scoring runs **once** via `calculateScoreWithBreakdown(symbol, date, direction)` — it evaluates the symbol's features and indicators on that date, not per-strategy. The confidence is then clamped to `[0, 100]` after soft penalties are applied.
 
-```
-merged_score = MIN(sum_of_individual_scores, 100)
-```
-
-The confidence value equals the merged score. The `MIN(..., 100)` cap ensures confidence stays in the 0-100 range.
+**Note:** `scoring.service.js` contains a `mergeScores()` helper that sums individual strategy scores, but it is **not called** in the current pipeline. All merged signals use the single-invocation path.
 
 ### Gate Conditions
 
-A signal is emitted only if ALL conditions pass:
+A signal is emitted only if ALL conditions pass, evaluated in this exact order in `buildCandidate()`:
 
-1. `confidence >= MIN_CONFIDENCE` (default: 70)
-2. `risk_reward >= MIN_RISK_REWARD` (default: 2.0)
-3. Number of current ACTIVE signals < `MAX_ACTIVE_SIGNALS` (default: 10)
-4. Number of ACTIVE signals in the same sector < `MAX_SECTOR_SIGNALS` (default: 3)
+1. **DUPLICATE** — No existing active signal for this symbol+direction
+2. **MERGED_RISK_ZERO** — Merged stop loss produces positive risk (`risk > 0`)
+3. **VWAP_FILTER** — VWAP distance within acceptable range (context-aware, strategy-aware for SHORT)
+4. **PCR_FILTER** — Put-Call Ratio not extreme for LONG signals (`< 1.8` hard, `< 1.4` soft)
+5. **Scoring** — `calculateScoreWithBreakdown()` runs, soft penalties applied (VWAP + PCR + sentiment)
+6. **CONFIDENCE_GATE** — `confidence >= min_conf` (per-strategy from `strategy_config`, or pool floor 60, or strict 70)
+7. **RR_GATE** — `risk_reward >= min_rr` (pool floor 1.5, or strict 2.0)
+8. **ACTIVE_CAP** — Total active signals < `MAX_ACTIVE_SIGNALS` (default: 10)
+9. **SECTOR_GATE** — Active signals in same sector+direction < `MAX_SECTOR_SIGNALS` (default: 3)
+10. **POSITION_SIZING** — Valid position size computed (risk per share > 0, floored to 1 share minimum)
 
 ### Confidence Tier System
 
@@ -2387,11 +2426,12 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
 
     // Determine primary strategy — BREAKDOWN takes priority when merged
     primaryStrategy = signal.strategy includes 'BREAKDOWN' ? 'BREAKDOWN' : first strategy
-    strongDowntrend = NOT is_uptrend AND ema50_slope < -MIN_EMA50_SLOPE
 
-    // Per-strategy confidence threshold from strategy_config table
-    strategyConfig = getByName(primaryStrategy)
-    min_conf = strategyConfig.min_confidence ?? default_min_conf
+    // Per-strategy confidence threshold from strategy_config table.
+    // getByName() can throw on DB errors — caught by the per-symbol try/catch
+    // in the pipeline (Step 10), which skips the symbol and continues.
+    strategyConfig = getByName(primaryStrategy)       // returns null if no row
+    min_conf = strategyConfig?.min_confidence ?? default_min_conf
 
     features = FETCH features for symbol, date
     vwap_effect = 0
@@ -2475,6 +2515,22 @@ FUNCTION buildCandidate(symbol, date, raw_signals)
         LOG + INSERT rejected_signals(RR_GATE)
         RETURN null
 
+    // Position sizing — floor at 1 share to prevent valid signals being rejected
+    sizing = computePositionSizing(entry_price, stop_loss, direction)
+    IF sizing == null → LOG + INSERT rejected_signals(POSITION_SIZING) → RETURN null
+    IF sizing.shares_to_buy < 1
+        sizing.shares_to_buy = 1
+        LOG: "POSITION_SIZING_FLOOR_APPLIED" { symbol, strategy: primaryStrategy }
+
+    // Regime-based sizing adjustment (ranging market or high VIX)
+    IF is_ranging → regime_size_multiplier = 0.5
+    ELSE IF vix_close > VIX_THRESHOLD → regime_size_multiplier = 0.7
+    IF regime_size_multiplier < 1.0
+        sizing.shares_to_buy = FLOOR(sizing.shares_to_buy * regime_size_multiplier)
+        IF sizing.shares_to_buy < 1
+            sizing.shares_to_buy = 1
+            LOG: "POSITION_SIZING_FLOOR_APPLIED_AFTER_REGIME" { symbol, strategy, regime_size_multiplier }
+
     explanation = buildExplanations(scoreFeature, scoreIndicator, regime, sentiment, direction)
 
     // Resolve execution type based on direction and account type
@@ -2510,7 +2566,7 @@ Every `RETURN null` path in `buildCandidate` writes to the `rejected_signals` ta
 | Merged SL risk | `MERGED_RISK_ZERO` | Risk <= 0 after SL merge |
 | VWAP distance | `VWAP_FILTER` | Price stretched beyond hard VWAP threshold (5.0%). Context-aware penalties for 2-5% range with breakout/trend overrides |
 | Put-Call Ratio | `PCR_FILTER` | PCR > 1.8 for LONG signals (hard reject), 1.4-1.8 soft penalty |
-| Confidence | `CONFIDENCE_GATE` | Confidence below pool floor (60) or strict threshold (20) |
+| Confidence | `CONFIDENCE_GATE` | Confidence below per-strategy `min_confidence` from `strategy_config` (BREAKDOWN: 58, others: 65), falling back to pool floor (60) or strict threshold (70) when not set |
 | Risk:Reward | `RR_GATE` | R:R below pool floor (1.5) or strict threshold (2.0) |
 | Active cap | `ACTIVE_CAP` | Active signals at capacity |
 | Sector cap | `SECTOR_GATE` | Sector signals at capacity |
@@ -2739,6 +2795,8 @@ SHORT:
 net_return_pct  = (effective_exit - effective_entry) / effective_entry * 100
 ```
 
+**Sign convention note:** The backtest `calculateNetReturn` returns the raw price return — for SHORT trades, a negative value indicates profit (the price dropped from your sell price). Win/loss is determined by the `result` field from `simulateTrade`, not the sign of `net_return_pct`. The paper trading `calculateNetPnl` uses a different convention: it returns direction-normalized P&L where positive always means profit and negative always means loss (see Section 16). This ensures the frontend can display green/red PnL correctly for both directions.
+
 ### Metrics Calculation
 
 **File:** `src/services/backtesting/metrics.service.js`
@@ -2938,13 +2996,18 @@ FUNCTION updatePaperTrades()
         // Use actual_entry_price (next-day open) for PnL; fall back to entry_price
         entry_for_pnl = trade.actual_entry_price ?? trade.entry_price
 
-        // Apply the same cost model as backtesting (Section 14) so paper
-        // trade results are directly comparable to backtest results.
-        // Both show net returns after slippage and brokerage.
-        total_cost_pct  = SLIPPAGE_PCT + BROKERAGE_PCT              // default: 0.15%
-        effective_entry = entry_for_pnl * (1 + total_cost_pct / 100)
-        effective_exit  = exit_price * (1 - total_cost_pct / 100)
-        pnl_pct = ((effective_exit - effective_entry) / effective_entry) * 100
+        // Direction-aware cost model matching backtesting (Section 14).
+        // Positive pnl_pct = profit, negative = loss, regardless of direction.
+        cost = (SLIPPAGE_PCT + BROKERAGE_PCT) / 100                 // default 0.0015
+
+        IF direction == 'SHORT'
+            effective_sell    = entry_for_pnl * (1 - cost)          // selling receives less
+            effective_buyback = exit_price * (1 + cost)             // buying back costs more
+            pnl_pct = ((effective_sell - effective_buyback) / effective_sell) * 100
+        ELSE  // LONG
+            effective_entry = entry_for_pnl * (1 + cost)            // buying costs more
+            effective_exit  = exit_price * (1 - cost)               // selling receives less
+            pnl_pct = ((effective_exit - effective_entry) / effective_entry) * 100
 
         // Compute absolute rupee PnL
         IF signal.direction == 'LONG'
@@ -3985,7 +4048,7 @@ FUNCTION runDailyPipeline()
 - **BULLISH:** All 4 long strategies fire (Trend Pullback, Breakout, Range, Mean Reversion). Proceed normally through Steps 7-11.
 - **SIDEWAYS:** Only Range and Mean Reversion strategies fire in Step 7. Steps 8-11 proceed normally.
 - **BEARISH:** Only short strategies fire (Trend Pullback SHORT, Breakdown SHORT) in Step 7. Steps 8-11 proceed normally.
-- **HIGH_VOLATILITY:** Skip directly to Step 12. No signals generated.
+- **HIGH_VOLATILITY or UNKNOWN:** Skip directly to Step 12. No signals generated.
 
 **Step summary:**
 
@@ -4152,7 +4215,7 @@ Sends notifications via Telegram Bot API when `TELEGRAM_BOT_TOKEN` and `TELEGRAM
 
 | Event | Message |
 |-------|---------|
-| Pipeline success | Signal count, market regime, duration |
+| Pipeline success | Signal count, market regime, duration, rejection breakdown by stage (count + %), VWAP quality audit (7-day avg confidence + R:R of VWAP-rejected signals) |
 | Pipeline failure | Error message and failing step |
 | Zero signals (non-volatile) | Warning when regime is not HIGH_VOLATILITY |
 | HIGH_VOLATILITY early exit | Notification that pipeline skipped signal generation |

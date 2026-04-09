@@ -1,8 +1,9 @@
+import { Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DataTable } from '../common/DataTable';
 import { SignalBadge } from '../signals/SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
-import { formatINR, formatPct, formatDate } from '../../utils/format';
+import { formatINR, formatPct, formatDate, formatExitReason } from '../../utils/format';
 import type { PaperTrade } from '../../types';
 
 interface PaperTradeTableProps {
@@ -97,7 +98,17 @@ const columns = [
     header: 'Exit Reason',
     render: (t: PaperTrade) =>
       t.exit_reason ? (
-        <span className="text-xs text-muted-foreground">{t.exit_reason.split('_').join(' ')}</span>
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          {formatExitReason(t.exit_reason)}
+          {t.exit_reason === 'EXPIRED_PENALIZED' && (
+            <span className="group relative">
+              <Info className="h-3 w-3 text-amber-400" />
+              <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded bg-popover px-2 py-1 text-[10px] text-popover-foreground opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                Opportunity cost penalty applied due to negligible price movement
+              </span>
+            </span>
+          )}
+        </span>
       ) : (
         <span className="text-muted-foreground">—</span>
       ),

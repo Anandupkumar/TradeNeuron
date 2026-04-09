@@ -5,6 +5,7 @@ import { SignalBadge } from './SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
 import { ExecutionBadge } from './ExecutionBadge';
 import { ConfidenceBreakdownBar } from './ConfidenceBreakdownBar';
+import { ConfidenceBar } from '../common/ConfidenceBar';
 import { ExplainabilityPanel } from './ExplainabilityPanel';
 import { TradeChecklist } from './TradeChecklist';
 import { DecisionOverridePanel } from './DecisionOverridePanel';
@@ -91,10 +92,13 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
             {!signal.is_executable && <ExecutionBadge execution_type={signal.execution_type} />}
           </div>
 
-          <ConfidenceBreakdownBar
-            breakdown={signal.confidence_breakdown}
-            confidence={signal.confidence}
-          />
+          <div className="space-y-2">
+            <ConfidenceBar value={signal.confidence} tier={signal.confidence_tier} />
+            <ConfidenceBreakdownBar
+              breakdown={signal.confidence_breakdown}
+              confidence={signal.confidence}
+            />
+          </div>
 
           <div className="divide-y divide-border/50 rounded-lg border border-border bg-card px-4">
             {priceRow('Entry Price', signal.entry_price, 'text-foreground')}
