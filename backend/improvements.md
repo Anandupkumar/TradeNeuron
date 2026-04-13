@@ -1,228 +1,244 @@
-# TradeNeuron — Signal Pipeline Improvement Plan
+# TradeNeuron — Execution Improvement Plan
 
-**Date:** 2026-04-08  
-**Scope:** `signal.service.js`, `strategy_config` table, position sizing block  
-**Trigger:** 64.6% of signals rejected by VWAP filter; BREAKDOWN strategy generating 0 live signals despite being the best-performing strategy (Sharpe 4.77, Profit Factor 2.05x)
-
----
-
-## Root Cause Summary
-
-The VWAP hard-reject threshold (`> 5%`) was designed for LONG signals where price far from VWAP indicates overextension. It was applied symmetrically to SHORT/BREAKDOWN signals — where being deeply below VWAP is a *confirmation* of momentum, not a disqualifier. The system was rejecting its own best strategy at the highest rate.
+## Guiding Principles
+- Fix data integrity & bias first
+- Avoid double-counting signals
+- Prefer soft scoring over hard rejects
+- Maintain backward compatibility
 
 ---
 
-## Change 1 — Fix VWAP Logic for BREAKDOWN (Priority 1)
+# 🔴 Phase 1 — Critical Fixes (Before Next Live Signals)
 
-**File:** `src/services/signals/signal.service.js` → `buildCandidate()`
-
-### What to change
-
-Replace the flat 5% hard reject for SHORT signals with strategy-aware logic. Before the VWAP block, extract the primary strategy:
-
-```javascript
-const primaryStrategy = signal.strategies.includes('BREAKDOWN')
-    ? 'BREAKDOWN'
-    : signal.strategies[0];
-```
-
-BREAKDOWN always takes priority over TREND_PULLBACK_SHORT if both are present. This resolves VWAP logic ambiguity when both strategies fire for the same symbol in a BEARISH regime.
-
-Then replace the SHORT VWAP block with:
-
-```javascript
-if (primaryStrategy === 'BREAKDOWN') {
-    // No hard reject based on distance — deep below VWAP = momentum confirmation
-    // Safety ceiling: reject only on data anomaly
-    if (Math.abs(vwap_dist) > 20) {
-        logger.warn({ symbol, vwap_dist, reason: 'VWAP_ANOMALY_REJECT' });
-        return null;
-    }
-
-    if (vwap_dist <= -5)      vwap_effect = +10;  // strong momentum
-    else if (vwap_dist <= -2) vwap_effect = +5;   // moderate momentum
-    else                       vwap_effect = -5;   // price near/above VWAP — weak setup
-
-} else {
-    // TREND_PULLBACK_SHORT: existing logic preserved
-    if (Math.abs(vwap_dist) > VWAP_HARD_REJECT_SHORT) {
-        // existing hard reject
-    }
-    // ... existing scoring
+## 1. Fix Quality Scoring (SHORT branch)
+**File:** `scoring.service.js`
+```js
+if (direction === 'SHORT') {
+  if (features.is_high_delivery) quality += 6
+  if (features.ema50_slope < -0.5) quality += 3
+  if (features.is_near_vwap) quality += 3
+  quality = Math.min(quality, 12)
 }
 ```
 
-### Cap the vwap_effect
+---
 
-After all VWAP scoring, apply the cap before composing effects:
+## 2. Expand RSI Logic for SHORT
+**File:** `trend_pullback_short.strategy.js`
+```js
+const nearResistance = close >= highest(high, 10) * 0.97
 
-```javascript
-vwap_effect = Math.max(-10, Math.min(10, vwap_effect));
+const validShort =
+  (rsi_zone === 'OVERBOUGHT') ||
+  (
+    rsi_zone === 'NEUTRAL' &&
+    features.ema50_slope < 0 &&
+    nearResistance &&
+    features.relative_strength_vs_nifty < 0
+  )
 ```
-
-This prevents the `+10` VWAP boost from combining with the `+5` downtrend boost (Change 2) to inflate confidence artificially.
-
-### Why this matters
-
-| Before | After |
-|--------|-------|
-| BREAKDOWN rejected if price > 5% below VWAP | BREAKDOWN rewarded if price > 5% below VWAP |
-| VWAP acts as trade killer | VWAP acts as momentum detector |
-| 64.6% of rejections from VWAP | Expected significant reduction |
 
 ---
 
-## Change 2 — Fix strongDowntrend Override (Priority 1)
+## 3. Earnings Blackout Window
+**File:** `daily_pipeline.job.js`
+```js
+const daysTo = tradingDaysUntil(today, earningsDate)
+const daysSince = tradingDaysBetween(earningsDate, today)
 
-**File:** `src/services/signals/signal.service.js` → `buildCandidate()`
-
-### What to change
-
-Verify the downtrend override condition is checking the correct direction. The current code may be using the LONG version. It must be:
-
-```javascript
-const strongDowntrend =
-    !features.is_uptrend &&
-    features.ema50_slope < -MIN_EMA50_SLOPE;  // negative slope = falling EMA50
-```
-
-Then extend the override to reward momentum instead of just neutralising the penalty:
-
-```javascript
-if (primaryStrategy === 'BREAKDOWN' && strongDowntrend && vwap_dist <= -5) {
-    vwap_effect += 5;  // extra boost: strong downtrend + deep below VWAP = high conviction
+if ((daysTo >= 1 && daysTo <= 2) || (daysSince >= 0 && daysSince <= 1)) {
+  rejectSignal('EARNINGS_BLACKOUT')
 }
 ```
 
-This combined with Change 1 means a confirmed breakdown in a strong downtrend scores up to `+15` from VWAP context, capped at `+10` by the cap in Change 1.
+---
+
+## 4. Confidence Calibration (Bayesian Adjustment)
+**File:** `signal.service.js`
+```js
+const cal = await getCalibration(strategy, raw_confidence)
+
+if (cal && cal.sample_size >= 20) {
+  const priorWeight = 20
+
+  const adjusted =
+    (raw_confidence * priorWeight + cal.win_rate * 100 * cal.sample_size) /
+    (priorWeight + cal.sample_size)
+
+  signal.confidence = Math.round(adjusted)
+  signal.calibrated = true
+}
+```
 
 ---
 
-## Change 3 — Per-Strategy Confidence Threshold (Priority 2)
+## 5. Backtesting Regime Correction
+**File:** `backtest.service.js`
+```js
+const histRegime = computeHistoricalRegime(signal.date)
 
-**File:** Migration `033_add_min_confidence_to_strategy_config.sql` + `buildCandidate()`
+if (isShortStrategy(signal)) {
+  if (histRegime !== 'BEARISH') {
+    signal.confidence *= 0.7
+  }
+}
+```
 
-### Migration
+---
 
+# 🟠 Phase 2 — Signal Quality Improvements
+
+## 6. Stock EMA200 Confirmation
 ```sql
-ALTER TABLE strategy_config
-    ADD COLUMN min_confidence INT NOT NULL DEFAULT 65;
-
-UPDATE strategy_config SET min_confidence = 58 WHERE strategy_name = 'BREAKDOWN';
-UPDATE strategy_config SET min_confidence = 65 WHERE strategy_name = 'TREND_PULLBACK_SHORT';
+ALTER TABLE features ADD COLUMN is_below_ema200 BOOLEAN;
 ```
+- Use as score boost (+5), not hard filter
 
-### Code change in buildCandidate()
+---
 
-```javascript
-const strategyConfig = await getStrategyConfig(primaryStrategy);
-const minConf = strategyConfig?.min_confidence ?? POOL_MIN_CONFIDENCE;
-
-if (confidence < minConf) {
-    logger.info({ symbol, confidence, minConf, strategy: primaryStrategy, reason: 'CONFIDENCE_GATE' });
-    await insertRejectedSignal({ symbol, stage: 'CONFIDENCE_GATE', confidence });
-    return null;
+## 7. Sector Confirmation
+```js
+if (sectorTrend !== stockDirection) {
+  confidence -= 10
 }
 ```
 
-Do not hardcode the threshold in JS. The `strategy_config` table exists for this purpose — thresholds stay tunable without a redeploy.
-
-### Rationale for 58 (not 55)
-
-With limited capital, a lower floor increases trade frequency but also junk trade risk. 58 captures more BREAKDOWN setups while keeping a meaningful quality buffer.
-
 ---
 
-## Change 4 — Position Sizing Floor (Priority 2)
-
-**File:** `src/services/signals/signal.service.js` → position sizing block
-
-### What to change
-
-After the `FLOOR()` calculation, add a minimum guard:
-
-```javascript
-if (shares_to_buy < 1) {
-    shares_to_buy = 1;
-    logger.info({ symbol, strategy: primaryStrategy, reason: 'POSITION_SIZING_FLOOR_APPLIED' });
+## 8. Sentiment Entity Mapping
+```js
+const SYMBOL_SEARCH_NAMES = {
+  'TCS.NS': 'Tata Consultancy Services'
 }
 ```
 
-The log line is important here — it lets you track how often the floor fires so you can decide whether to adjust `RISK_PCT_PER_TRADE` or `TOTAL_CAPITAL_INR` instead.
+---
 
-### Context
-
-Only 3 rejections (3.7%) in the 30-day window were POSITION_SIZING. This is a low-impact fix but a correct one — no valid signal should be rejected purely because `FLOOR()` rounds to zero.
+## 9. ATR Stop-Loss Cap
+```js
+const maxSL = entry * 0.06
+stopLoss = Math.min(calculatedSL, maxSL)
+```
 
 ---
 
-## Change 5 — Verify Regime Routing (Verify Only, No Code Change)
-
-**File:** `strategy_config` table
-
-### What to check
-
-Regime-based strategy routing already exists in `strategies/index.js`. BREAKDOWN and TREND_PULLBACK_SHORT only fire in BEARISH regime. Do not re-implement this.
-
-Instead, run the following before deploying any of the above changes:
-
+## 10. Rename VWAP → VWMA
 ```sql
-SELECT strategy_name, is_enabled, min_confidence
-FROM strategy_config
-WHERE strategy_name IN ('BREAKDOWN', 'TREND_PULLBACK_SHORT');
+ALTER TABLE features CHANGE vwap vwma DECIMAL(10,2);
+ALTER TABLE features CHANGE vwap_distance_pct vwma_distance_pct DECIMAL(5,2);
 ```
-
-If `is_enabled = 0` for BREAKDOWN, the weekly auto-disable cron flagged it for low win rate. Re-enable it:
-
-```sql
-UPDATE strategy_config SET is_enabled = 1 WHERE strategy_name = 'BREAKDOWN';
-```
-
-This may be the only change needed if the auto-disable cron ran during a thin data period.
 
 ---
 
-## Guardrail — Logging (Do Not Skip)
-
-Add the following log line inside the VWAP evaluation block for BREAKDOWN. This is how you verify the fix is working after deploy without waiting for the next backtest run:
-
-```javascript
-logger.info({
-    symbol,
-    strategy: primaryStrategy,
-    vwap_dist,
-    vwap_effect,
-    strongDowntrend,
-    reason: 'VWAP_EVALUATION'
-});
+## 11. Futures SL Buffer
+```js
+if (execution_type === 'FUTURES') {
+  stopLoss *= 1.003
+}
 ```
 
-After the next pipeline run, search logs for `VWAP_EVALUATION` and confirm:
+---
 
-- BREAKDOWN signals are getting `vwap_effect > 0` when `vwap_dist < -5`
-- No BREAKDOWN signals are being rejected at `VWAP_FILTER` stage (unless > 20%)
-- TREND_PULLBACK_SHORT signals are still being rejected when stretched far from VWAP (that logic is correct and must not change)
+# 🟢 Phase 3 — Portfolio & Risk Engine
+
+## 12. Correlation-Based Position Scaling
+```js
+const sameSectorCount = getActiveSignals(symbol, sector)
+adjustedRisk = baseRisk / (sameSectorCount + 1)
+```
 
 ---
 
-## What Not to Touch
+## 13. Dynamic Signal Frequency
+```js
+const multiplier = {
+  BULLISH: 1.0,
+  BEARISH: 0.7,
+  SIDEWAYS: 0.6
+}
 
-| Component | Reason |
-|-----------|--------|
-| R:R = 2:1 | Correct for current capital and holding period |
-| SL logic | Working as intended in both strategies |
-| Base scoring weights (scoring.service.js) | VWAP changes go in buildCandidate(), not the scoring engine |
-| Duplicate filter | Preventing overtrading — keep as-is |
-| Confidence scoring formula | Do not adjust weights; only the minimum threshold changes |
-| TREND_PULLBACK_SHORT VWAP hard reject | The 5% limit is correct for this strategy; preserve it |
-| BREAKOUT / RANGE strategies | Already gated to BULLISH/SIDEWAYS regime; no change needed |
+maxSignals = BASE_MAX * multiplier[regime]
+```
 
 ---
 
-## Implementation Order
+## 14. Drawdown-Based Risk Scaling
+```js
+if (drawdown > 0.15) riskScale = 0.5
+else if (drawdown > 0.08) riskScale = 0.75
+else riskScale = 1.0
+```
 
-1. **Before anything:** Run the `strategy_config` query above. If BREAKDOWN is disabled, re-enable it and monitor for one pipeline cycle before making code changes.
-2. **Changes 1 + 2** together — single block in `buildCandidate()`, ~20 lines.
-3. **Migration 033** + Change 3 — run migration, update `buildCandidate()` confidence gate.
-4. **Change 4** — one-line fix with a log statement.
-5. After the first pipeline run with changes live, search logs for `VWAP_EVALUATION` to confirm BREAKDOWN is receiving positive VWAP scores.
+---
+
+## 15. Signal Freshness / Gap Handling
+```js
+const drift = Math.abs(actual - entry) / entry
+
+if (drift > 0.02 && gapAgainstTrade) {
+  signal.entry_degraded = true
+}
+```
+
+---
+
+## 16. Portfolio Risk Cap
+```js
+if (totalCapitalRisk > 0.05 * capital) {
+  rejectSignal('PORTFOLIO_RISK_CAP')
+}
+```
+
+---
+
+## 17. Directional Exposure Control
+```js
+if (shortExposure > 0.7 * totalExposure) {
+  reducePositionSize()
+}
+```
+
+---
+
+# 📅 Execution Timeline
+
+## Week 1
+- Complete Phase 1
+
+## Week 2
+- EMA200
+- Sentiment fix
+- SL cap
+- VWMA rename
+
+## Week 3
+- Sector confirmation
+- Futures adjustment
+
+## Week 4+
+- Portfolio risk engine
+- Correlation control
+- Drawdown scaling
+- Signal freshness
+
+---
+
+# 🎯 Final Outcome
+
+### After Phase 1
+Accurate, bias-free signals
+
+### After Phase 2
+Higher-quality signals
+
+### After Phase 3
+Portfolio-safe, capital-protected system
+
+---
+
+# 🧠 Summary
+
+This plan upgrades TradeNeuron from:
+
+**Signal Generator → Risk-Aware Trading System**
+
