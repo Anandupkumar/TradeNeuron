@@ -22,4 +22,16 @@ async function getLatest() {
   return rows;
 }
 
-module.exports = { upsertBucket, getLatest };
+async function findLatestForBucket(confidence_bucket) {
+  const sql = `
+    SELECT confidence_bucket, total_signals, actual_win_rate, computed_at
+    FROM confidence_calibration
+    WHERE confidence_bucket = ?
+    ORDER BY computed_at DESC
+    LIMIT 1
+  `;
+  const [rows] = await pool.query(sql, [confidence_bucket]);
+  return rows[0] || null;
+}
+
+module.exports = { upsertBucket, getLatest, findLatestForBucket };

@@ -68,7 +68,7 @@ export function PipelineStatusBar() {
   );
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5">
       <span
         className={cn('inline-block h-2 w-2 rounded-full', dot_colors[variant])}
       />

@@ -90,7 +90,7 @@ export function Topbar() {
   return (
     <header
       className={cn(
-        'flex items-center justify-between border-b border-border bg-background px-6 py-3',
+        'flex items-center justify-between border-b border-border bg-background/95 px-6 py-3 backdrop-blur',
       )}
     >
       <PipelineStatusBar />
@@ -101,7 +101,7 @@ export function Topbar() {
             type="button"
             onClick={() => set_open(true)}
             className={cn(
-              'flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-1.5 text-sm text-muted-foreground transition-colors',
+              'flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground transition-colors',
               'hover:bg-accent hover:text-foreground',
             )}
           >

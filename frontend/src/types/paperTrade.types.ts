@@ -21,6 +21,12 @@ export interface PaperTrade {
   pnl_pct: number | null;
   gross_pnl_inr: number | null;
   status: TradeStatus;
+  exit_policy?: Record<string, unknown> | null;
+  max_hold_days?: number | null;
+  mfe_pct?: number | null;
+  mae_pct?: number | null;
+  bars_held?: number | null;
+  entry_gap_pct?: number | null;
 }
 
 export interface PaperTradingSummary {

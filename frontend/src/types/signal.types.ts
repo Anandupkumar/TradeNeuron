@@ -5,6 +5,7 @@ export type SignalDirection = 'LONG' | 'SHORT';
 export type SignalStatus = 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED';
 export type ConfidenceTier = 'HIGH' | 'NORMAL' | 'LOW';
 export type ExecutionType = 'EQUITY' | 'FUTURES' | 'OPTIONS' | 'NONE';
+export type SignalMarketRegime = 'BULLISH' | 'SIDEWAYS' | 'BEARISH' | 'HIGH_VOLATILITY' | 'UNKNOWN';
 
 export type StrategySource =
   | 'TREND_PULLBACK'
@@ -16,10 +17,10 @@ export type StrategySource =
   | string;
 
 export interface ConfidenceBreakdown {
-  technical: number;
-  momentum: number;
-  volume: number;
-  quality: number;
+  technical: number | null;
+  momentum: number | null;
+  volume: number | null;
+  quality: number | null;
 }
 
 export interface Signal {
@@ -31,6 +32,9 @@ export interface Signal {
   execution_type: ExecutionType;
   is_executable: boolean;
   confidence: number;
+  raw_confidence: number | null;
+  confidence_calibrated: boolean;
+  entry_degraded: boolean;
   confidence_tier: ConfidenceTier | null;
   entry_price: number;
   stop_loss: number;
@@ -44,6 +48,11 @@ export interface Signal {
   status: SignalStatus;
   strategy_source: StrategySource;
   sector: string | null;
+  market_regime?: SignalMarketRegime | null;
+  ranking_score?: number | null;
+  ranking_components?: Record<string, number | null> | null;
+  exit_policy?: Record<string, unknown> | null;
+  max_hold_days?: number | null;
   is_favorite: boolean;
   created_at: string;
   closed_at: string | null;
@@ -62,7 +71,7 @@ export interface SignalFilters {
   favorites_only?: boolean;
   page?: number;
   limit?: number;
-  sort_by?: 'date' | 'confidence' | 'risk_reward' | 'symbol';
+  sort_by?: 'date' | 'confidence' | 'risk_reward' | 'symbol' | 'ranking_score';
   sort_order?: 'asc' | 'desc';
 }
 

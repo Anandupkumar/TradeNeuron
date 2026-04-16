@@ -2,12 +2,22 @@ const { pool } = require('../config/db');
 
 async function create(signal) {
   const sql = `
-    INSERT INTO signals (symbol, date, signal_type, confidence, confidence_tier, entry_price, stop_loss, target_price, risk_reward, reasons, status, strategy_source, direction, execution_type, is_executable, shares_to_buy, position_value, capital_risk_inr, regime_size_multiplier, explanation, confidence_breakdown)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO signals (
+      symbol, date, signal_type, confidence, raw_confidence, confidence_calibrated,
+      entry_degraded, confidence_tier, entry_price, stop_loss, target_price,
+      risk_reward, reasons, status, strategy_source, direction, execution_type,
+      is_executable, shares_to_buy, position_value, capital_risk_inr,
+      regime_size_multiplier, explanation, confidence_breakdown, market_regime,
+      ranking_score, ranking_components, exit_policy, max_hold_days
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     signal.symbol, signal.date, signal.signal_type || 'BUY',
     signal.confidence,
+    signal.raw_confidence != null ? signal.raw_confidence : signal.confidence,
+    signal.confidence_calibrated != null ? (signal.confidence_calibrated ? 1 : 0) : 0,
+    signal.entry_degraded != null ? (signal.entry_degraded ? 1 : 0) : 0,
     signal.confidence_tier || null,
     signal.entry_price, signal.stop_loss,
     signal.target_price, signal.risk_reward,
@@ -22,6 +32,11 @@ async function create(signal) {
     signal.regime_size_multiplier != null ? signal.regime_size_multiplier : 1.00,
     signal.explanation ? JSON.stringify(signal.explanation) : null,
     signal.confidence_breakdown ? JSON.stringify(signal.confidence_breakdown) : null,
+    signal.market_regime || null,
+    signal.ranking_score != null ? signal.ranking_score : null,
+    signal.ranking_components ? JSON.stringify(signal.ranking_components) : null,
+    signal.exit_policy ? JSON.stringify(signal.exit_policy) : null,
+    signal.max_hold_days != null ? signal.max_hold_days : null,
   ];
   const [result] = await pool.query(sql, params);
   return { id: result.insertId, ...signal };
@@ -95,7 +110,7 @@ async function findAll({ page = 1, limit = 20, sort_by = 'date', sort_order = 'D
 
   const where = where_clauses.length > 0 ? `WHERE ${where_clauses.join(' AND ')}` : '';
   const join = use_join ? `INNER JOIN favorites f ON f.symbol = s.symbol AND f.user_identifier = '${user_id.replace(/'/g, "''")}'` : '';
-  const allowed_sort = ['date', 'confidence', 'risk_reward', 'symbol', 'created_at'];
+  const allowed_sort = ['date', 'confidence', 'risk_reward', 'ranking_score', 'symbol', 'created_at'];
   const safe_sort = allowed_sort.includes(sort_by) ? sort_by : 'date';
   const safe_order = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   const offset = (page - 1) * limit;
@@ -146,6 +161,18 @@ async function countAllActive(direction = null) {
   return rows[0].count;
 }
 
+async function sumActiveCapitalRisk() {
+  const sql = `SELECT COALESCE(SUM(capital_risk_inr), 0) AS t FROM signals WHERE status = 'ACTIVE'`;
+  const [rows] = await pool.query(sql);
+  return parseFloat(rows[0].t) || 0;
+}
+
+async function sumActiveCapitalRiskByDirection(direction) {
+  const sql = `SELECT COALESCE(SUM(capital_risk_inr), 0) AS t FROM signals WHERE status = 'ACTIVE' AND direction = ?`;
+  const [rows] = await pool.query(sql, [direction]);
+  return parseFloat(rows[0].t) || 0;
+}
+
 module.exports = {
   create,
   findActive,
@@ -157,4 +184,6 @@ module.exports = {
   countActiveBySector,
   countAllActive,
   countByWeek,
+  sumActiveCapitalRisk,
+  sumActiveCapitalRiskByDirection,
 };

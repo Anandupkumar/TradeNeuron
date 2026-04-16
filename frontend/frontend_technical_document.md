@@ -188,6 +188,7 @@ frontend/
       useDebounce.ts         # Re-export from use-debounce for uniformity
       useKeyboardShortcuts.ts
       useFilterUrlSync.ts    # Syncs filter state to/from URL query params
+      useRejectedSignals.ts  # Lazy query for secondary rejected-candidate analysis
       useTradeDecisions.ts   # Query + mutation hooks for trade decisions
     pages/
       Dashboard.tsx
@@ -370,7 +371,10 @@ export interface Signal {
   direction: SignalDirection;
   execution_type: ExecutionType;   // EQUITY for longs, FUTURES for shorts in FNO, NONE for non-executable
   is_executable: boolean;          // false for SHORT signals in equity-only accounts
-  confidence: number;              // 0–100
+  confidence: number;              // 0–100 (may be calibration-adjusted)
+  raw_confidence: number | null;   // Pre-calibration score after soft filters
+  confidence_calibrated: boolean; // True if bucket calibration blended the score
+  entry_degraded: boolean;       // Price drift / gap flag from pipeline
   confidence_tier: ConfidenceTier | null;  // HIGH (85+), NORMAL (75-84), LOW (70-74)
   entry_price: number;
   stop_loss: number;
@@ -497,9 +501,12 @@ export interface StockFeatures {
   // --- Fields added by backend improvements ---
   rvol: number | null;              // Relative Volume (today vol / 20-day avg vol)
   volume_tier: VolumeTier | null;   // Tiered classification based on RVOL
-  vwap: number | null;              // Rolling Volume-Weighted Average Price
-  vwap_distance_pct: number | null; // Distance of close from VWAP (%)
-  is_near_vwap: boolean;            // |vwap_distance_pct| <= 1.5%
+  vwma: number | null;              // Rolling volume-weighted mean (20 sessions; legacy name VWAP in code paths)
+  vwma_distance_pct: number | null; // Distance of close from VWMA (%)
+  is_near_vwma: boolean;            // |vwma_distance_pct| within near band
+  vwap?: number | null;             // Optional alias when backend enables VWMA_API_ALIAS_ENABLED
+  vwap_distance_pct?: number | null;
+  is_near_vwap?: boolean;
   is_high_delivery: boolean;        // Delivery % above 20-day median
   delivery_pct: number | null;      // NSE delivery percentage (0–100)
 }
@@ -524,9 +531,9 @@ export interface HistoryResponse {
 > **Backend contract notes:**
 > - `is_ranging` and `z_score_20d` are computed by the backend's adaptive-threshold and range-strategy upgrades. The backend stores these in the `features` table and returns them in the `GET /api/v1/stock/:symbol` features object.
 > - `rvol` (Relative Volume) is computed as `current_volume / avg_volume_20d`. `volume_tier` is derived from RVOL: LOW (<0.5), NORMAL (0.5–1.5), HIGH (1.5–2.5), VERY_HIGH (2.5–4.0), EXTREME (>4.0). These replace the simple `is_volume_spike` boolean for scoring purposes (though `is_volume_spike` is retained for backward compatibility).
-> - `vwap` is a rolling VWAP computed from intraday-equivalent data. `vwap_distance_pct` = `(close - vwap) / vwap * 100`. `is_near_vwap` flags when `|vwap_distance_pct| <= 1.5%`, used as a signal generation filter.
-> - `delivery_pct` comes from NSE Bhavcopy. `is_high_delivery` = true when today's delivery % exceeds the 20-day rolling median. High delivery adds a +10 confidence bonus: on breakout signals (LONG) it confirms institutional buying, and on breakdown candles (SHORT) it confirms institutional selling pressure.
-> - All new feature fields (`rvol`, `volume_tier`, `vwap`, `vwap_distance_pct`, `is_near_vwap`, `is_high_delivery`, `delivery_pct`) are stored in the `features` table and returned by the backend in the `GET /api/v1/stock/:symbol` response under the `features` object.
+> - `vwma` / `vwma_distance_pct` / `is_near_vwma` replace legacy `vwap*` column names in the DB; the UI shows **VWMA (20)**. Optional `vwap*` keys may duplicate when the backend enables alias mode.
+> - `delivery_pct` comes from NSE Bhavcopy. `is_high_delivery` = true when today's delivery % exceeds the 20-day rolling median. High delivery contributes to scoring (LONG/SHORT rules per backend scoring engine).
+> - Feature fields (`rvol`, `volume_tier`, `vwma`, `vwma_distance_pct`, `is_near_vwma`, `is_high_delivery`, `delivery_pct`) are stored in the `features` table and returned by `GET /api/v1/stock/:symbol` under `features`.
 
 ### Paper trade type
 
@@ -818,12 +825,15 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor — unwrap envelope, handle global errors
+// Response interceptor — validate and unwrap envelope, handle global errors
 apiClient.interceptors.response.use(
   (response) => {
     const envelope = response.data as ApiEnvelope<unknown>;
     if (envelope.success === false) {
       return Promise.reject(new Error(envelope.error ?? 'Unknown error'));
+    }
+    if (envelope.data == null) {
+      return Promise.reject(new Error('API returned an empty success payload.'));
     }
     logger.debug('[API] <--', response.status, response.config.url);
     return envelope.data;  // unwrap — downstream sees only the data
@@ -859,7 +869,7 @@ import type {
 
 export const signalsApi = {
   list:     (filters: SignalFilters): Promise<SignalListResponse> =>
-    apiClient.get('/signals', { params: filters }),
+    apiClient.get('/signals', { params: stripAllValues(filters) }),
   active:   (): Promise<ActiveSignalsResponse> =>
     apiClient.get('/signals/active'),
   rejected: (date?: string): Promise<RejectedSignalsResponse> =>
@@ -1191,11 +1201,11 @@ export default function App() {
 /stock/M%26M.NS    ← always URL-encoded; never stored raw in the URL
 ```
 
-The `StockDetail` page extracts and decodes the symbol from the URL:
+The `StockDetail` page extracts and decodes the symbol from the URL. Invalid encodings are treated as an explicit error state instead of throwing during render:
 
 ```typescript
 const { symbol: encodedSymbol } = useParams<{ symbol: string }>();
-const symbol = decodeURIComponent(encodedSymbol ?? '');
+const symbol = safeDecodeSymbol(encodedSymbol) ?? '';
 ```
 
 ---
@@ -1235,9 +1245,11 @@ const symbol = decodeURIComponent(encodedSymbol ?? '');
 **Purpose:** Browse, filter, and inspect all signals.
 
 **Layout:**
-1. Filter bar (top) — debounced, synced to URL query params
-2. Active Signals section — card grid (today's signals)
-3. All Signals table — paginated, sortable
+1. Summary header — active count, history count, current page size
+2. Filter bar (top) — debounced, synced to URL query params, wrapped in a card
+3. Active Signals section — card grid (today's signals)
+4. All Signals table — paginated, sortable
+5. Secondary research sections — rejected signals and decision history, both lazy-loaded/collapsible
 
 **Filters (all synced to URL query params — survive page refresh):**
 
@@ -1248,7 +1260,7 @@ const symbol = decodeURIComponent(encodedSymbol ?? '');
 | Strategy | Dropdown | `strategy_source` | No |
 | Date range | Date picker | `from_date`, `to_date` | No |
 | Min confidence | Slider 0–100 | `min_confidence` | Yes (300ms) |
-| Symbol | Autocomplete | `symbol` | Yes (300ms) |
+| Symbol | Search input | `symbol` | Yes (300ms) |
 | Favorites only | Toggle | `favorites_only` | No |
 | Sort | Column header | `sort_by`, `sort_order` | No |
 
@@ -1289,7 +1301,7 @@ See Section 17 for filter debouncing and URL sync implementation.
 | Status | `status` | Coloured pill |
 | ★ | `is_favorite` | Star toggle — optimistic update |
 
-Clicking any row opens a `SignalDetailDrawer`.
+Clicking any row opens a `SignalDetailDrawer`. The drawer supports escape-to-close, focuses the close button on open, and groups overview / sizing / explanation content into separate card sections.
 
 **Signal Detail Drawer:**
 - Confidence breakdown bar (segmented by technical / momentum / volume / quality)
@@ -1357,13 +1369,12 @@ Below the active and all signals sections, a collapsible "Rejected Signals" pane
 **Purpose:** Deep dive into a single stock.
 
 **Layout:**
-1. Stock header: symbol, sector badge, is_favorite toggle, latest price + change %
-2. Candlestick chart with indicator overlays (EMA 20/50/200 toggleable)
-3. Volume chart (shared x-axis)
-4. Indicator grid: RSI, MACD, ATR, Volume change
-5. Feature grid: all boolean features + z_score_20d + RVOL / Volume Tier + VWAP distance + Delivery %
-6. Active signal panel (if signal exists)
-7. Signal history table (last 30 signals for this stock)
+1. Stock header: symbol, sector badge, live watchlist toggle, latest adjusted close, latest session date
+2. Price Action card: timeframe control + candlestick chart + overlay legend + volume chart
+3. Indicator grid: RSI, MACD, ATR, volume change, EMA levels/slope
+4. Feature grid: setup quality, RS/VWMA context, volume tier, delivery quality
+5. Active signal panel (if signal exists)
+6. Explicit empty/error states for invalid symbol, missing detail payload, missing history, and history-fetch failures
 
 **Feature grid additions (from backend improvements):**
 
@@ -1372,10 +1383,10 @@ The feature grid now includes the following additional cards:
 | Feature | Field | Display | Card style |
 |---------|-------|---------|------------|
 | RVOL | `rvol` | `1.85x` (2 decimals + "x") | Numeric card |
-| Volume Tier | `volume_tier` | Coloured pill: LOW (grey), NORMAL (blue), HIGH (amber), VERY_HIGH (orange), EXTREME (red) | Pill badge |
-| VWAP | `vwap` | `formatINR()` | Numeric card |
-| VWAP Distance | `vwap_distance_pct` | `formatPct(v, true)` e.g. "+0.82%" | Signed % with colour |
-| Near VWAP | `is_near_vwap` | Green "Near" / grey "Far" pill | Boolean pill |
+| Volume Tier | `volume_tier` | Coloured pill: `normal` / `elevated` / `high` / `extreme` | Pill badge |
+| VWMA | `vwma` | `formatINR()` | Numeric card |
+| VWMA Distance | `vwma_distance_pct` | `formatPct(v, true)` e.g. "+0.82%" | Signed % with colour |
+| Near VWMA | `is_near_vwma` | Green "Near" / grey "Far" pill | Boolean pill |
 | High Delivery | `is_high_delivery` | Green "Yes" / grey "No" pill | Boolean pill |
 | Delivery % | `delivery_pct` | `formatPct()` e.g. "42.50%" | Numeric card |
 
@@ -1409,10 +1420,10 @@ Only rendered if `FEATURES.paperTrading` is true.
 Only rendered if `FEATURES.backtest` is true.
 
 **Layout:**
-1. Strategy filter (TREND_PULLBACK / BREAKOUT / RANGE / MEAN_REVERSION / TREND_PULLBACK_SHORT / BREAKDOWN / COMBINED / ALL)
+1. Strategy filter card with clear action
 2. Latest results grid (one card per strategy)
-3. Metrics comparison table (all runs)
-4. Walk-forward bar chart (win_rate_pct per test period)
+3. Metrics comparison table (latest result set)
+4. Walk-forward bar chart (win_rate_pct per test period), wrapped in `ChartErrorBoundary`
 
 **Backtest Result Card:**
 ```
@@ -1913,11 +1924,11 @@ Three levels of error boundaries protect the app from crashes. A crash at any le
 </RootErrorBoundary>
 ```
 
-**`RootErrorBoundary`** (`src/components/errors/RootErrorBoundary.tsx`) catches any crash that escapes the page level. Shows a full-page "Something went wrong" with a "Reload app" button. Logs the error to the console (and in a future logger service).
+**`RootErrorBoundary`** (`src/components/errors/RootErrorBoundary.tsx`) catches any crash that escapes the page level. Shows a full-page "Something went wrong" with a "Reload app" button. Logs through `src/utils/logger.ts`.
 
-**`PageErrorBoundary`** (`src/components/errors/PageErrorBoundary.tsx`) wraps every `<Route>` element inside `AppShell`. When a page crashes, the sidebar and topbar remain visible. The page area shows an `ErrorState` with a "Try again" button that resets the error boundary.
+**`PageErrorBoundary`** (`src/components/errors/PageErrorBoundary.tsx`) wraps the routed page outlet inside `AppShell`. When a page crashes, the sidebar and topbar remain visible. The page area shows an `ErrorState` with a "Try again" button that resets the error boundary. Errors are logged through `src/utils/logger.ts`.
 
-**`ChartErrorBoundary`** (`src/components/errors/ChartErrorBoundary.tsx`) wraps each chart component. A chart failure shows "Chart unavailable" in the chart container area only. The rest of the page (indicators, features, signal panel) is unaffected.
+**`ChartErrorBoundary`** (`src/components/errors/ChartErrorBoundary.tsx`) wraps each chart component. A chart failure shows "Chart unavailable" in the chart container area only. The rest of the page (indicators, features, signal panel) is unaffected. Dashboard and Backtest charts use the same boundary pattern as Stock Detail and Paper Trading.
 
 ```typescript
 // Usage pattern in App.tsx:
@@ -2039,7 +2050,7 @@ useSignals({ ...otherFilters, symbol: debouncedSymbol });
 
 ### URL state sync
 
-All filter state on the Signals, Funnel, Paper Trading, and Backtest pages is synced to URL query params. This means:
+All filter state on the Signals, Funnel, Paper Trading, and Backtest pages is synced to URL query params. Query params are normalized before they become component state. This means:
 - Filters survive page refresh
 - URLs can be shared and reproduce the same view
 - Browser back/forward button navigates filter history
@@ -2062,18 +2073,18 @@ export function useSignalFilters(): [SignalFilters, (f: Partial<SignalFilters>) 
   const [params, setParams] = useSearchParams();
 
   const filters: SignalFilters = {
-    status:         (params.get('status') as SignalStatus) ?? 'all',
-    direction:      (params.get('direction') as SignalDirection) ?? 'all',
-    confidence_tier:(params.get('confidence_tier') as ConfidenceTier | 'all') ?? undefined,
+    status:         parseEnum(params.get('status'), STATUS_VALUES, 'all'),
+    direction:      parseEnum(params.get('direction'), DIRECTION_VALUES, 'all'),
+    confidence_tier:parseEnum(params.get('confidence_tier'), CONFIDENCE_TIER_VALUES, 'all'),
     symbol:         params.get('symbol') ?? undefined,
     from_date:      params.get('from_date') ?? undefined,
     to_date:        params.get('to_date') ?? undefined,
-    min_confidence: params.get('min_confidence') ? Number(params.get('min_confidence')) : undefined,
+    min_confidence: parseConfidence(params.get('min_confidence')),
     favorites_only: params.get('favorites_only') === 'true',
-    page:           params.get('page') ? Number(params.get('page')) : 1,
-    limit:          params.get('limit') ? Number(params.get('limit')) : PAGINATION.defaultPageSize,
-    sort_by:        (params.get('sort_by') as SignalFilters['sort_by']) ?? 'date',
-    sort_order:     (params.get('sort_order') as 'asc' | 'desc') ?? 'desc',
+    page:           parsePositiveInt(params.get('page'), 1),
+    limit:          normalizePageSize(params.get('limit')),
+    sort_by:        parseEnum(params.get('sort_by'), SORT_BY_VALUES, 'date'),
+    sort_order:     parseEnum(params.get('sort_order'), SORT_ORDER_VALUES, 'desc'),
   };
 
   const setFilters = (updates: Partial<SignalFilters>) => {
@@ -2094,7 +2105,7 @@ export function useSignalFilters(): [SignalFilters, (f: Partial<SignalFilters>) 
 }
 ```
 
-**Pagination:** Default page size is 20. Available sizes: 20, 50, 100. Page size is persisted in the URL (`?limit=50`). Changing page size resets to page 1.
+**Pagination:** Default page size is 20. Available sizes: 20, 50, 100. Unsupported sizes are coerced back to the default. Page size is persisted in the URL (`?limit=50`). Changing page size resets to page 1.
 
 ---
 

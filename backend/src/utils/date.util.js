@@ -50,11 +50,40 @@ function getDateNYearsAgo(n) {
   return d;
 }
 
+/** Trading days strictly after `fromDate` up to and including `toDate` (for earnings blackout windows). */
+function countTradingDaysAfterUntil(fromDate, toDate) {
+  const end = new Date(toDate);
+  let count = 0;
+  const cur = new Date(fromDate);
+  while (cur < end) {
+    cur.setDate(cur.getDate() + 1);
+    if (isTradingDay(cur)) count++;
+  }
+  return count;
+}
+
+/** Trading days from day after `fromDate` through `toDate` inclusive — for "days until earnings". */
+function tradingDaysUntilNext(fromDate, targetDate) {
+  return countTradingDaysAfterUntil(fromDate, targetDate);
+}
+
+/** Trading days since `eventDate` through `today` inclusive of both bounds when they are trading days — for post-event window. */
+function tradingDaysSinceInclusive(eventDate, todayDate) {
+  if (!eventDate || !todayDate) return null;
+  const ev = new Date(eventDate);
+  const to = new Date(todayDate);
+  if (to < ev) return null;
+  return countTradingDays(ev, to);
+}
+
 module.exports = {
   toIST,
   formatDate,
   isTradingDay,
   countTradingDays,
+  countTradingDaysAfterUntil,
+  tradingDaysUntilNext,
+  tradingDaysSinceInclusive,
   getDateNDaysAgo,
   getDateNYearsAgo,
 };

@@ -1,4 +1,5 @@
 export type RejectStage =
+  | 'LIQUIDITY_GATE'
   | 'FUNDAMENTAL_FILTER'
   | 'SENTIMENT_FILTER'
   | 'VWAP_FILTER'
@@ -9,7 +10,8 @@ export type RejectStage =
   | 'MERGED_RISK_ZERO'
   | 'ACTIVE_CAP'
   | 'DUPLICATE'
-  | 'POSITION_SIZING';
+  | 'POSITION_SIZING'
+  | 'EARNINGS_BLACKOUT';
 
 export interface RejectedSignal {
   id: number;

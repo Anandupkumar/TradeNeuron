@@ -3,6 +3,28 @@ jest.mock('../../../src/models/signal.model', () => ({
   countAllActive: jest.fn().mockResolvedValue(0),
   countActiveBySector: jest.fn().mockResolvedValue(0),
   countByWeek: jest.fn().mockResolvedValue(0),
+  sumActiveCapitalRisk: jest.fn().mockResolvedValue(0),
+  sumActiveCapitalRiskByDirection: jest.fn().mockResolvedValue(0),
+}));
+
+jest.mock('../../../src/models/fundamental.model', () => ({
+  findLatestBySymbol: jest.fn().mockResolvedValue({ next_earnings_date: null }),
+}));
+
+jest.mock('../../../src/models/confidence_calibration.model', () => ({
+  findLatestForBucket: jest.fn().mockResolvedValue(null),
+}));
+
+jest.mock('../../../src/models/paper_trade.model', () => ({
+  getPortfolioDrawdownFraction: jest.fn().mockResolvedValue(0),
+}));
+
+jest.mock('../../../src/services/fundamentals/sector_context.service', () => ({
+  getSectorAverageRelativeStrength: jest.fn().mockResolvedValue(null),
+}));
+
+jest.mock('../../../src/models/candle.model', () => ({
+  findBySymbolAndDate: jest.fn().mockResolvedValue({ adjusted_close: '2500', open: '2500' }),
 }));
 
 jest.mock('../../../src/models/feature.model', () => ({
@@ -58,8 +80,8 @@ function makeFeature(overrides = {}) {
     is_breakout: 0,
     rvol: 1.0,
     ema50_slope: 0.0,
-    vwap_distance_pct: '0.5',
-    is_near_vwap: 0,
+    vwma_distance_pct: '0.5',
+    is_near_vwma: 0,
     ...overrides,
   };
 }
@@ -78,7 +100,7 @@ beforeEach(() => {
 describe('VWAP Filter — LONG direction', () => {
   test('hard reject when price > 5% above VWAP', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '5.5' })
+      makeFeature({ vwma_distance_pct: '5.5' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -91,7 +113,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('no penalty with breakout override (2-5% above + confirmed breakout)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '3.0', is_breakout: 1, rvol: 2.0 })
+      makeFeature({ vwma_distance_pct: '3.0', is_breakout: 1, rvol: 2.0 })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -102,7 +124,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('no penalty with strong uptrend override (2-5% above + uptrend + slope)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '4.0', is_uptrend: 1, ema50_slope: 0.8 })
+      makeFeature({ vwma_distance_pct: '4.0', is_uptrend: 1, ema50_slope: 0.8 })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -113,7 +135,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('penalty when > 3.5% without override (stretched)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '4.0' })
+      makeFeature({ vwma_distance_pct: '4.0' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -124,7 +146,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('penalty when 2-3.5% without override', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '2.5' })
+      makeFeature({ vwma_distance_pct: '2.5' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -135,7 +157,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('near VWAP bonus when within +/-2%', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '0.5' })
+      makeFeature({ vwma_distance_pct: '0.5' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -146,7 +168,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('mild penalty when below VWAP with strong uptrend (pullback entry)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-3.0', is_uptrend: 1, ema50_slope: 0.8 })
+      makeFeature({ vwma_distance_pct: '-3.0', is_uptrend: 1, ema50_slope: 0.8 })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -157,7 +179,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('heavy penalty when below VWAP without uptrend (weak stock)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-3.0' })
+      makeFeature({ vwma_distance_pct: '-3.0' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -168,7 +190,7 @@ describe('VWAP Filter — LONG direction', () => {
 
   test('bonus capped at VWAP_MAX_BONUS_CAP', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '0.5' })
+      makeFeature({ vwma_distance_pct: '0.5' })
     );
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
     expect(result.confidence).toBeLessThanOrEqual(80 + 10);
@@ -179,7 +201,7 @@ describe('VWAP Filter — LONG direction', () => {
 describe('VWAP Filter — SHORT direction', () => {
   test('hard reject when price > 5% from VWAP (SHORT)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-6.0' })
+      makeFeature({ vwma_distance_pct: '-6.0' })
     );
 
     const raw = makeRaw({ direction: 'SHORT', stop_loss: 2600, target_price: 2300 });
@@ -193,7 +215,7 @@ describe('VWAP Filter — SHORT direction', () => {
 
   test('bonus when price above VWAP > threshold (good short entry)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '3.0' })
+      makeFeature({ vwma_distance_pct: '3.0' })
     );
 
     const raw = makeRaw({ direction: 'SHORT', stop_loss: 2600, target_price: 2300 });
@@ -205,7 +227,7 @@ describe('VWAP Filter — SHORT direction', () => {
 
   test('no penalty when below VWAP with strong downtrend', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-3.0', is_uptrend: 0, ema50_slope: -0.8 })
+      makeFeature({ vwma_distance_pct: '-3.0', is_uptrend: 0, ema50_slope: -0.8 })
     );
 
     const raw = makeRaw({ direction: 'SHORT', stop_loss: 2600, target_price: 2300 });
@@ -217,7 +239,7 @@ describe('VWAP Filter — SHORT direction', () => {
 
   test('penalty when below VWAP without strong downtrend (overextended)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-3.0', ema50_slope: 0.1 })
+      makeFeature({ vwma_distance_pct: '-3.0', ema50_slope: 0.1 })
     );
 
     const raw = makeRaw({ direction: 'SHORT', stop_loss: 2600, target_price: 2300 });
@@ -232,7 +254,7 @@ describe('VWAP Filter — SHORT direction', () => {
 describe('VWAP Filter — edge cases', () => {
   test('no VWAP data — no penalty or bonus applied', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: null })
+      makeFeature({ vwma_distance_pct: null })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -252,7 +274,7 @@ describe('VWAP Filter — edge cases', () => {
 
   test('exact boundary: vwap_dist == 5.0 — NOT hard rejected (> not >=)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '5.0' })
+      makeFeature({ vwma_distance_pct: '5.0' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -262,7 +284,7 @@ describe('VWAP Filter — edge cases', () => {
 
   test('exact boundary: vwap_dist == 2.0 — gets penalty (> 2.0 is false, not in penalty zone)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '2.0' })
+      makeFeature({ vwma_distance_pct: '2.0' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -273,7 +295,7 @@ describe('VWAP Filter — edge cases', () => {
 
   test('breakout without sufficient RVOL does NOT get override', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '3.0', is_breakout: 1, rvol: 1.0 })
+      makeFeature({ vwma_distance_pct: '3.0', is_breakout: 1, rvol: 1.0 })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -284,7 +306,7 @@ describe('VWAP Filter — edge cases', () => {
 
   test('uptrend without sufficient slope does NOT get override', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '3.0', is_uptrend: 1, ema50_slope: 0.3 })
+      makeFeature({ vwma_distance_pct: '3.0', is_uptrend: 1, ema50_slope: 0.3 })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeRaw()], []);
@@ -295,7 +317,7 @@ describe('VWAP Filter — edge cases', () => {
 
   test('VWAP cap does NOT limit PCR penalty (isolation check)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-3.0' })
+      makeFeature({ vwma_distance_pct: '-3.0' })
     );
 
     const nifty_pcr = 1.5;
@@ -329,7 +351,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN: deep below VWAP (<= -5%) gets +10 momentum bonus', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-7.0' })
+      makeFeature({ vwma_distance_pct: '-7.0' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
@@ -341,7 +363,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN: moderate below VWAP (-2% to -5%) gets +5 bonus', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-3.5' })
+      makeFeature({ vwma_distance_pct: '-3.5' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
@@ -353,7 +375,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN: near/above VWAP gets -5 penalty (weak setup)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '0.5' })
+      makeFeature({ vwma_distance_pct: '0.5' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
@@ -365,7 +387,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN: strongDowntrend + deep below VWAP gets extra +5 (capped at +10)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-7.0', is_uptrend: 0, ema50_slope: -0.8 })
+      makeFeature({ vwma_distance_pct: '-7.0', is_uptrend: 0, ema50_slope: -0.8 })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
@@ -377,7 +399,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN: strongDowntrend but only moderate below VWAP — no extra boost', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-3.0', is_uptrend: 0, ema50_slope: -0.8 })
+      makeFeature({ vwma_distance_pct: '-3.0', is_uptrend: 0, ema50_slope: -0.8 })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
@@ -389,7 +411,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN: data anomaly > 20% — still rejected', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-22.0' })
+      makeFeature({ vwma_distance_pct: '-22.0' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
@@ -402,7 +424,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN: NOT hard-rejected at 5% (unlike TREND_PULLBACK_SHORT)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-8.0' })
+      makeFeature({ vwma_distance_pct: '-8.0' })
     );
 
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', [makeBreakdownRaw()], []);
@@ -414,7 +436,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('TREND_PULLBACK_SHORT: still hard-rejected at 5%', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-6.0' })
+      makeFeature({ vwma_distance_pct: '-6.0' })
     );
 
     const raw = makeRaw({ direction: 'SHORT', stop_loss: 2600, target_price: 2300, strategy: 'TREND_PULLBACK_SHORT' });
@@ -428,7 +450,7 @@ describe('VWAP Filter — BREAKDOWN strategy', () => {
 
   test('BREAKDOWN+TREND_PULLBACK_SHORT merged: uses BREAKDOWN path', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue(
-      makeFeature({ vwap_distance_pct: '-7.0' })
+      makeFeature({ vwma_distance_pct: '-7.0' })
     );
 
     const raw = makeBreakdownRaw({ strategy: 'BREAKDOWN+TREND_PULLBACK_SHORT' });

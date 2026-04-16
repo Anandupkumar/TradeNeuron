@@ -3,10 +3,32 @@ jest.mock('../../../src/models/signal.model', () => ({
   countAllActive: jest.fn().mockResolvedValue(0),
   countActiveBySector: jest.fn().mockResolvedValue(0),
   countByWeek: jest.fn().mockResolvedValue(0),
+  sumActiveCapitalRisk: jest.fn().mockResolvedValue(0),
+  sumActiveCapitalRiskByDirection: jest.fn().mockResolvedValue(0),
+}));
+
+jest.mock('../../../src/models/fundamental.model', () => ({
+  findLatestBySymbol: jest.fn().mockResolvedValue({ next_earnings_date: null }),
+}));
+
+jest.mock('../../../src/models/confidence_calibration.model', () => ({
+  findLatestForBucket: jest.fn().mockResolvedValue(null),
+}));
+
+jest.mock('../../../src/models/paper_trade.model', () => ({
+  getPortfolioDrawdownFraction: jest.fn().mockResolvedValue(0),
+}));
+
+jest.mock('../../../src/services/fundamentals/sector_context.service', () => ({
+  getSectorAverageRelativeStrength: jest.fn().mockResolvedValue(null),
+}));
+
+jest.mock('../../../src/models/candle.model', () => ({
+  findBySymbolAndDate: jest.fn().mockResolvedValue({ adjusted_close: '2500', open: '2500' }),
 }));
 
 jest.mock('../../../src/models/feature.model', () => ({
-  findBySymbolAndDate: jest.fn().mockResolvedValue({ is_ranging: 0, vwap_distance_pct: '0.5' }),
+  findBySymbolAndDate: jest.fn().mockResolvedValue({ is_ranging: 0, vwma_distance_pct: '0.5' }),
 }));
 
 jest.mock('../../../src/models/rejected_signal.model', () => ({
@@ -121,7 +143,12 @@ describe('buildCandidate', () => {
   });
 
   test('should reject below pool floor R:R (1.5)', async () => {
-    const raw = [makeRawSignal({ risk_reward: 1.2, target_price: 2620, stop_loss: 2400 })];
+    const raw = [makeRawSignal({
+      strategy: 'RANGE',
+      risk_reward: 1.2,
+      target_price: 2620,
+      stop_loss: 2400,
+    })];
     const result = await buildCandidate('RELIANCE.NS', '2026-03-24', raw, []);
 
     expect(result).toBeNull();
@@ -137,7 +164,7 @@ describe('selectTopSignals', () => {
     signalModel.countByWeek.mockResolvedValue(0);
   });
 
-  function makeCandidate(symbol, confidence, risk_reward) {
+  function makeCandidate(symbol, confidence, risk_reward, ranking_score = null) {
     return {
       symbol,
       date: '2026-03-24',
@@ -146,6 +173,7 @@ describe('selectTopSignals', () => {
       execution_type: 'EQUITY',
       is_executable: true,
       confidence,
+      ranking_score,
       confidence_tier: confidence >= 85 ? 'HIGH' : confidence >= 75 ? 'NORMAL' : 'LOW',
       entry_price: 2500,
       stop_loss: 2400,
@@ -243,7 +271,7 @@ describe('selectTopSignals', () => {
     );
   });
 
-  test('should sort by confidence first, then risk_reward as tiebreaker', async () => {
+  test('should sort by confidence first, then risk_reward as tiebreaker when ranking_score is absent', async () => {
     const candidates = [
       makeCandidate('A.NS', 80, 3.0),
       makeCandidate('B.NS', 80, 2.0),
@@ -256,6 +284,20 @@ describe('selectTopSignals', () => {
     expect(result[0].symbol).toBe('C.NS');
     expect(result[1].symbol).toBe('A.NS');
     expect(result[2].symbol).toBe('B.NS');
+  });
+
+  test('should prioritize ranking_score over raw confidence', async () => {
+    const candidates = [
+      makeCandidate('A.NS', 90, 2.0, 70),
+      makeCandidate('B.NS', 82, 2.0, 88),
+      makeCandidate('C.NS', 80, 2.0, 84),
+    ];
+
+    const result = await selectTopSignals(candidates, '2026-03-24');
+
+    expect(result[0].symbol).toBe('B.NS');
+    expect(result[1].symbol).toBe('C.NS');
+    expect(result[2].symbol).toBe('A.NS');
   });
 
   test('should handle weekly count exceeding target gracefully', async () => {

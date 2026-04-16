@@ -12,6 +12,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { SignalCard } from '../components/signals/SignalCard';
 import { MarketRegimeBadge } from '../components/common/MarketRegimeBadge';
 import { PnLCurveChart } from '../components/paper_trading/PnLCurveChart';
+import { ChartErrorBoundary } from '../components/errors/ChartErrorBoundary';
 import { formatDateTime } from '../utils/format';
 import { featureFlags } from '../utils/featureFlags';
 import type { PaperTradingSummary, Signal } from '../types';
@@ -97,7 +98,6 @@ export default function DashboardPage() {
   const market_status = useMarketStatus(health_query.data?.last_pipeline_run);
 
   const paper_enabled = featureFlags.canAccessPaperTrading();
-  const is_loading = signals_query.isLoading || health_query.isLoading;
   const has_error = signals_query.isError || health_query.isError;
 
   const active_signals = signals_query.data?.signals ?? [];
@@ -133,65 +133,82 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {is_loading ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <LoadingSkeleton variant="card" count={4} />
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard
-              label="Active Signals"
-              value={active_count}
-              sub_text={active_count > 0 ? `${active_count} opportunities` : 'No signals today'}
-            />
-            <div className="rounded-lg border border-border bg-card p-4">
-              <p className="text-sm text-muted-foreground">Market Regime</p>
-              <div className="mt-2">
-                {regime ? (
-                  <MarketRegimeBadge regime={regime} />
-                ) : (
-                  <span className="text-sm text-muted-foreground">—</span>
-                )}
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {market_status.pipelineRanToday ? 'Pipeline ran today' : 'Awaiting pipeline'}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4">
-              <p className="text-sm text-muted-foreground">Weekly Budget</p>
-              <div className="mt-1 flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-foreground">{weekly_count}</span>
-                <span className="text-sm text-muted-foreground">/ 10 signals</span>
-              </div>
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all"
-                  style={{ width: `${Math.min(100, (weekly_count / 10) * 100)}%` }}
-                />
-              </div>
-              <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                <Calendar className="h-3 w-3" />
-                <span>This week</span>
-              </div>
-            </div>
-            <ThirdStatCard paper_enabled={paper_enabled} paper_summary={paper_summary} favorites_count={favorites.length} />
-          </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {signals_query.isLoading ? (
+          <LoadingSkeleton variant="card" count={1} />
+        ) : (
+          <StatCard
+            label="Active Signals"
+            value={active_count}
+            sub_text={active_count > 0 ? `${active_count} opportunities` : 'No signals today'}
+          />
+        )}
 
-          {health_query.data && (
-            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-              <span>
-                Last pipeline: {health_query.data.last_pipeline_run
-                  ? formatDateTime(health_query.data.last_pipeline_run)
-                  : 'Never'}
-              </span>
-              <span>·</span>
-              <span>System: {health_query.data.status === 'ok' ? 'Healthy' : 'Degraded'}</span>
-              <span>·</span>
-              <span>DB: {health_query.data.db === 'connected' ? 'Connected' : 'Disconnected'}</span>
+        {health_query.isLoading ? (
+          <LoadingSkeleton variant="card" count={1} />
+        ) : (
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-sm text-muted-foreground">Market Regime</p>
+            <div className="mt-2">
+              {regime ? (
+                <MarketRegimeBadge regime={regime} />
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
+              )}
             </div>
-          )}
-        </>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {market_status.pipelineRanToday ? 'Pipeline ran today' : 'Awaiting pipeline'}
+            </p>
+          </div>
+        )}
+
+        {health_query.isLoading ? (
+          <LoadingSkeleton variant="card" count={1} />
+        ) : (
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-sm text-muted-foreground">Weekly Budget</p>
+            <div className="mt-1 flex items-baseline gap-1">
+              <span className="text-2xl font-bold text-foreground">{weekly_count}</span>
+              <span className="text-sm text-muted-foreground">/ 10 signals</span>
+            </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all"
+                style={{ width: `${Math.min(100, (weekly_count / 10) * 100)}%` }}
+              />
+            </div>
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <Calendar className="h-3 w-3" />
+              <span>This week</span>
+            </div>
+          </div>
+        )}
+
+        {favorites_query.isLoading || (paper_enabled && paper_summary_query.isLoading) ? (
+          <LoadingSkeleton variant="card" count={1} />
+        ) : (
+          <ThirdStatCard
+            paper_enabled={paper_enabled}
+            paper_summary={paper_summary}
+            favorites_count={favorites.length}
+          />
+        )}
+      </div>
+
+      {health_query.data && (
+        <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+            <span>
+              Last pipeline: {health_query.data.last_pipeline_run
+                ? formatDateTime(health_query.data.last_pipeline_run)
+                : 'Never'}
+            </span>
+            <span>·</span>
+            <span>System: {health_query.data.status === 'ok' ? 'Healthy' : 'Degraded'}</span>
+            <span>·</span>
+            <span>DB: {health_query.data.db === 'connected' ? 'Connected' : 'Disconnected'}</span>
+          </div>
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -202,7 +219,7 @@ export default function DashboardPage() {
 
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-foreground">Watchlist</h2>
-          <div className="rounded-lg border border-border bg-card p-4">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
             {favorites_query.isLoading && <LoadingSkeleton variant="text" />}
             {!favorites_query.isLoading && favorites.length === 0 && (
               <div className="py-8 text-center">
@@ -239,7 +256,9 @@ export default function DashboardPage() {
             <BarChart3 className="h-5 w-5 text-muted-foreground" />
             <h2 className="text-lg font-semibold text-foreground">Equity Curve</h2>
           </div>
-          <PnLCurveChart trades={closed_trades} />
+          <ChartErrorBoundary className="h-[380px]">
+            <PnLCurveChart trades={closed_trades} />
+          </ChartErrorBoundary>
         </div>
       )}
     </div>

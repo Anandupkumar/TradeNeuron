@@ -46,8 +46,9 @@ function deriveChecklist(signal: Signal): CheckItem[] {
   ];
 
   const breakdown = signal.confidence_breakdown;
-  if (breakdown) {
-    items.push({ label: 'Volume', status: volumeStatus(breakdown.volume), detail: `+${breakdown.volume} pts` });
+  const volume_score = breakdown?.volume ?? null;
+  if (volume_score != null) {
+    items.push({ label: 'Volume', status: volumeStatus(volume_score), detail: `+${volume_score} pts` });
   }
 
   return items;

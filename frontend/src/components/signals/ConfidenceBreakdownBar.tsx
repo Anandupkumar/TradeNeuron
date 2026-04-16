@@ -35,7 +35,11 @@ export function ConfidenceBreakdownBar({ breakdown, confidence }: Props) {
     );
   }
 
-  const total = breakdown.technical + breakdown.momentum + breakdown.volume + breakdown.quality;
+  const technical = breakdown.technical ?? 0;
+  const momentum = breakdown.momentum ?? 0;
+  const volume = breakdown.volume ?? 0;
+  const quality = breakdown.quality ?? 0;
+  const total = technical + momentum + volume + quality;
   const max_display = Math.max(total, 100);
 
   return (
@@ -47,7 +51,7 @@ export function ConfidenceBreakdownBar({ breakdown, confidence }: Props) {
 
       <div className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-muted">
         {SEGMENTS.map(({ key, color }) => {
-          const val = breakdown[key];
+          const val = breakdown[key] ?? 0;
           if (val <= 0) return null;
           return (
             <div
@@ -64,7 +68,7 @@ export function ConfidenceBreakdownBar({ breakdown, confidence }: Props) {
           <div key={key} className="flex items-center gap-2 text-xs">
             <span className={cn('inline-block h-2.5 w-2.5 rounded-sm', color)} />
             <span className="text-muted-foreground">{label}</span>
-            <span className="ml-auto font-medium text-foreground">{breakdown[key]}</span>
+            <span className="ml-auto font-medium text-foreground">{breakdown[key] ?? 0}</span>
           </div>
         ))}
       </div>

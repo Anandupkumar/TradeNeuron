@@ -3,6 +3,13 @@ const router = express.Router();
 const paperTradeModel = require('../models/paper_trade.model');
 const { getPaperTradingSummary } = require('../services/paper_trading/paper_trade.service');
 
+function parsePaperTrade(row) {
+  return {
+    ...row,
+    exit_policy: typeof row.exit_policy === 'string' ? JSON.parse(row.exit_policy) : (row.exit_policy || null),
+  };
+}
+
 router.get('/paper-trading/summary', async (req, res, next) => {
   try {
     const summary = await getPaperTradingSummary();
@@ -33,7 +40,7 @@ router.get('/paper-trading/trades', async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        items: result.rows,
+        items: result.rows.map((row) => parsePaperTrade(row)),
         pagination: {
           page: result.page,
           limit: result.limit,

@@ -13,6 +13,7 @@ import { LoadingSkeleton } from '../components/common/LoadingSkeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { EmptyState } from '../components/common/EmptyState';
 import { cn } from '@/lib/utils';
+import { PAGINATION } from '../utils/constants';
 import { formatDate } from '../utils/format';
 import type { PaperTrade } from '../types';
 
@@ -51,6 +52,10 @@ export default function PaperTradingPage() {
 
   const [symbol_input, set_symbol_input] = useState(params.get('symbol') ?? '');
   const [debounced_symbol] = useDebounce(symbol_input, 300);
+
+  useEffect(() => {
+    set_symbol_input(params.get('symbol') ?? '');
+  }, [params]);
 
   useEffect(() => {
     const next = new URLSearchParams(params);
@@ -200,8 +205,8 @@ export default function PaperTradingPage() {
                   page={current_page}
                   total_pages={total_pages}
                   onPageChange={handle_page_change}
-                  page_sizes={[10, 20, 50]}
-                  current_size={page_size}
+                  page_sizes={[20, 50, 100]}
+                  current_size={page_size || PAGINATION.defaultPageSize}
                   onPageSizeChange={handle_page_size_change}
                 />
               </div>

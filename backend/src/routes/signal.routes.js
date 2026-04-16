@@ -8,6 +8,7 @@ const { listSignalsSchema } = require('../validations/signal.validation');
 const { ValidationError } = require('../utils/errors');
 const { getSector } = require('../utils/symbols.util');
 const { isFavorite } = require('../services/favorites/favorite.service');
+const { getOutcomeAnalytics } = require('../services/analytics/performance_analytics.service');
 
 function parseSignalJson(s) {
   return {
@@ -15,6 +16,8 @@ function parseSignalJson(s) {
     reasons: typeof s.reasons === 'string' ? JSON.parse(s.reasons) : s.reasons,
     explanation: typeof s.explanation === 'string' ? JSON.parse(s.explanation) : (s.explanation || null),
     confidence_breakdown: typeof s.confidence_breakdown === 'string' ? JSON.parse(s.confidence_breakdown) : (s.confidence_breakdown || null),
+    ranking_components: typeof s.ranking_components === 'string' ? JSON.parse(s.ranking_components) : (s.ranking_components || null),
+    exit_policy: typeof s.exit_policy === 'string' ? JSON.parse(s.exit_policy) : (s.exit_policy || null),
   };
 }
 
@@ -169,6 +172,20 @@ router.get('/signals/calibration', async (req, res, next) => {
     res.json({
       success: true,
       data: { buckets },
+      error: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/signals/analytics/outcomes', async (req, res, next) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days || '90', 10), 1), 365);
+    const analytics = await getOutcomeAnalytics(days);
+    res.json({
+      success: true,
+      data: { days, ...analytics },
       error: null,
     });
   } catch (err) {

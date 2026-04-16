@@ -45,53 +45,50 @@ export function WalkForwardChart({ results }: WalkForwardChartProps) {
 
   if (chart_data.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-lg border border-border bg-card">
+      <div className="flex h-64 items-center justify-center rounded-lg border border-border bg-card/40">
         <p className="text-sm text-muted-foreground">No backtest data available</p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="mb-4 text-sm font-medium text-muted-foreground">Walk-Forward Win Rate by Strategy</h3>
-      <ResponsiveContainer width="100%" height={350}>
-        <BarChart data={chart_data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-          <XAxis
-            dataKey="test_period"
-            tick={{ fill: '#a1a1aa', fontSize: 11 }}
-            stroke="#3f3f46"
+    <ResponsiveContainer width="100%" height={350}>
+      <BarChart data={chart_data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+        <XAxis
+          dataKey="test_period"
+          tick={{ fill: '#a1a1aa', fontSize: 11 }}
+          stroke="#3f3f46"
+        />
+        <YAxis
+          tickFormatter={(v: number) => `${v}%`}
+          tick={{ fill: '#a1a1aa', fontSize: 11 }}
+          stroke="#3f3f46"
+          domain={[0, 100]}
+        />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: '#18181b',
+            border: '1px solid #3f3f46',
+            borderRadius: '0.5rem',
+            fontSize: '0.75rem',
+          }}
+          formatter={(value: number | string) => [`${Number(value).toFixed(1)}%`, '']}
+          labelStyle={{ color: '#a1a1aa' }}
+        />
+        <Legend
+          wrapperStyle={{ fontSize: '0.75rem', color: '#a1a1aa' }}
+        />
+        {strategy_names.map((name) => (
+          <Bar
+            key={name}
+            dataKey={name}
+            name={name.split('_').join(' ')}
+            fill={color_map[name]}
+            radius={[4, 4, 0, 0]}
           />
-          <YAxis
-            tickFormatter={(v: number) => `${v}%`}
-            tick={{ fill: '#a1a1aa', fontSize: 11 }}
-            stroke="#3f3f46"
-            domain={[0, 100]}
-          />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: '#18181b',
-              border: '1px solid #3f3f46',
-              borderRadius: '0.5rem',
-              fontSize: '0.75rem',
-            }}
-            formatter={(value: number | string) => [`${Number(value).toFixed(1)}%`, '']}
-            labelStyle={{ color: '#a1a1aa' }}
-          />
-          <Legend
-            wrapperStyle={{ fontSize: '0.75rem', color: '#a1a1aa' }}
-          />
-          {strategy_names.map((name) => (
-            <Bar
-              key={name}
-              dataKey={name}
-              name={name.split('_').join(' ')}
-              fill={color_map[name]}
-              radius={[4, 4, 0, 0]}
-            />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
   );
 }

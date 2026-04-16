@@ -8,6 +8,7 @@ export function useDecision(signalId: number | null) {
     queryFn: () => tradeDecisionApi.get(signalId!),
     enabled: signalId != null,
     staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 }
 

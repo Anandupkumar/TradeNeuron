@@ -29,8 +29,8 @@ function getRsiLabel(rsi: number): string {
 
 export function IndicatorOverlay({ indicators, className }: IndicatorOverlayProps) {
   const ema_items = [
-    { label: 'EMA 20', value: toNum(indicators.ema_20), color: 'bg-cyan-500' },
-    { label: 'EMA 50', value: toNum(indicators.ema_50), color: 'bg-yellow-500' },
+    { label: 'EMA 20', value: toNum(indicators.ema_20), color: 'bg-blue-500' },
+    { label: 'EMA 50', value: toNum(indicators.ema_50), color: 'bg-orange-500' },
     { label: 'EMA 200', value: toNum(indicators.ema_200), color: 'bg-purple-500' },
   ];
 

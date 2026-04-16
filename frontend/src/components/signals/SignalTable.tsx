@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils';
 import { featureFlags } from '../../utils/featureFlags';
 import { formatINR, formatDate, formatRR } from '../../utils/format';
+import { DataTable } from '../common/DataTable';
 import { SignalBadge } from './SignalBadge';
 import { StatusBadge } from '../common/StatusBadge';
 import { ExecutionBadge } from './ExecutionBadge';
@@ -8,9 +9,10 @@ import type { Signal } from '../../types';
 
 interface Column {
   key: string;
-  label: string;
+  header: string;
   render: (signal: Signal) => React.ReactNode;
-  align?: 'left' | 'right' | 'center';
+  sortable?: boolean;
+  className?: string;
 }
 
 interface SignalTableProps {
@@ -23,14 +25,15 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
   const columns: Column[] = [
     {
       key: 'symbol',
-      label: 'Symbol',
+      header: 'Symbol',
+      sortable: true,
       render: (signal: Signal) => (
         <span className="font-medium text-foreground">{signal.symbol}</span>
       ),
     },
     {
       key: 'type',
-      label: 'Type',
+      header: 'Type',
       render: (signal: Signal) => (
         <SignalBadge signal_type={signal.signal_type} direction={signal.direction} />
       ),
@@ -38,7 +41,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
     featureFlags.showShortDirection()
       ? {
           key: 'direction',
-          label: 'Direction',
+          header: 'Direction',
           render: (signal: Signal) => (
             <span
               className={cn(
@@ -54,7 +57,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
     featureFlags.showShortDirection()
       ? {
           key: 'exec',
-          label: 'Exec',
+          header: 'Exec',
           render: (signal: Signal) =>
             !signal.is_executable ? (
               <ExecutionBadge execution_type={signal.execution_type} />
@@ -65,15 +68,16 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
       : null,
     {
       key: 'confidence',
-      label: 'Confidence',
-      align: 'right' as const,
+      header: 'Confidence',
+      sortable: true,
+      className: 'text-right',
       render: (signal: Signal) => (
         <span className="font-medium text-foreground">{Math.round(signal.confidence)}%</span>
       ),
     },
     {
       key: 'tier',
-      label: 'Tier',
+      header: 'Tier',
       render: (signal: Signal) => {
         if (!signal.confidence_tier) return <span className="text-muted-foreground">—</span>;
         const styles: Record<string, string> = {
@@ -91,32 +95,34 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
     },
     {
       key: 'entry',
-      label: 'Entry',
-      align: 'right' as const,
+      header: 'Entry',
+      sortable: true,
+      className: 'text-right',
       render: (signal: Signal) => (
         <span className="text-muted-foreground">{formatINR(signal.entry_price)}</span>
       ),
     },
     {
       key: 'target',
-      label: 'Target',
-      align: 'right' as const,
+      header: 'Target',
+      className: 'text-right',
       render: (signal: Signal) => (
         <span className="text-emerald-400">{formatINR(signal.target_price)}</span>
       ),
     },
     {
       key: 'sl',
-      label: 'SL',
-      align: 'right' as const,
+      header: 'SL',
+      className: 'text-right',
       render: (signal: Signal) => (
         <span className="text-red-400">{formatINR(signal.stop_loss)}</span>
       ),
     },
     {
       key: 'rr',
-      label: 'R:R',
-      align: 'right' as const,
+      header: 'R:R',
+      sortable: true,
+      className: 'text-right',
       render: (signal: Signal) => (
         <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
           {formatRR(signal.risk_reward)}
@@ -125,7 +131,7 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
     },
     {
       key: 'strategy',
-      label: 'Strategy',
+      header: 'Strategy',
       render: (signal: Signal) => (
         <span className="text-xs text-muted-foreground">
           {signal.strategy_source.split('_').join(' ')}
@@ -134,12 +140,13 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
     },
     {
       key: 'status',
-      label: 'Status',
+      header: 'Status',
       render: (signal: Signal) => <StatusBadge status={signal.status} />,
     },
     {
       key: 'date',
-      label: 'Date',
+      header: 'Date',
+      sortable: true,
       render: (signal: Signal) => (
         <span className="text-xs text-muted-foreground">{formatDate(signal.date)}</span>
       ),
@@ -147,52 +154,12 @@ export function SignalTable({ signals, on_row_click, className }: SignalTablePro
   ].filter(Boolean) as Column[];
 
   return (
-    <div className={cn('overflow-x-auto rounded-lg border border-border', className)}>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border bg-card/50">
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                className={cn(
-                  'whitespace-nowrap px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground',
-                  col.align === 'right' && 'text-right',
-                  col.align === 'center' && 'text-center',
-                  col.align !== 'right' && col.align !== 'center' && 'text-left',
-                )}
-              >
-                {col.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border/50">
-          {signals.map((signal) => (
-            <tr
-              key={signal.id}
-              onClick={() => on_row_click?.(signal)}
-              className={cn(
-                'bg-card transition-colors hover:bg-muted/50',
-                on_row_click && 'cursor-pointer',
-                !signal.is_executable && 'opacity-60',
-              )}
-            >
-              {columns.map((col) => (
-                <td
-                  key={col.key}
-                  className={cn(
-                    'whitespace-nowrap px-4 py-3',
-                    col.align === 'right' && 'text-right',
-                    col.align === 'center' && 'text-center',
-                  )}
-                >
-                  {col.render(signal)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      data={signals}
+      onRowClick={on_row_click}
+      className={className}
+      getRowKey={(signal) => signal.id}
+    />
   );
 }

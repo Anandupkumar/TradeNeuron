@@ -2,7 +2,7 @@ const { pool } = require('../config/db');
 
 async function upsert(feature) {
   const sql = `
-    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, close_position, ema50_slope, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
+    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, close_position, ema50_slope, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwma, vwma_distance_pct, is_near_vwma, is_high_delivery)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       is_uptrend = VALUES(is_uptrend),
@@ -19,9 +19,9 @@ async function upsert(feature) {
       z_score_20d = VALUES(z_score_20d),
       rvol = VALUES(rvol),
       volume_tier = VALUES(volume_tier),
-      vwap = VALUES(vwap),
-      vwap_distance_pct = VALUES(vwap_distance_pct),
-      is_near_vwap = VALUES(is_near_vwap),
+      vwma = VALUES(vwma),
+      vwma_distance_pct = VALUES(vwma_distance_pct),
+      is_near_vwma = VALUES(is_near_vwma),
       is_high_delivery = VALUES(is_high_delivery)
   `;
   const params = [
@@ -37,9 +37,9 @@ async function upsert(feature) {
     feature.z_score_20d != null ? feature.z_score_20d : null,
     feature.rvol != null ? feature.rvol : null,
     feature.volume_tier || 'normal',
-    feature.vwap != null ? feature.vwap : null,
-    feature.vwap_distance_pct != null ? feature.vwap_distance_pct : null,
-    feature.is_near_vwap != null ? (feature.is_near_vwap ? 1 : 0) : null,
+    feature.vwma != null ? feature.vwma : null,
+    feature.vwma_distance_pct != null ? feature.vwma_distance_pct : null,
+    feature.is_near_vwma != null ? (feature.is_near_vwma ? 1 : 0) : null,
     feature.is_high_delivery != null ? (feature.is_high_delivery ? 1 : 0) : null,
   ];
   const [result] = await pool.query(sql, params);
@@ -49,7 +49,7 @@ async function upsert(feature) {
 async function bulkUpsert(features) {
   if (features.length === 0) return;
   const sql = `
-    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, close_position, ema50_slope, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwap, vwap_distance_pct, is_near_vwap, is_high_delivery)
+    INSERT INTO features (symbol, date, is_uptrend, rsi_zone, is_volume_spike, is_breakout, close_position, ema50_slope, near_support, distance_from_52w_high_pct, relative_strength_vs_nifty, is_liquid, is_ranging, z_score_20d, rvol, volume_tier, vwma, vwma_distance_pct, is_near_vwma, is_high_delivery)
     VALUES ?
     ON DUPLICATE KEY UPDATE
       is_uptrend = VALUES(is_uptrend),
@@ -66,9 +66,9 @@ async function bulkUpsert(features) {
       z_score_20d = VALUES(z_score_20d),
       rvol = VALUES(rvol),
       volume_tier = VALUES(volume_tier),
-      vwap = VALUES(vwap),
-      vwap_distance_pct = VALUES(vwap_distance_pct),
-      is_near_vwap = VALUES(is_near_vwap),
+      vwma = VALUES(vwma),
+      vwma_distance_pct = VALUES(vwma_distance_pct),
+      is_near_vwma = VALUES(is_near_vwma),
       is_high_delivery = VALUES(is_high_delivery)
   `;
   const values = features.map((f) => [
@@ -84,9 +84,9 @@ async function bulkUpsert(features) {
     f.z_score_20d != null ? f.z_score_20d : null,
     f.rvol != null ? f.rvol : null,
     f.volume_tier || 'normal',
-    f.vwap != null ? f.vwap : null,
-    f.vwap_distance_pct != null ? f.vwap_distance_pct : null,
-    f.is_near_vwap != null ? (f.is_near_vwap ? 1 : 0) : null,
+    f.vwma != null ? f.vwma : null,
+    f.vwma_distance_pct != null ? f.vwma_distance_pct : null,
+    f.is_near_vwma != null ? (f.is_near_vwma ? 1 : 0) : null,
     f.is_high_delivery != null ? (f.is_high_delivery ? 1 : 0) : null,
   ]);
   const [result] = await pool.query(sql, [values]);
@@ -115,10 +115,41 @@ async function findLatestBySymbol(symbol) {
   return rows[0] || null;
 }
 
+async function getBreadthSnapshot(date, symbols = []) {
+  if (symbols.length === 0) {
+    return {
+      total_symbols: 0,
+      uptrend_count: 0,
+      rs_positive_count: 0,
+      slope_positive_count: 0,
+    };
+  }
+
+  const placeholders = symbols.map(() => '?').join(',');
+  const sql = `
+    SELECT
+      COUNT(*) AS total_symbols,
+      SUM(CASE WHEN is_uptrend = 1 THEN 1 ELSE 0 END) AS uptrend_count,
+      SUM(CASE WHEN relative_strength_vs_nifty > 0 THEN 1 ELSE 0 END) AS rs_positive_count,
+      SUM(CASE WHEN ema50_slope > 0 THEN 1 ELSE 0 END) AS slope_positive_count
+    FROM features
+    WHERE date = ?
+      AND symbol IN (${placeholders})
+  `;
+  const [rows] = await pool.query(sql, [date, ...symbols]);
+  return rows[0] || {
+    total_symbols: 0,
+    uptrend_count: 0,
+    rs_positive_count: 0,
+    slope_positive_count: 0,
+  };
+}
+
 module.exports = {
   upsert,
   bulkUpsert,
   findBySymbolAndDate,
   findBySymbolAndDateRange,
   findLatestBySymbol,
+  getBreadthSnapshot,
 };

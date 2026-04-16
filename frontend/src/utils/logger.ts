@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { DEBUG_MODE } from './constants';
 
 const isDev = import.meta.env.DEV;

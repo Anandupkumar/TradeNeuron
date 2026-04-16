@@ -40,6 +40,7 @@ function evaluate(symbol, date, candle, indicator, feature, recent_candles) {
     target_price,
     risk_reward,
     strategy: 'BREAKOUT',
+    exit_policy: { atr_value: atr },
     reasons: ['Breakout', 'Volume Spike'],
   };
 }

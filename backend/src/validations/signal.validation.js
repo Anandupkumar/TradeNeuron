@@ -11,7 +11,7 @@ const listSignalsSchema = Joi.object({
   favorites_only: Joi.boolean().optional(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
-  sort_by: Joi.string().valid('date', 'confidence', 'risk_reward', 'symbol').default('date'),
+  sort_by: Joi.string().valid('date', 'confidence', 'risk_reward', 'ranking_score', 'symbol').default('date'),
   sort_order: Joi.string().valid('asc', 'desc', 'ASC', 'DESC').default('desc'),
 });
 

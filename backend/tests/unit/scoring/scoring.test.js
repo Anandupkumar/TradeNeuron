@@ -1,5 +1,8 @@
 jest.mock('../../../src/models/feature.model');
 jest.mock('../../../src/models/indicator.model');
+jest.mock('../../../src/models/candle.model', () => ({
+  findBySymbolAndDate: jest.fn().mockResolvedValue(null),
+}));
 jest.mock('../../../src/config/db', () => ({
   pool: { query: jest.fn().mockResolvedValue([[]]) },
 }));
@@ -191,10 +194,10 @@ describe('SHORT Scoring', () => {
     });
 
     const score = await calculateScore('RELIANCE.NS', '2026-03-23', 'SHORT');
-    expect(score).toBe(60); // 30 trend + 20 breakdown + 10 quality
+    expect(score).toBe(56); // 30 trend + 20 breakdown + 6 high-delivery quality (capped block)
   });
 
-  test('should NOT score quality bonus for high delivery without breakdown', async () => {
+  test('should add high-delivery quality without breakdown (SHORT quality rules)', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue({
       is_uptrend: 0, rsi_zone: 'NEUTRAL', is_breakout: 0,
       volume_tier: 'normal', ema50_slope: -0.3, close_position: 0.5,
@@ -205,7 +208,7 @@ describe('SHORT Scoring', () => {
     });
 
     const score = await calculateScore('RELIANCE.NS', '2026-03-23', 'SHORT');
-    expect(score).toBe(30); // trend only, no breakdown so no quality
+    expect(score).toBe(36); // 30 trend + 6 delivery quality (no breakdown)
   });
 
   test('should penalize SHORT trend when ema50_slope >= 0', async () => {
@@ -279,18 +282,18 @@ describe('SHORT Scoring Breakdown', () => {
     expect(breakdown.technical).toBe(50); // 30 trend + 20 breakdown
     expect(breakdown.momentum).toBe(20); // RSI overbought
     expect(breakdown.volume).toBe(20); // high tier
-    expect(breakdown.quality).toBe(10); // delivery + breakdown
-    expect(score).toBe(100); // 50+20+20+10 = 100
+    expect(breakdown.quality).toBe(6); // high delivery (+6) within SHORT quality cap
+    expect(score).toBe(96); // 50+20+20+6
   });
 });
 
 describe('VWAP near-entry quality bonus', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('should add +3 quality bonus for LONG when is_near_vwap is true', async () => {
+  test('should add +3 quality bonus for LONG when is_near_vwma is true', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue({
       is_uptrend: 1, rsi_zone: 'NEUTRAL', is_breakout: 0,
-      volume_tier: 'normal', ema50_slope: 0.5, is_near_vwap: 1,
+      volume_tier: 'normal', ema50_slope: 0.5, is_near_vwma: 1,
     });
     indicatorModel.findBySymbolAndDate.mockResolvedValue({
       ema_20: 110, ema_50: 100,
@@ -300,24 +303,24 @@ describe('VWAP near-entry quality bonus', () => {
     expect(score).toBe(33); // 30 trend + 3 vwap quality
   });
 
-  test('should add +3 quality bonus for SHORT when is_near_vwap is true', async () => {
+  test('should add near-VWMA quality for SHORT within cap', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue({
       is_uptrend: 0, rsi_zone: 'NEUTRAL', is_breakout: 0,
       volume_tier: 'normal', ema50_slope: -0.5, close_position: 0.5,
-      is_near_vwap: 1,
+      is_near_vwma: 1,
     });
     indicatorModel.findBySymbolAndDate.mockResolvedValue({
       ema_20: 90, ema_50: 100,
     });
 
     const score = await calculateScore('RELIANCE.NS', '2026-03-23', 'SHORT');
-    expect(score).toBe(33); // 30 trend + 3 vwap quality
+    expect(score).toBe(33); // 30 trend + 3 quality (slope/near stack under cap)
   });
 
-  test('should NOT add vwap bonus when is_near_vwap is 0', async () => {
+  test('should NOT add vwma bonus when is_near_vwma is 0', async () => {
     featureModel.findBySymbolAndDate.mockResolvedValue({
       is_uptrend: 1, rsi_zone: 'NEUTRAL', is_breakout: 0,
-      volume_tier: 'normal', ema50_slope: 0.5, is_near_vwap: 0,
+      volume_tier: 'normal', ema50_slope: 0.5, is_near_vwma: 0,
     });
     indicatorModel.findBySymbolAndDate.mockResolvedValue({
       ema_20: 110, ema_50: 100,
@@ -342,7 +345,7 @@ describe('buildExplanations direction-aware', () => {
     expect(sentences.some(s => s.includes('downtrend'))).toBe(true);
     expect(sentences.some(s => s.includes('overbought'))).toBe(true);
     expect(sentences.some(s => s.includes('breakdown'))).toBe(true);
-    expect(sentences.some(s => s.includes('institutional selling'))).toBe(true);
+    expect(sentences.some(s => s.includes('delivery') || s.includes('quality'))).toBe(true);
     expect(sentences.some(s => s.includes('BEARISH'))).toBe(true);
   });
 

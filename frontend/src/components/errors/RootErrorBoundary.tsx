@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { logger } from '../../utils/logger';
 
 interface RootErrorBoundaryState {
   has_error: boolean;
@@ -21,7 +22,7 @@ export class RootErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[RootErrorBoundary]', error, info.componentStack);
+    logger.error('[RootErrorBoundary]', error, info.componentStack);
   }
 
   handleReload = () => {

@@ -1,6 +1,7 @@
 const RssParser = require('rss-parser');
 const { logger } = require('../../middlewares/logger.middleware');
 const config = require('../../config/env');
+const { getNewsSearchQuery } = require('../../utils/symbol_search_names.util');
 
 const parser = new RssParser();
 
@@ -9,8 +10,8 @@ function sleep(ms) {
 }
 
 async function fetchHeadlines(symbol) {
-  const clean_symbol = symbol.replace('.NS', '');
-  const rss_url = `https://news.google.com/rss/search?q=${encodeURIComponent(clean_symbol)}+NSE&hl=en-IN&gl=IN&ceid=IN:en`;
+  const query = `${getNewsSearchQuery(symbol)}+NSE`;
+  const rss_url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-IN&gl=IN&ceid=IN:en`;
 
   try {
     const feed = await parser.parseURL(rss_url);

@@ -1,3 +1,5 @@
+import type { SignalDirection, SignalStatus, SignalType } from './signal.types';
+
 export type DecisionType = 'TAKEN' | 'SKIPPED' | 'MODIFIED';
 
 export interface TradeDecision {
@@ -14,13 +16,13 @@ export interface TradeDecision {
 
 export interface DecisionHistoryItem extends TradeDecision {
   symbol: string;
-  signal_type: string;
-  direction: string;
+  signal_type: SignalType;
+  direction: SignalDirection;
   entry_price: number;
   stop_loss: number;
   target_price: number;
   confidence: number;
-  signal_status: string;
+  signal_status: SignalStatus | null;
 }
 
 export interface DecisionHistoryResponse {

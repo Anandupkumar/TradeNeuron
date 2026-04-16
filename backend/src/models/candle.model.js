@@ -49,6 +49,12 @@ async function bulkUpsert(candles) {
   return result;
 }
 
+async function findBySymbolAndDate(symbol, date) {
+  const sql = `SELECT * FROM candles WHERE symbol = ? AND date = ? LIMIT 1`;
+  const [rows] = await pool.query(sql, [symbol, date]);
+  return rows[0] || null;
+}
+
 async function findBySymbolAndDateRange(symbol, start_date, end_date) {
   const sql = `
     SELECT * FROM candles
@@ -96,6 +102,7 @@ async function findNextCandle(symbol, date) {
 module.exports = {
   upsert,
   bulkUpsert,
+  findBySymbolAndDate,
   findBySymbolAndDateRange,
   findLatestBySymbol,
   findBySymbolLast,

@@ -18,11 +18,17 @@ function metricCell(label: string, value: string, color?: string) {
 export function BacktestResultCard({ result }: BacktestResultCardProps) {
   const win_rate = toNum(result.win_rate_pct) ?? 0;
   const avg_return = toNum(result.avg_return_pct) ?? 0;
+  const expectancy = toNum(result.expectancy_pct);
   const win_color = win_rate >= 50 ? 'text-emerald-400' : 'text-red-400';
   const return_color = avg_return >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const expectancy_color = expectancy == null
+    ? undefined
+    : expectancy >= 0
+      ? 'text-emerald-400'
+      : 'text-red-400';
 
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
+    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-base font-semibold text-foreground">
@@ -55,6 +61,22 @@ export function BacktestResultCard({ result }: BacktestResultCardProps) {
           (() => { const v = toNum(result.avg_holding_days); return v == null ? '—' : `${v.toFixed(1)}d`; })(),
         )}
       </div>
+
+      {(result.expectancy_pct != null || result.avg_mfe_pct != null || result.avg_mae_pct != null) && (
+        <div className="mt-4 grid grid-cols-1 gap-4 border-t border-border pt-4 sm:grid-cols-3">
+          {metricCell('Expectancy', expectancy == null ? '—' : formatPct(expectancy, true), expectancy_color)}
+          {metricCell(
+            'Avg MFE',
+            result.avg_mfe_pct == null ? '—' : formatPct(result.avg_mfe_pct, true),
+            'text-emerald-400',
+          )}
+          {metricCell(
+            'Avg MAE',
+            result.avg_mae_pct == null ? '—' : formatPct(result.avg_mae_pct, true),
+            'text-red-400',
+          )}
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-4 border-t border-border pt-4">
         <span className="text-xs text-muted-foreground">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { BarChart3, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { logger } from '../../utils/logger';
 
 interface ChartErrorBoundaryProps {
   children: React.ReactNode;
@@ -25,7 +26,7 @@ export class ChartErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[ChartErrorBoundary]', error, info.componentStack);
+    logger.error('[ChartErrorBoundary]', error, info.componentStack);
   }
 
   handleRetry = () => {

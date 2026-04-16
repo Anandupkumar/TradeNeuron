@@ -17,12 +17,28 @@ async function fetchFundamentals(symbol) {
       ? roundDecimal(summary.majorHoldersBreakdown.insidersPercentHeld * 100, 4)
       : null;
 
+    let next_earnings_date = null;
+    const earnings_ts = summary.calendarEvents?.earnings?.earningsDate?.[0]?.fmt
+      ?? summary.calendarEvents?.earnings?.earningsDate?.[0];
+    if (earnings_ts != null) {
+      if (typeof earnings_ts === 'string' && /^\d{4}-\d{2}-\d{2}/.test(earnings_ts)) {
+        next_earnings_date = earnings_ts.slice(0, 10);
+      } else if (typeof earnings_ts === 'number') {
+        next_earnings_date = formatDate(new Date(earnings_ts * 1000));
+      }
+    }
+    if (!next_earnings_date && summary.earnings?.earningsChart?.earningsDate?.length) {
+      const d = summary.earnings.earningsChart.earningsDate[0];
+      if (typeof d === 'number') next_earnings_date = formatDate(new Date(d * 1000));
+    }
+
     return {
       symbol,
       debt_to_equity: debt_to_equity != null ? roundDecimal(debt_to_equity, 4) : null,
       eps_growth_yoy: eps_growth_yoy != null ? roundDecimal(eps_growth_yoy, 4) : null,
       revenue_growth: revenue_growth != null ? roundDecimal(revenue_growth, 4) : null,
       promoter_pledge,
+      next_earnings_date,
     };
   } catch (error) {
     throw new FundamentalError(`Failed to fetch fundamentals for ${symbol}: ${error.message}`);
@@ -64,6 +80,7 @@ async function refreshFundamentals(symbol) {
     eps_growth_yoy: data.eps_growth_yoy,
     revenue_growth: data.revenue_growth,
     promoter_pledge: data.promoter_pledge,
+    next_earnings_date: data.next_earnings_date ?? null,
     is_healthy,
   });
 

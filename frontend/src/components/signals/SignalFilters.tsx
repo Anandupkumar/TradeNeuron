@@ -17,6 +17,7 @@ const status_options = [
   { value: 'TARGET_HIT', label: 'Target Hit' },
   { value: 'SL_HIT', label: 'SL Hit' },
   { value: 'EXPIRED', label: 'Expired' },
+  { value: 'EXPIRED_PENALIZED', label: 'Expired (Penalized)' },
 ];
 
 const direction_options = [
@@ -37,16 +38,33 @@ const select_classes =
 
 export function SignalFilters({ filters, on_change, className }: SignalFiltersProps) {
   const [symbol_input, set_symbol_input] = useState(filters.symbol ?? '');
-  const [debounced_symbol] = useDebounce(symbol_input, 400);
+  const [confidence_input, set_confidence_input] = useState(filters.min_confidence ?? 0);
+  const [debounced_symbol] = useDebounce(symbol_input, 300);
+  const [debounced_confidence] = useDebounce(confidence_input, 300);
+
+  useEffect(() => {
+    set_symbol_input(filters.symbol ?? '');
+  }, [filters.symbol]);
+
+  useEffect(() => {
+    set_confidence_input(filters.min_confidence ?? 0);
+  }, [filters.min_confidence]);
 
   useEffect(() => {
     if (debounced_symbol !== (filters.symbol ?? '')) {
       on_change({ symbol: debounced_symbol || undefined });
     }
-  }, [debounced_symbol]);
+  }, [debounced_symbol, filters.symbol, on_change]);
+
+  useEffect(() => {
+    if (debounced_confidence !== (filters.min_confidence ?? 0)) {
+      on_change({ min_confidence: debounced_confidence > 0 ? debounced_confidence : undefined });
+    }
+  }, [debounced_confidence, filters.min_confidence, on_change]);
 
   return (
-    <div className={cn('flex flex-wrap items-center gap-3', className)}>
+    <div className={cn('rounded-xl border border-border bg-card p-4 shadow-sm', className)}>
+      <div className="flex flex-wrap items-center gap-3">
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -113,12 +131,12 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
           min={0}
           max={100}
           step={5}
-          value={filters.min_confidence ?? 0}
-          onChange={(e) => on_change({ min_confidence: Number(e.target.value) })}
+          value={confidence_input}
+          onChange={(e) => set_confidence_input(Number(e.target.value))}
           className="h-1.5 w-24 accent-emerald-500"
         />
         <span className="min-w-[2.5rem] text-xs font-medium text-muted-foreground">
-          {filters.min_confidence ?? 0}%
+          {confidence_input}%
         </span>
       </div>
 
@@ -134,6 +152,7 @@ export function SignalFilters({ filters, on_change, className }: SignalFiltersPr
         <Star className={cn('h-3.5 w-3.5', filters.favorites_only && 'fill-amber-400')} />
         Favorites
       </button>
+      </div>
     </div>
   );
 }
