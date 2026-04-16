@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatINR, formatDate, formatRR, formatDateTime, formatPct } from '../../utils/format';
@@ -43,8 +44,24 @@ function regimeLabel(multiplier: number | null): string {
   return `${multiplier}x`;
 }
 
-export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawerProps) {
+export function SignalDetailDrawer({ signal, open, on_close }: Readonly<SignalDetailDrawerProps>) {
   const { data: calibration } = useCalibration();
+  const close_button_ref = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open || !signal) return undefined;
+
+    close_button_ref.current?.focus();
+    const on_key_down = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        on_close();
+      }
+    };
+
+    document.addEventListener('keydown', on_key_down);
+    return () => document.removeEventListener('keydown', on_key_down);
+  }, [open, on_close, signal]);
 
   if (!signal) return null;
 
@@ -59,6 +76,7 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
         type="button"
         tabIndex={-1}
         aria-label="Close drawer"
+        aria-hidden={!open}
         className={cn(
           'fixed inset-0 z-40 border-none bg-black/60 transition-opacity',
           open ? 'opacity-100' : 'pointer-events-none opacity-0',
@@ -66,7 +84,9 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
         onClick={on_close}
       />
 
-      <div
+      <dialog
+        open={open}
+        aria-labelledby="signal-detail-title"
         className={cn(
           'fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-border bg-background shadow-2xl transition-transform duration-300',
           open ? 'translate-x-0' : 'translate-x-full',
@@ -74,10 +94,12 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
       >
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div>
-            <h2 className="text-lg font-bold text-foreground">{signal.symbol}</h2>
+            <h2 id="signal-detail-title" className="text-lg font-bold text-foreground">{signal.symbol}</h2>
             <p className="text-xs text-muted-foreground">{formatDateTime(signal.created_at)}</p>
           </div>
           <button
+            ref={close_button_ref}
+            type="button"
             onClick={on_close}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
@@ -85,19 +107,21 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          <div className="flex flex-wrap items-center gap-2">
-            {SignalBadge({ signal_type: signal.signal_type, direction: signal.direction })}
-            {StatusBadge({ status: signal.status })}
-            {!signal.is_executable && <ExecutionBadge execution_type={signal.execution_type} />}
-          </div>
+        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+          <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {SignalBadge({ signal_type: signal.signal_type, direction: signal.direction })}
+              {StatusBadge({ status: signal.status })}
+              {!signal.is_executable && <ExecutionBadge execution_type={signal.execution_type} />}
+            </div>
 
-          <div className="space-y-2">
-            <ConfidenceBar value={signal.confidence} tier={signal.confidence_tier} />
-            <ConfidenceBreakdownBar
-              breakdown={signal.confidence_breakdown}
-              confidence={signal.confidence}
-            />
+            <div className="space-y-2">
+              <ConfidenceBar value={signal.confidence} tier={signal.confidence_tier} />
+              <ConfidenceBreakdownBar
+                breakdown={signal.confidence_breakdown}
+                confidence={signal.confidence}
+              />
+            </div>
           </div>
 
           <div className="divide-y divide-border/50 rounded-lg border border-border bg-card px-4">
@@ -146,7 +170,7 @@ export function SignalDetailDrawer({ signal, open, on_close }: SignalDetailDrawe
 
           <DecisionOverridePanel signalId={signal.id} />
         </div>
-      </div>
+      </dialog>
     </>
   );
 }

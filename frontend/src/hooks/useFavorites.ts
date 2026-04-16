@@ -47,6 +47,7 @@ export function useAddFavorite() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['favorites'] });
       qc.invalidateQueries({ queryKey: ['signals'] });
+      qc.invalidateQueries({ queryKey: ['stock'] });
       toast.success('Added to watchlist');
     },
   });
@@ -77,6 +78,7 @@ export function useRemoveFavorite() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['favorites'] });
       qc.invalidateQueries({ queryKey: ['signals'] });
+      qc.invalidateQueries({ queryKey: ['stock'] });
       toast.success('Removed from watchlist');
     },
   });

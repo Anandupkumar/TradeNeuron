@@ -6,6 +6,7 @@ export function useFunnel(date?: string) {
     queryKey: ['signal-funnel', date],
     queryFn: () => signalsApi.funnel(date),
     staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -14,6 +15,7 @@ export function useRejectionDistribution(period_days = 30) {
     queryKey: ['rejection-distribution', period_days],
     queryFn: () => signalsApi.rejectionDistribution(period_days),
     staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -22,5 +24,6 @@ export function useCalibration() {
     queryKey: ['confidence-calibration'],
     queryFn: () => signalsApi.calibration(),
     staleTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 }

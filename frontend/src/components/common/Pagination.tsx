@@ -22,9 +22,10 @@ export function Pagination({
   const is_last = page >= total_pages;
 
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-2">
         <button
+          type="button"
           disabled={is_first}
           onClick={() => onPageChange(page - 1)}
           className={cn(
@@ -40,6 +41,7 @@ export function Pagination({
         </span>
 
         <button
+          type="button"
           disabled={is_last}
           onClick={() => onPageChange(page + 1)}
           className={cn(
@@ -52,17 +54,20 @@ export function Pagination({
       </div>
 
       {page_sizes && onPageSizeChange && (
-        <select
-          value={current_size}
-          onChange={(e) => onPageSizeChange(Number(e.target.value))}
-          className="rounded-md border border-border bg-card px-2 py-1 text-sm text-muted-foreground outline-none focus:border-ring"
-        >
-          {page_sizes.map((size) => (
-            <option key={size} value={size}>
-              {size} / page
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Rows</span>
+          <select
+            value={current_size}
+            onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            className="rounded-md border border-border bg-card px-2 py-1 text-sm text-muted-foreground outline-none focus:border-ring"
+          >
+            {page_sizes.map((size) => (
+              <option key={size} value={size}>
+                {size} / page
+              </option>
+            ))}
+          </select>
+        </div>
       )}
     </div>
   );

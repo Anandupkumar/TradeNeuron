@@ -1,6 +1,7 @@
 const { SCORING_WEIGHTS, SHORT_SCORING_WEIGHTS, VOLUME_TIER_SCORES, SOFT_FILTER } = require('../../config/constants');
 const indicatorModel = require('../../models/indicator.model');
 const featureModel = require('../../models/feature.model');
+const candleModel = require('../../models/candle.model');
 const { clamp } = require('../../utils/math.util');
 const { pool } = require('../../config/db');
 const config = require('../../config/env');
@@ -86,13 +87,24 @@ async function _scoreInternal(symbol, date, direction = 'LONG') {
       technical += w_breakdown;
     }
 
-    if (is_high_delivery && is_breakdown) {
-      quality += 10;
+    if (is_high_delivery) {
+      quality += 6;
     }
+    if (ema50_slope != null && ema50_slope < -0.5) {
+      quality += 3;
+    }
+    const is_near_vw_short = (feature.is_near_vwma === 1 || feature.is_near_vwma === true)
+      || (feature.is_near_vwap === 1 || feature.is_near_vwap === true);
+    if (is_near_vw_short) {
+      quality += 3;
+    }
+    quality = Math.min(quality, 12);
 
-    const is_near_vwap_short = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
-    if (is_near_vwap_short) {
-      quality += config.vwap_score_near;
+    const ema_200_s = indicator.ema_200 != null ? parseFloat(indicator.ema_200) : null;
+    const candle_s = await candleModel.findBySymbolAndDate(symbol, date);
+    const close_s = candle_s ? parseFloat(candle_s.adjusted_close) : null;
+    if (ema_200_s != null && close_s != null && close_s < ema_200_s) {
+      quality += 5;
     }
   } else {
     const w_trend = adaptive ? adaptive.trend : SCORING_WEIGHTS.TREND;
@@ -125,9 +137,17 @@ async function _scoreInternal(symbol, date, direction = 'LONG') {
       quality += 10;
     }
 
-    const is_near_vwap_long = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
-    if (is_near_vwap_long) {
+    const is_near_vw_long = (feature.is_near_vwma === 1 || feature.is_near_vwma === true)
+      || (feature.is_near_vwap === 1 || feature.is_near_vwap === true);
+    if (is_near_vw_long) {
       quality += config.vwap_score_near;
+    }
+
+    const ema_200 = indicator.ema_200 != null ? parseFloat(indicator.ema_200) : null;
+    const candle_row = await candleModel.findBySymbolAndDate(symbol, date);
+    const close_px = candle_row ? parseFloat(candle_row.adjusted_close) : null;
+    if (ema_200 != null && close_px != null && close_px > ema_200) {
+      quality += 5;
     }
   }
 
@@ -209,13 +229,16 @@ function buildExplanations(feature, indicator, regime, sentiment, direction = 'L
       sentences.push(`Candle close position (${close_position.toFixed(2)}) not low enough for breakdown confirmation.`);
     }
 
-    if (is_high_delivery && is_breakdown) {
-      sentences.push('High delivery percentage on a breakdown candle adds a quality bonus (+10) — institutional selling pressure.');
+    if (is_high_delivery) {
+      sentences.push('High delivery adds up to +6 short quality (capped with other quality factors at +12 before EMA200 boost).');
     }
-
-    const is_near_vwap_s = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
-    if (is_near_vwap_s) {
-      sentences.push(`Price is near VWAP — ideal entry quality bonus (+${config.vwap_score_near}).`);
+    if (ema50_slope != null && ema50_slope < -0.5) {
+      sentences.push('EMA 50 slope strongly negative — short quality +3 (within cap).');
+    }
+    const is_near_vw_s = (feature.is_near_vwma === 1 || feature.is_near_vwma === true)
+      || (feature.is_near_vwap === 1 || feature.is_near_vwap === true);
+    if (is_near_vw_s) {
+      sentences.push('Price is near rolling VWMA — short quality +3 (within cap).');
     }
   } else {
     if (is_uptrend && ema_20 != null && ema_50 != null && ema_20 > ema_50) {
@@ -251,9 +274,10 @@ function buildExplanations(feature, indicator, regime, sentiment, direction = 'L
       sentences.push('High delivery percentage on a breakout day adds a quality bonus (+10).');
     }
 
-    const is_near_vwap_l = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
-    if (is_near_vwap_l) {
-      sentences.push(`Price is near VWAP — ideal entry quality bonus (+${config.vwap_score_near}).`);
+    const is_near_vw_l = (feature.is_near_vwma === 1 || feature.is_near_vwma === true)
+      || (feature.is_near_vwap === 1 || feature.is_near_vwap === true);
+    if (is_near_vw_l) {
+      sentences.push(`Price is near rolling VWMA — ideal entry quality bonus (+${config.vwap_score_near}).`);
     }
   }
 

@@ -17,19 +17,33 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+function isApiEnvelope(data: unknown): data is ApiEnvelope<unknown> {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'success' in data &&
+    'data' in data &&
+    'error' in data
+  );
+}
+
 apiClient.interceptors.response.use(
   (response) => {
-    // If the response is an HTML string (e.g. Vite SPA fallback for a 404 API route)
-    // or does not contain the standard API envelope 'success' field
-    if (typeof response.data === 'string' || !response.data || typeof response.data !== 'object' || !('success' in response.data)) {
+    if (typeof response.data === 'string' || !isApiEnvelope(response.data)) {
       logger.error('[API] Unexpected response format (likely 404 HTML fallback).');
       return Promise.reject(new Error('Invalid API response format. Check API URL and server status.'));
     }
 
-    const envelope = response.data as ApiEnvelope<unknown>;
+    const envelope = response.data;
     if (envelope.success === false) {
       return Promise.reject(new Error(envelope.error ?? 'Unknown error'));
     }
+
+    if (envelope.data == null) {
+      logger.error('[API] Missing response payload', response.config.url);
+      return Promise.reject(new Error('API returned an empty success payload.'));
+    }
+
     logger.debug('[API] <--', response.status, response.config.url);
     return envelope.data as never;
   },

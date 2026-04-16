@@ -97,7 +97,7 @@ export function CandlestickChart({ candles, height = 400 }: CandlestickChartProp
 
     if (ema_20_data.length > 0) {
       const ema_20_series = chart.addLineSeries({
-        color: '#06b6d4',
+        color: '#3B82F6',
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: false,
@@ -107,7 +107,7 @@ export function CandlestickChart({ candles, height = 400 }: CandlestickChartProp
 
     if (ema_50_data.length > 0) {
       const ema_50_series = chart.addLineSeries({
-        color: '#eab308',
+        color: '#F97316',
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: false,

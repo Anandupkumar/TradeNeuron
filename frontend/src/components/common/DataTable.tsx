@@ -15,11 +15,18 @@ interface DataTableProps<T> {
   data: T[];
   onRowClick?: (item: T) => void;
   className?: string;
+  getRowKey?: (item: T, index: number) => React.Key;
 }
 
 type SortDirection = 'asc' | 'desc';
 
-export function DataTable<T>({ columns, data, onRowClick, className }: DataTableProps<T>) {
+export function DataTable<T>({
+  columns,
+  data,
+  onRowClick,
+  className,
+  getRowKey,
+}: DataTableProps<T>) {
   const [sort_key, set_sort_key] = useState<string | null>(null);
   const [sort_dir, set_sort_dir] = useState<SortDirection>('asc');
 
@@ -77,7 +84,7 @@ export function DataTable<T>({ columns, data, onRowClick, className }: DataTable
         <tbody className="divide-y divide-border bg-card/50">
           {sorted_data.map((item, idx) => (
             <tr
-              key={idx}
+              key={getRowKey ? getRowKey(item, idx) : idx}
               onClick={onRowClick ? () => onRowClick(item) : undefined}
               className={cn(
                 'transition-colors',

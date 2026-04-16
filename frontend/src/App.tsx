@@ -3,8 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthGuard } from './components/auth/AuthGuard';
 import { ApiKeySetupScreen } from './components/auth/ApiKeySetupScreen';
 import { AppShell } from './components/layout/AppShell';
-import { FEATURES } from './utils/constants';
 import { LoadingSkeleton } from './components/common/LoadingSkeleton';
+import { featureFlags } from './utils/featureFlags';
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Signals = React.lazy(() => import('./pages/Signals'));
@@ -37,11 +37,11 @@ export default function App() {
           <Route path="/settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />
           <Route
             path="/paper-trading"
-            element={FEATURES.paperTrading ? <Suspense fallback={<PageFallback />}><PaperTrading /></Suspense> : <Navigate to="/" replace />}
+            element={featureFlags.canAccessPaperTrading() ? <Suspense fallback={<PageFallback />}><PaperTrading /></Suspense> : <Navigate to="/" replace />}
           />
           <Route
             path="/backtest"
-            element={FEATURES.backtest ? <Suspense fallback={<PageFallback />}><Backtest /></Suspense> : <Navigate to="/" replace />}
+            element={featureFlags.canAccessBacktest() ? <Suspense fallback={<PageFallback />}><Backtest /></Suspense> : <Navigate to="/" replace />}
           />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

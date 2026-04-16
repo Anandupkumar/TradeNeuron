@@ -8,17 +8,36 @@ function evaluate(symbol, date, candle, indicator, feature, recent_candles) {
   const ema_20 = indicator.ema_20 != null ? parseFloat(indicator.ema_20) : null;
   const ema_50 = indicator.ema_50 != null ? parseFloat(indicator.ema_50) : null;
   const adjusted_close = parseFloat(candle.adjusted_close);
+  const ema50_slope = feature.ema50_slope != null ? parseFloat(feature.ema50_slope) : null;
+  const relative_strength_vs_nifty = feature.relative_strength_vs_nifty != null
+    ? parseFloat(feature.relative_strength_vs_nifty)
+    : null;
 
   if (ema_50 == null || adjusted_close >= ema_50) return null;
-  if (rsi_zone !== 'OVERBOUGHT') return null;
   if (ema_20 == null || ema_20 >= ema_50) return null;
+
+  const recent_highs = recent_candles.slice(-10).map((c) => parseFloat(c.high));
+  if (recent_highs.length === 0) return null;
+  const highest10 = Math.max(...recent_highs);
+  const nearResistance = adjusted_close >= highest10 * 0.97;
+
+  const validOverbought = rsi_zone === 'OVERBOUGHT';
+  const validNeutral =
+    rsi_zone === 'NEUTRAL'
+    && ema50_slope != null
+    && ema50_slope < 0
+    && nearResistance
+    && relative_strength_vs_nifty != null
+    && relative_strength_vs_nifty < 0;
+
+  if (!validOverbought && !validNeutral) return null;
 
   const atr = indicator.atr != null ? parseFloat(indicator.atr) : null;
   if (atr == null || atr <= 0) return null;
 
-  const recent_highs = recent_candles.slice(-15).map((c) => parseFloat(c.high));
-  if (recent_highs.length === 0) return null;
-  const swing_high = Math.max(...recent_highs);
+  const recent_highs15 = recent_candles.slice(-15).map((c) => parseFloat(c.high));
+  if (recent_highs15.length === 0) return null;
+  const swing_high = Math.max(...recent_highs15);
 
   const entry_price = adjusted_close;
   const stop_loss = roundDecimal(swing_high + 0.5 * atr, 2);
@@ -32,6 +51,10 @@ function evaluate(symbol, date, candle, indicator, feature, recent_candles) {
   const target_price = roundDecimal(entry_price - 2.0 * risk, 2);
   const risk_reward = roundDecimal((entry_price - target_price) / risk, 2);
 
+  const reasons = validNeutral
+    ? ['Downtrend', 'NEUTRAL at resistance', 'RS vs NIFTY weak', 'Short Entry']
+    : ['Downtrend', 'RSI Overbought Bounce', 'Short Entry'];
+
   return {
     symbol,
     date,
@@ -42,7 +65,7 @@ function evaluate(symbol, date, candle, indicator, feature, recent_candles) {
     strategy: 'TREND_PULLBACK_SHORT',
     signal_type: 'SELL',
     direction: 'SHORT',
-    reasons: ['Downtrend', 'RSI Overbought Bounce', 'Short Entry'],
+    reasons,
   };
 }
 

@@ -91,7 +91,7 @@ async function fetchQuoteSummary(symbol) {
         `/v10/finance/quoteSummary/${encodeURIComponent(symbol)}`,
         {
           params: {
-            modules: 'defaultKeyStatistics,financialData,earnings,majorHoldersBreakdown',
+            modules: 'defaultKeyStatistics,financialData,earnings,majorHoldersBreakdown,calendarEvents',
           },
         }
       );

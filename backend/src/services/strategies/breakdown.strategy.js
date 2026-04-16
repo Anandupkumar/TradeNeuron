@@ -39,6 +39,7 @@ function evaluate(symbol, date, candle, indicator, feature, recent_candles) {
     target_price,
     risk_reward,
     strategy: 'BREAKDOWN',
+    exit_policy: { atr_value: atr },
     signal_type: 'SELL',
     direction: 'SHORT',
     reasons: ['Breakdown Below Support', 'Volume Spike', 'Short Entry'],

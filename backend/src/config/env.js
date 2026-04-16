@@ -108,6 +108,53 @@ const config = Object.freeze({
 
   log_level: process.env.LOG_LEVEL || 'info',
   log_dir: process.env.LOG_DIR || './logs',
+
+  max_sl_distance_pct: parseFloat(process.env.MAX_SL_DISTANCE_PCT || '6'),
+
+  confidence_calibration_enabled: (process.env.CONFIDENCE_CALIBRATION_ENABLED || 'true').toLowerCase() === 'true',
+  calibration_min_bucket_samples: parseInt(process.env.CALIBRATION_MIN_BUCKET_SAMPLES || '20', 10),
+  calibration_prior_weight: parseInt(process.env.CALIBRATION_PRIOR_WEIGHT || '20', 10),
+
+  earnings_blackout_enabled: (process.env.EARNINGS_BLACKOUT_ENABLED || 'true').toLowerCase() === 'true',
+
+  sector_trend_penalty_enabled: (process.env.SECTOR_TREND_PENALTY_ENABLED || 'true').toLowerCase() === 'true',
+  sector_trend_penalty_points: parseInt(process.env.SECTOR_TREND_PENALTY_POINTS || '10', 10),
+
+  portfolio_risk_cap_enabled: (process.env.PORTFOLIO_RISK_CAP_ENABLED || 'true').toLowerCase() === 'true',
+  max_portfolio_risk_pct: parseFloat(process.env.MAX_PORTFOLIO_RISK_PCT || '5'),
+
+  correlation_position_scaling_enabled: (process.env.CORRELATION_POSITION_SCALING_ENABLED || 'true').toLowerCase() === 'true',
+
+  regime_frequency_enabled: (process.env.REGIME_FREQUENCY_ENABLED || 'true').toLowerCase() === 'true',
+  freq_mult_bullish: parseFloat(process.env.FREQ_MULT_BULLISH || '1.0'),
+  freq_mult_bearish: parseFloat(process.env.FREQ_MULT_BEARISH || '0.7'),
+  freq_mult_sideways: parseFloat(process.env.FREQ_MULT_SIDEWAYS || '0.6'),
+  freq_mult_high_vol: parseFloat(process.env.FREQ_MULT_HIGH_VOL || '0'),
+
+  drawdown_risk_scaling_enabled: (process.env.DRAWDOWN_RISK_SCALING_ENABLED || 'true').toLowerCase() === 'true',
+  drawdown_threshold_high: parseFloat(process.env.DRAWDOWN_THRESHOLD_HIGH || '0.15'),
+  drawdown_threshold_mid: parseFloat(process.env.DRAWDOWN_THRESHOLD_MID || '0.08'),
+  drawdown_scale_severe: parseFloat(process.env.DRAWDOWN_SCALE_SEVERE || '0.5'),
+  drawdown_scale_moderate: parseFloat(process.env.DRAWDOWN_SCALE_MODERATE || '0.75'),
+
+  entry_freshness_enabled: (process.env.ENTRY_FRESHNESS_ENABLED || 'true').toLowerCase() === 'true',
+  entry_degraded_drift_pct: parseFloat(process.env.ENTRY_DEGRADED_DRIFT_PCT || '2'),
+
+  directional_exposure_enabled: (process.env.DIRECTIONAL_EXPOSURE_ENABLED || 'true').toLowerCase() === 'true',
+  max_short_risk_share: parseFloat(process.env.MAX_SHORT_RISK_SHARE || '0.7'),
+
+  futures_sl_buffer_enabled: (process.env.FUTURES_SL_BUFFER_ENABLED || 'true').toLowerCase() === 'true',
+  futures_sl_buffer_factor: parseFloat(process.env.FUTURES_SL_BUFFER_FACTOR || '1.003'),
+
+  vwma_api_alias_enabled: (process.env.VWMA_API_ALIAS_ENABLED || 'true').toLowerCase() === 'true',
+
+  strategy_pruning_auto_apply: (process.env.STRATEGY_PRUNING_AUTO_APPLY || 'false').toLowerCase() === 'true',
+  strategy_pruning_profit_factor_floor: parseFloat(process.env.STRATEGY_PRUNING_PROFIT_FACTOR_FLOOR || '1.0'),
+  strategy_pruning_expectancy_floor: parseFloat(process.env.STRATEGY_PRUNING_EXPECTANCY_FLOOR || '0'),
+
+  shadow_compare_enabled: (process.env.SHADOW_COMPARE_ENABLED || 'true').toLowerCase() === 'true',
+  validation_min_shadow_days: parseInt(process.env.VALIDATION_MIN_SHADOW_DAYS || '15', 10),
+  validation_min_shadow_overlap_pct: parseFloat(process.env.VALIDATION_MIN_SHADOW_OVERLAP_PCT || '50'),
 });
 
 module.exports = config;

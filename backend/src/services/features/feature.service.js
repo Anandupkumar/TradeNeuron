@@ -172,12 +172,12 @@ async function computeFeatures(symbol, candles, indicators, nifty_candles) {
     const delivery_pct = candle.delivery_pct != null ? parseFloat(candle.delivery_pct) : null;
     const is_high_delivery = delivery_pct != null ? delivery_pct > 50 : null;
 
-    const vwap_entry = vwap_data[i];
-    const vwap = vwap_entry ? roundDecimal(vwap_entry.vwap, 2) : null;
-    const vwap_distance_pct = (vwap != null && vwap > 0)
-      ? roundDecimal(((adjusted_close - vwap) / vwap) * 100, 2)
+    const vwma_entry = vwap_data[i];
+    const vwma = vwma_entry ? roundDecimal(vwma_entry.vwap, 2) : null;
+    const vwma_distance_pct = (vwma != null && vwma > 0)
+      ? roundDecimal(((adjusted_close - vwma) / vwma) * 100, 2)
       : null;
-    const is_near_vwap = vwap_distance_pct != null ? Math.abs(vwap_distance_pct) < 2.0 : null;
+    const is_near_vwma = vwma_distance_pct != null ? Math.abs(vwma_distance_pct) < 2.0 : null;
 
     const rvol = (vol_sma_20 != null && vol_sma_20 > 0)
       ? roundDecimal(volume / vol_sma_20, 2)
@@ -207,9 +207,9 @@ async function computeFeatures(symbol, candles, indicators, nifty_candles) {
       z_score_20d,
       rvol,
       volume_tier,
-      vwap,
-      vwap_distance_pct,
-      is_near_vwap,
+      vwma,
+      vwma_distance_pct,
+      is_near_vwma,
       is_high_delivery,
     });
   }

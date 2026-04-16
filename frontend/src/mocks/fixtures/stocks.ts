@@ -12,6 +12,7 @@ export const mockStockDetail: StockDetail = {
     close: 2450.0,
     adjusted_close: 2450.0,
     volume: 12500000,
+    delivery_pct: 48.2,
   },
   indicators: {
     ema_20: 2420.0,
@@ -29,12 +30,21 @@ export const mockStockDetail: StockDetail = {
     rsi_zone: 'NEUTRAL',
     is_volume_spike: false,
     is_breakout: false,
+    close_position: 0.62,
+    ema50_slope: 1.4,
     near_support: false,
     is_liquid: true,
     is_ranging: false,
     z_score_20d: 0.8,
     distance_from_52w_high_pct: -5.2,
     relative_strength_vs_nifty: 1.05,
+    rvol: 1.5,
+    volume_tier: 'elevated',
+    vwma: 2438.5,
+    vwma_distance_pct: 0.47,
+    is_near_vwma: true,
+    is_high_delivery: true,
+    delivery_pct: 48.2,
   },
   active_signal: null,
 };
@@ -47,6 +57,7 @@ export const mockCandle: CandleWithIndicators = {
   close: 2450.0,
   adjusted_close: 2450.0,
   volume: 12500000,
+  delivery_pct: 48.2,
   indicators: { ema_20: 2420.0, ema_50: 2400.0, ema_200: 2350.0, rsi: 58.5 },
 };
 

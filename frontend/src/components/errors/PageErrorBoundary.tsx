@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { logger } from '../../utils/logger';
 
 interface PageErrorBoundaryState {
   has_error: boolean;
@@ -21,7 +22,7 @@ export class PageErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[PageErrorBoundary]', error, info.componentStack);
+    logger.error('[PageErrorBoundary]', error, info.componentStack);
   }
 
   handleRetry = () => {

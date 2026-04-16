@@ -7,6 +7,7 @@ const signalModel = require('../models/signal.model');
 const { NotFoundError } = require('../utils/errors');
 const { getSector } = require('../utils/symbols.util');
 const { isFavorite } = require('../services/favorites/favorite.service');
+const config = require('../config/env');
 
 function parseSignalJson(s) {
   if (!s) return null;
@@ -81,9 +82,16 @@ router.get('/stock/:symbol', async (req, res, next) => {
           relative_strength_vs_nifty: feature.relative_strength_vs_nifty,
           rvol: feature.rvol ?? null,
           volume_tier: feature.volume_tier ?? null,
-          vwap: feature.vwap ?? null,
-          vwap_distance_pct: feature.vwap_distance_pct ?? null,
-          is_near_vwap: !!feature.is_near_vwap,
+          vwma: feature.vwma ?? feature.vwap ?? null,
+          vwma_distance_pct: feature.vwma_distance_pct ?? feature.vwap_distance_pct ?? null,
+          is_near_vwma: !!(feature.is_near_vwma ?? feature.is_near_vwap),
+          ...(config.vwma_api_alias_enabled
+            ? {
+              vwap: feature.vwma ?? feature.vwap ?? null,
+              vwap_distance_pct: feature.vwma_distance_pct ?? feature.vwap_distance_pct ?? null,
+              is_near_vwap: !!(feature.is_near_vwma ?? feature.is_near_vwap),
+            }
+            : {}),
           is_high_delivery: !!feature.is_high_delivery,
           delivery_pct: feature.delivery_pct ?? null,
         } : null,

@@ -12,6 +12,7 @@ function calculateMetrics(trades) {
   const avg_return_pct = returns.length > 0
     ? roundDecimal(returns.reduce((s, r) => s + r, 0) / returns.length, 4)
     : 0;
+  const expectancy_pct = avg_return_pct;
 
   const max_drawdown_pct = calculateMaxDrawdown(returns);
 
@@ -26,6 +27,23 @@ function calculateMetrics(trades) {
     ? roundDecimal(holding_days.reduce((s, d) => s + d, 0) / holding_days.length, 2)
     : null;
 
+  const avg_mfe_pct = trades.length > 0
+    ? roundDecimal(trades.reduce((sum, trade) => sum + (parseFloat(trade.mfe_pct) || 0), 0) / trades.length, 4)
+    : 0;
+  const avg_mae_pct = trades.length > 0
+    ? roundDecimal(trades.reduce((sum, trade) => sum + (parseFloat(trade.mae_pct) || 0), 0) / trades.length, 4)
+    : 0;
+  const gap_open_losses = trades.filter((trade) => trade.gap_open === true).length;
+  const avg_entry_gap_pct = trades.length > 0
+    ? roundDecimal(trades.reduce((sum, trade) => sum + (parseFloat(trade.entry_gap_pct) || 0), 0) / trades.length, 4)
+    : 0;
+
+  const exit_reason_distribution = {};
+  for (const trade of trades) {
+    const reason = trade.exit_reason || 'UNKNOWN';
+    exit_reason_distribution[reason] = (exit_reason_distribution[reason] || 0) + 1;
+  }
+
   return {
     total_signals,
     wins,
@@ -33,10 +51,16 @@ function calculateMetrics(trades) {
     neutral,
     win_rate_pct,
     avg_return_pct,
+    expectancy_pct,
     max_drawdown_pct,
     sharpe_ratio,
     profit_factor,
     avg_holding_days,
+    avg_mfe_pct,
+    avg_mae_pct,
+    gap_open_losses,
+    avg_entry_gap_pct,
+    exit_reason_distribution,
   };
 }
 

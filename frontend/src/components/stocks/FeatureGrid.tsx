@@ -16,24 +16,22 @@ const rsi_zone_styles: Record<RsiZone, string> = {
 };
 
 const volume_tier_styles: Record<VolumeTier, string> = {
-  LOW: 'bg-muted/50 text-muted-foreground',
-  NORMAL: 'bg-blue-500/20 text-blue-400',
-  HIGH: 'bg-amber-500/20 text-amber-400',
-  VERY_HIGH: 'bg-orange-500/20 text-orange-400',
-  EXTREME: 'bg-red-500/20 text-red-400',
+  normal: 'bg-muted/50 text-muted-foreground',
+  elevated: 'bg-blue-500/20 text-blue-400',
+  high: 'bg-amber-500/20 text-amber-400',
+  extreme: 'bg-red-500/20 text-red-400',
 };
 
 const volume_tier_labels: Record<VolumeTier, string> = {
-  LOW: 'Low',
-  NORMAL: 'Normal',
-  HIGH: 'High',
-  VERY_HIGH: 'Very High',
-  EXTREME: 'Extreme',
+  normal: 'Normal',
+  elevated: 'Elevated',
+  high: 'High',
+  extreme: 'Extreme',
 };
 
 function booleanPill(value: boolean, label: string) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+    <div className="flex items-center justify-between rounded-lg border border-border bg-background/40 p-3">
       <span className="text-sm text-muted-foreground">{label}</span>
       {value ? (
         <span className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
@@ -55,9 +53,9 @@ function numericCard(label: string, raw_value: number | string | null, formatter
   const display = value == null ? '—' : formatter(value);
 
   return (
-    <div className="rounded-lg border border-border bg-card p-3">
+    <div className="rounded-lg border border-border bg-background/40 p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-foreground">{display}</p>
+      <p className="mt-1 text-lg font-semibold tracking-tight text-foreground">{display}</p>
     </div>
   );
 }
@@ -67,7 +65,7 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
     <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4', className)}>
       {booleanPill(features.is_uptrend, 'Uptrend')}
 
-      <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+      <div className="flex items-center justify-between rounded-lg border border-border bg-background/40 p-3">
         <span className="text-sm text-muted-foreground">RSI Zone</span>
         <span
           className={cn(
@@ -83,7 +81,7 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
       {booleanPill(features.is_breakout, 'Breakout')}
 
       {features.close_position != null && (
-        <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+        <div className="flex items-center justify-between rounded-lg border border-border bg-background/40 p-3">
           <span className="text-sm text-muted-foreground">Breakout Strength</span>
           <span
             className={cn(
@@ -105,7 +103,7 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
       )}
 
       {features.ema50_slope != null && (
-        <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+        <div className="flex items-center justify-between rounded-lg border border-border bg-background/40 p-3">
           <span className="text-sm text-muted-foreground">EMA50 Trend</span>
           <span
             className={cn(
@@ -136,7 +134,7 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
       {numericCard('RVOL', features.rvol, (v) => formatRR(v))}
 
       {features.volume_tier != null && (
-        <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+        <div className="flex items-center justify-between rounded-lg border border-border bg-background/40 p-3">
           <span className="text-sm text-muted-foreground">Volume Tier</span>
           <span
             className={cn(
@@ -149,9 +147,9 @@ export function FeatureGrid({ features, className }: FeatureGridProps) {
         </div>
       )}
 
-      {numericCard('VWAP', features.vwap, (v) => formatINR(v))}
-      {numericCard('VWAP Distance', features.vwap_distance_pct, (v) => formatPct(v, true))}
-      {booleanPill(features.is_near_vwap, 'Near VWAP')}
+      {numericCard('VWMA (20)', features.vwma ?? features.vwap ?? null, (v) => formatINR(v))}
+      {numericCard('VWMA Distance', features.vwma_distance_pct ?? features.vwap_distance_pct ?? null, (v) => formatPct(v, true))}
+      {booleanPill(!!(features.is_near_vwma ?? features.is_near_vwap), 'Near VWMA')}
       {booleanPill(features.is_high_delivery, 'High Delivery')}
       {numericCard('Delivery %', features.delivery_pct, (v) => formatPct(v))}
     </div>

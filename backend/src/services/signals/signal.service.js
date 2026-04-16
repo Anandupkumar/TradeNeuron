@@ -12,6 +12,48 @@ const signalOutcomeModel = require('../../models/signal_outcome.model');
 const rejectedSignalModel = require('../../models/rejected_signal.model');
 const { sendTelegramAlert } = require('../../utils/notify.util');
 const strategyConfigModel = require('../../models/strategy_config.model');
+const fundamentalModel = require('../../models/fundamental.model');
+const confidenceCalibrationModel = require('../../models/confidence_calibration.model');
+const paperTradeModel = require('../../models/paper_trade.model');
+const { getSectorAverageRelativeStrength } = require('../fundamentals/sector_context.service');
+const { tradingDaysUntilNext, countTradingDaysAfterUntil } = require('../../utils/date.util');
+const {
+  attachExitPolicy,
+  recomputeExitPlan,
+  evaluateSignalExit,
+  deriveConservativeTarget,
+} = require('../../utils/exit_policy.util');
+const { computeRankingScore } = require('../../utils/ranking.util');
+
+function vwDistPct(feature) {
+  if (!feature) return null;
+  const raw = feature.vwma_distance_pct ?? feature.vwap_distance_pct;
+  return raw != null ? parseFloat(raw) : null;
+}
+
+function isNearVwma(feature) {
+  if (!feature) return false;
+  const a = feature.is_near_vwma === 1 || feature.is_near_vwma === true;
+  const b = feature.is_near_vwap === 1 || feature.is_near_vwap === true;
+  return !!(a || b);
+}
+
+function bucketConfidence(value) {
+  if (value == null) return null;
+  const numeric = parseFloat(value);
+  if (Number.isNaN(numeric)) return null;
+  return Math.floor(numeric / 5) * 5;
+}
+
+function bucketRelativeStrength(value) {
+  const rs = value != null ? parseFloat(value) : null;
+  if (rs == null || Number.isNaN(rs)) return 'UNKNOWN';
+  if (rs >= 10) return 'VERY_STRONG';
+  if (rs >= 5) return 'STRONG';
+  if (rs <= -10) return 'VERY_WEAK';
+  if (rs <= -5) return 'WEAK';
+  return 'NEUTRAL';
+}
 
 function resolveExecutionType(direction, accountType) {
   if (direction === 'LONG') {
@@ -26,14 +68,23 @@ function resolveExecutionType(direction, accountType) {
   return { execution_type: 'EQUITY', is_executable: true };
 }
 
-function computePositionSizing(entry_price, stop_loss, direction) {
+function computePositionSizing(entry_price, stop_loss, direction, opts = {}) {
   const risk_per_share = direction === 'SHORT'
     ? stop_loss - entry_price
     : entry_price - stop_loss;
 
   if (risk_per_share <= 0) return null;
 
-  const risk_per_trade_inr = config.total_capital_inr * (config.risk_pct_per_trade / 100);
+  const correlation_divisor = opts.correlation_divisor != null && config.correlation_position_scaling_enabled
+    ? Math.max(1, opts.correlation_divisor)
+    : 1;
+  const drawdown_scale = opts.drawdown_scale != null && config.drawdown_risk_scaling_enabled
+    ? opts.drawdown_scale
+    : 1;
+
+  let risk_per_trade_inr = (config.total_capital_inr * (config.risk_pct_per_trade / 100)) / correlation_divisor;
+  risk_per_trade_inr *= drawdown_scale;
+
   let shares_to_buy = Math.floor(risk_per_trade_inr / risk_per_share);
 
   const max_pct = direction === 'SHORT'
@@ -56,7 +107,16 @@ function computePositionSizing(entry_price, stop_loss, direction) {
   };
 }
 
-async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null) {
+async function buildCandidate(
+  symbol,
+  date,
+  raw_signals,
+  batch_signals = [],
+  nifty_pcr = null,
+  sentiment_adjustment = 0,
+  vix_close = null,
+  market_regime = null
+) {
   if (!raw_signals || raw_signals.length === 0) return null;
 
   const use_pool = config.frequency_controller_enabled;
@@ -74,17 +134,43 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     return null;
   }
 
+  if (config.earnings_blackout_enabled) {
+    const fund = await fundamentalModel.findLatestBySymbol(symbol);
+    const ed = fund?.next_earnings_date;
+    if (ed) {
+      const earn = new Date(ed);
+      const today = new Date(date);
+      let blackout = false;
+      if (earn > today) {
+        const daysTo = tradingDaysUntilNext(date, ed);
+        if (daysTo >= 1 && daysTo <= 2) blackout = true;
+      } else {
+        const daysSince = countTradingDaysAfterUntil(ed, date);
+        if (daysSince >= 0 && daysSince <= 1) blackout = true;
+      }
+      if (blackout) {
+        logger.info(`Signal for ${symbol} rejected: earnings blackout window (next=${ed})`);
+        await rejectedSignalModel.insertRejected({
+          symbol, date, strategy_source: raw_signals[0].strategy, reject_stage: 'EARNINGS_BLACKOUT',
+          reject_reason: `Earnings blackout near ${ed}`, raw_confidence: null,
+        });
+        return null;
+      }
+    }
+  }
+
+  const prepared_signals = raw_signals.map((raw) => attachExitPolicy(raw));
   let signal;
 
-  if (raw_signals.length === 1) {
-    signal = raw_signals[0];
+  if (prepared_signals.length === 1) {
+    signal = prepared_signals[0];
   } else {
-    const entry_price = raw_signals[0].entry_price;
+    const entry_price = prepared_signals[0].entry_price;
     let stop_loss;
     if (is_short) {
-      stop_loss = Math.min(...raw_signals.map((s) => s.stop_loss));
+      stop_loss = Math.min(...prepared_signals.map((s) => s.stop_loss));
     } else {
-      stop_loss = Math.max(...raw_signals.map((s) => s.stop_loss));
+      stop_loss = Math.max(...prepared_signals.map((s) => s.stop_loss));
     }
 
     const risk = is_short
@@ -93,34 +179,35 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
 
     if (risk <= 0) {
       logger.info(`Merged signal for ${symbol} discarded: non-positive risk after SL merge`);
-      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: raw_signals.map(s => s.strategy).join('+'), reject_stage: 'MERGED_RISK_ZERO', reject_reason: `Non-positive risk (${risk}) after SL merge` });
+      await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: prepared_signals.map((s) => s.strategy).join('+'), reject_stage: 'MERGED_RISK_ZERO', reject_reason: `Non-positive risk (${risk}) after SL merge` });
       return null;
     }
 
-    const target_price = is_short
-      ? roundDecimal(entry_price - 2.0 * risk, 2)
-      : roundDecimal(entry_price + 2.0 * risk, 2);
-    const risk_reward = roundDecimal(
-      is_short
-        ? (entry_price - target_price) / risk
-        : (target_price - entry_price) / risk,
-      2
-    );
+    const target_price = deriveConservativeTarget(prepared_signals, direction);
 
-    const all_strategies = raw_signals.map((s) => s.strategy);
-    const all_reasons = [...new Set(raw_signals.flatMap((s) => s.reasons))];
+    const all_strategies = prepared_signals.map((s) => s.strategy);
+    const all_reasons = [...new Set(prepared_signals.flatMap((s) => s.reasons))];
 
-    signal = {
+    signal = attachExitPolicy({
       symbol,
       date,
       entry_price,
       stop_loss: roundDecimal(stop_loss, 2),
       target_price,
-      risk_reward,
       strategy: all_strategies.join('+'),
+      exit_policy: {
+        kind: 'LEVEL_TARGET',
+        target_source: 'MERGED_CONSERVATIVE',
+        max_hold_days: Math.max(...prepared_signals.map((s) => s.max_hold_days || config.holding_period_days)),
+      },
       reasons: all_reasons,
       direction,
-    };
+    });
+  }
+
+  if (config.futures_sl_buffer_enabled && is_short && config.account_type === 'FNO') {
+    const new_sl = roundDecimal(parseFloat(signal.stop_loss) * config.futures_sl_buffer_factor, 2);
+    signal = recomputeExitPlan(signal, new_sl);
   }
 
   const primaryStrategy = signal.strategy.includes('BREAKDOWN')
@@ -135,8 +222,9 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
   let vwap_effect = 0;
   let pcr_effect = 0;
 
-  if (feature && feature.vwap_distance_pct != null) {
-    const vwap_dist = parseFloat(feature.vwap_distance_pct);
+  const vw_dist_val = vwDistPct(feature);
+  if (feature && vw_dist_val != null) {
+    const vwap_dist = vw_dist_val;
     const is_breakout = feature.is_breakout === 1 || feature.is_breakout === true;
     const is_uptrend = feature.is_uptrend === 1 || feature.is_uptrend === true;
     const rvol = feature.rvol != null ? parseFloat(feature.rvol) : 0;
@@ -237,11 +325,43 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
   const effects = { vwap: vwap_effect, pcr: pcr_effect, sentiment: sentiment_adjustment };
   const soft_penalty = effects.vwap + effects.pcr + effects.sentiment;
 
-  const { score: raw_confidence, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date, direction);
-  const confidence = Math.max(0, Math.min(100, raw_confidence + soft_penalty));
+  const { score: model_score, breakdown, feature: scoreFeature, indicator: scoreIndicator } = await calculateScoreWithBreakdown(symbol, date, direction);
+  const pre_calib_confidence = Math.max(0, Math.min(100, model_score + soft_penalty));
 
   if (soft_penalty !== 0) {
-    logger.info(`Signal for ${symbol} confidence adjusted: raw=${raw_confidence}, vwap=${effects.vwap}, pcr=${effects.pcr}, sentiment=${effects.sentiment}, total=${soft_penalty}, final=${confidence}`);
+    logger.info(`Signal for ${symbol} confidence adjusted: raw=${model_score}, vwap=${effects.vwap}, pcr=${effects.pcr}, sentiment=${effects.sentiment}, total=${soft_penalty}, pre_calib=${pre_calib_confidence}`);
+  }
+
+  let confidence = pre_calib_confidence;
+  let confidence_calibrated_flag = false;
+
+  if (config.confidence_calibration_enabled) {
+    const bucket = Math.floor(pre_calib_confidence / 5) * 5;
+    const cal = await confidenceCalibrationModel.findLatestForBucket(bucket);
+    if (cal && cal.total_signals >= config.calibration_min_bucket_samples) {
+      const pw = config.calibration_prior_weight;
+      const n = cal.total_signals;
+      const awr = parseFloat(cal.actual_win_rate);
+      confidence = Math.round((pre_calib_confidence * pw + awr * n) / (pw + n));
+      confidence = Math.max(0, Math.min(100, confidence));
+      confidence_calibrated_flag = true;
+    }
+  }
+
+  const sector_name = getSector(symbol);
+  const sector_avg = await getSectorAverageRelativeStrength(date, sector_name);
+
+  if (config.sector_trend_penalty_enabled) {
+    if (sector_avg != null) {
+      if (direction === 'LONG' && sector_avg < 0) {
+        confidence = Math.max(0, confidence - config.sector_trend_penalty_points);
+        logger.info(`Signal for ${symbol} sector penalty: sector avg RS ${sector_avg.toFixed(2)} (weak) — -${config.sector_trend_penalty_points}`);
+      }
+      if (direction === 'SHORT' && sector_avg > 0) {
+        confidence = Math.max(0, confidence - config.sector_trend_penalty_points);
+        logger.info(`Signal for ${symbol} sector penalty: sector avg RS ${sector_avg.toFixed(2)} (strong) — -${config.sector_trend_penalty_points}`);
+      }
+    }
   }
 
   if (confidence < min_conf) {
@@ -285,7 +405,19 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     return null;
   }
 
-  const sizing = computePositionSizing(signal.entry_price, signal.stop_loss, direction);
+  const dd_frac = await paperTradeModel.getPortfolioDrawdownFraction();
+  let drawdown_scale = 1;
+  if (config.drawdown_risk_scaling_enabled) {
+    if (dd_frac > config.drawdown_threshold_high) drawdown_scale = config.drawdown_scale_severe;
+    else if (dd_frac > config.drawdown_threshold_mid) drawdown_scale = config.drawdown_scale_moderate;
+  }
+
+  const correlation_divisor = sector_active + 1;
+
+  const sizing = computePositionSizing(signal.entry_price, signal.stop_loss, direction, {
+    correlation_divisor,
+    drawdown_scale,
+  });
   if (!sizing) {
     logger.info(`Signal for ${symbol} rejected: position sizing returned null (non-positive risk_per_share)`);
     await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'POSITION_SIZING', reject_reason: 'Position sizing returned null (non-positive risk_per_share)', raw_confidence: confidence });
@@ -299,6 +431,62 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     sizing.position_value = roundDecimal(signal.entry_price, 2);
     sizing.capital_risk_inr = roundDecimal(risk_per_share, 2);
     logger.info({ symbol, strategy: primaryStrategy, reason: 'POSITION_SIZING_FLOOR_APPLIED' });
+  }
+
+  if (config.portfolio_risk_cap_enabled) {
+    const batch_risk = batch_signals.reduce((acc, b) => acc + (parseFloat(b.capital_risk_inr) || 0), 0);
+    const active_risk = await signalModel.sumActiveCapitalRisk();
+    const max_total = config.total_capital_inr * (config.max_portfolio_risk_pct / 100);
+    if (active_risk + batch_risk + sizing.capital_risk_inr > max_total) {
+      logger.info(`Signal for ${symbol} rejected: portfolio risk cap (${active_risk + batch_risk + sizing.capital_risk_inr} > ${max_total})`);
+      await rejectedSignalModel.insertRejected({
+        symbol, date, strategy_source: signal.strategy, reject_stage: 'PORTFOLIO_RISK_CAP',
+        reject_reason: `Portfolio capital at risk would exceed ${config.max_portfolio_risk_pct}% of capital`,
+        raw_confidence: confidence, raw_rr: signal.risk_reward,
+      });
+      return null;
+    }
+  }
+
+  if (config.directional_exposure_enabled && is_short) {
+    const long_r = await signalModel.sumActiveCapitalRiskByDirection('LONG');
+    const short_r = await signalModel.sumActiveCapitalRiskByDirection('SHORT');
+    const batch_long = batch_signals.filter((x) => x.direction === 'LONG').reduce((a, x) => a + (parseFloat(x.capital_risk_inr) || 0), 0);
+    const batch_short = batch_signals.filter((x) => x.direction === 'SHORT').reduce((a, x) => a + (parseFloat(x.capital_risk_inr) || 0), 0);
+    const new_short_risk = sizing.capital_risk_inr;
+    const total_risk = long_r + short_r + batch_long + batch_short + new_short_risk;
+    const short_share = total_risk > 0 ? (short_r + batch_short + new_short_risk) / total_risk : 0;
+    if (short_share > config.max_short_risk_share) {
+      sizing.shares_to_buy = Math.max(1, Math.floor(sizing.shares_to_buy * 0.85));
+      const rps = direction === 'SHORT'
+        ? signal.stop_loss - signal.entry_price
+        : signal.entry_price - signal.stop_loss;
+      sizing.position_value = roundDecimal(sizing.shares_to_buy * signal.entry_price, 2);
+      sizing.capital_risk_inr = roundDecimal(sizing.shares_to_buy * rps, 2);
+      logger.info(`Signal for ${symbol} directional exposure: short share ${short_share.toFixed(2)} — reduced shares to ${sizing.shares_to_buy}`);
+    }
+  }
+
+  let entry_degraded = false;
+  if (config.entry_freshness_enabled) {
+    const eval_candle = await candleModel.findBySymbolAndDate(symbol, date);
+    if (eval_candle) {
+      const drift = Math.abs(parseFloat(eval_candle.adjusted_close) - parseFloat(signal.entry_price))
+        / parseFloat(signal.entry_price);
+      const gap_against = is_short
+        ? parseFloat(eval_candle.open) < parseFloat(signal.entry_price)
+        : parseFloat(eval_candle.open) > parseFloat(signal.entry_price);
+      if (drift > config.entry_degraded_drift_pct / 100 && gap_against) {
+        entry_degraded = true;
+        sizing.shares_to_buy = Math.max(1, Math.floor(sizing.shares_to_buy * 0.9));
+        const rps2 = direction === 'SHORT'
+          ? signal.stop_loss - signal.entry_price
+          : signal.entry_price - signal.stop_loss;
+        sizing.position_value = roundDecimal(sizing.shares_to_buy * signal.entry_price, 2);
+        sizing.capital_risk_inr = roundDecimal(sizing.shares_to_buy * rps2, 2);
+        logger.info(`Signal for ${symbol} entry_degraded: drift=${(drift * 100).toFixed(2)}%`);
+      }
+    }
   }
 
   let regime_size_multiplier = 1.0;
@@ -332,6 +520,13 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
   const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null, direction);
 
   const { execution_type, is_executable } = resolveExecutionType(direction, config.account_type);
+  const { ranking_score, ranking_components } = computeRankingScore({
+    confidence,
+    feature,
+    sector_average_rs: sector_avg,
+    direction,
+    strategy_source: signal.strategy,
+  });
 
   return {
     symbol,
@@ -341,11 +536,19 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
     execution_type,
     is_executable,
     confidence,
+    raw_confidence: pre_calib_confidence,
+    confidence_calibrated: confidence_calibrated_flag,
+    entry_degraded,
+    market_regime: market_regime || null,
+    ranking_score,
+    ranking_components,
     confidence_tier,
     entry_price: signal.entry_price,
     stop_loss: signal.stop_loss,
     target_price: signal.target_price,
     risk_reward: signal.risk_reward,
+    exit_policy: signal.exit_policy,
+    max_hold_days: signal.max_hold_days,
     reasons: signal.reasons,
     status: 'ACTIVE',
     strategy_source: signal.strategy,
@@ -358,14 +561,27 @@ async function buildCandidate(symbol, date, raw_signals, batch_signals = [], nif
   };
 }
 
-async function selectTopSignals(candidates, date) {
+async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
   if (candidates.length === 0) return [];
 
   const weekly_count = await signalModel.countByWeek(date);
   const remaining_slots = config.target_weekly_signals - weekly_count;
-  const daily_limit = Math.min(config.max_signals_per_day, Math.max(0, remaining_slots));
 
-  logger.info(`Frequency controller: weekly=${weekly_count}/${config.target_weekly_signals}, remaining=${remaining_slots}, daily_limit=${daily_limit}, candidates=${candidates.length}`);
+  let eff_max_per_day = config.max_signals_per_day;
+  if (config.regime_frequency_enabled && market_regime) {
+    const mult_map = {
+      BULLISH: config.freq_mult_bullish,
+      BEARISH: config.freq_mult_bearish,
+      SIDEWAYS: config.freq_mult_sideways,
+      HIGH_VOLATILITY: config.freq_mult_high_vol,
+    };
+    const m = mult_map[market_regime] ?? 1;
+    eff_max_per_day = Math.max(0, Math.floor(config.max_signals_per_day * m));
+  }
+
+  const daily_limit = Math.min(eff_max_per_day, Math.max(0, remaining_slots));
+
+  logger.info(`Frequency controller: weekly=${weekly_count}/${config.target_weekly_signals}, remaining=${remaining_slots}, daily_limit=${daily_limit}, regime=${market_regime}, candidates=${candidates.length}`);
 
   if (daily_limit <= 0) {
     logger.info(`Frequency controller: weekly target reached — all ${candidates.length} candidates deferred`);
@@ -384,6 +600,9 @@ async function selectTopSignals(candidates, date) {
   }
 
   candidates.sort((a, b) => {
+    const ranking_a = parseFloat(a.ranking_score != null ? a.ranking_score : a.confidence) || 0;
+    const ranking_b = parseFloat(b.ranking_score != null ? b.ranking_score : b.confidence) || 0;
+    if (ranking_b !== ranking_a) return ranking_b - ranking_a;
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
     return b.risk_reward - a.risk_reward;
   });
@@ -399,7 +618,7 @@ async function selectTopSignals(candidates, date) {
         date: c.date,
         strategy_source: c.strategy_source,
         reject_stage: 'FREQUENCY_CAP',
-        reject_reason: `Ranked #${candidates.indexOf(c) + 1} but daily limit is ${daily_limit} (confidence=${c.confidence}, R:R=${c.risk_reward})`,
+        reject_reason: `Ranked #${candidates.indexOf(c) + 1} but daily limit is ${daily_limit} (ranking=${c.ranking_score ?? c.confidence}, confidence=${c.confidence}, R:R=${c.risk_reward})`,
         raw_confidence: c.confidence,
         raw_rr: c.risk_reward,
       });
@@ -409,17 +628,61 @@ async function selectTopSignals(candidates, date) {
   return selected;
 }
 
-async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null) {
-  return buildCandidate(symbol, date, raw_signals, batch_signals, nifty_pcr, sentiment_adjustment, vix_close);
+async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null, market_regime = null) {
+  return buildCandidate(symbol, date, raw_signals, batch_signals, nifty_pcr, sentiment_adjustment, vix_close, market_regime);
 }
 
-async function recordOutcome(signal, outcome, resolved_at) {
+function resolveSignalStatus(exit_reason) {
+  if (exit_reason === 'TARGET_HIT') return 'TARGET_HIT';
+  if (exit_reason === 'SL_HIT' || exit_reason === 'TRAILING_STOP_HIT' || exit_reason === 'GAP_STOP') {
+    return 'SL_HIT';
+  }
+  return 'EXPIRED';
+}
+
+function resolveOutcomeDate(signal_date, future_candles, evaluation, fallback_date) {
+  if (!future_candles || future_candles.length === 0) return fallback_date;
+  if (evaluation.gap_open) {
+    return formatDate(future_candles[0].date);
+  }
+  const idx = Math.max(0, (evaluation.days || 1) - 1);
+  const candle = future_candles[idx] || future_candles[future_candles.length - 1];
+  return candle ? formatDate(candle.date) : fallback_date;
+}
+
+async function recordOutcome(signal, evaluation, resolved_at, paper_trade = null) {
   try {
     const feature = await featureModel.findBySymbolAndDate(signal.symbol, formatDate(signal.date));
+    const rs_value = feature && feature.relative_strength_vs_nifty != null
+      ? parseFloat(feature.relative_strength_vs_nifty)
+      : null;
+    const expected_entry = parseFloat(signal.entry_price);
+    const actual_entry = paper_trade && paper_trade.actual_entry_price != null
+      ? parseFloat(paper_trade.actual_entry_price)
+      : null;
+    const entry_slippage_pct = actual_entry != null && expected_entry > 0
+      ? roundDecimal(((actual_entry - expected_entry) / expected_entry) * 100, 4)
+      : null;
     await signalOutcomeModel.create({
       signal_id: signal.id,
-      outcome,
+      outcome: evaluation.exit_reason,
       strategy: signal.strategy_source,
+      raw_confidence: signal.raw_confidence != null ? signal.raw_confidence : signal.confidence,
+      confidence_bucket: bucketConfidence(signal.raw_confidence != null ? signal.raw_confidence : signal.confidence),
+      ranking_score: signal.ranking_score != null ? signal.ranking_score : signal.confidence,
+      market_regime: signal.market_regime || null,
+      sector: getSector(signal.symbol),
+      relative_strength_vs_nifty: rs_value,
+      rs_bucket: bucketRelativeStrength(rs_value),
+      bars_held: evaluation.bars_held != null ? evaluation.bars_held : null,
+      mfe_pct: evaluation.mfe_pct != null ? evaluation.mfe_pct : null,
+      mae_pct: evaluation.mae_pct != null ? evaluation.mae_pct : null,
+      gap_open_loss: !!evaluation.gap_open,
+      expected_entry_price: expected_entry,
+      actual_entry_price: actual_entry,
+      entry_slippage_pct,
+      paper_trade_pnl_pct: paper_trade && paper_trade.pnl_pct != null ? parseFloat(paper_trade.pnl_pct) : null,
+      paper_trade_exit_reason: paper_trade ? paper_trade.exit_reason || null : null,
       features_json: feature || null,
       resolved_at,
     });
@@ -433,51 +696,50 @@ async function updateSignalStatuses() {
   let updated = 0;
 
   for (const signal of active_signals) {
-    const candle = await candleModel.findLatestBySymbol(signal.symbol);
-    if (!candle) continue;
+    const latest_candle = await candleModel.findLatestBySymbol(signal.symbol);
+    if (!latest_candle) continue;
 
-    const today = formatDate(candle.date);
-    const low = parseFloat(candle.low);
-    const high = parseFloat(candle.high);
-    const stop_loss = parseFloat(signal.stop_loss);
-    const target_price = parseFloat(signal.target_price);
-    const is_short = signal.direction === 'SHORT';
-    let new_status = null;
+    const all_candles = await candleModel.findBySymbolAndDateRange(
+      signal.symbol,
+      formatDate(signal.date),
+      formatDate(latest_candle.date)
+    );
+    const future_candles = all_candles.filter((c) => formatDate(c.date) > formatDate(signal.date));
+    if (future_candles.length === 0) continue;
 
-    if (is_short) {
-      if (high >= stop_loss) new_status = 'SL_HIT';
-      else if (low <= target_price) new_status = 'TARGET_HIT';
-    } else {
-      if (low <= stop_loss) new_status = 'SL_HIT';
-      else if (high >= target_price) new_status = 'TARGET_HIT';
-    }
+    const evaluation = evaluateSignalExit(signal, future_candles, {
+      entry_price_override: parseFloat(signal.entry_price),
+    });
+    if (!evaluation.exit_reason) continue;
 
-    if (!new_status) {
-      const signal_date = new Date(signal.date);
-      const current_date = new Date(candle.date);
-      const days_held = Math.floor((current_date - signal_date) / (1000 * 60 * 60 * 24));
-      if (days_held >= config.holding_period_days) new_status = 'EXPIRED';
-    }
+    const resolved_at = resolveOutcomeDate(
+      signal.date,
+      future_candles,
+      evaluation,
+      formatDate(latest_candle.date)
+    );
+    const new_status = resolveSignalStatus(evaluation.exit_reason);
 
     if (new_status) {
-      await signalModel.updateStatus(signal.id, new_status, today);
+      await signalModel.updateStatus(signal.id, new_status, resolved_at);
 
       if (!signal.is_executable) {
         logger.info(`Signal ${signal.id} (${signal.symbol}) status updated to ${new_status} but outcome not recorded: non-executable (${signal.execution_type})`);
+        await recordOutcome(signal, evaluation, resolved_at, null);
         updated++;
         continue;
       }
 
-      let outcome_status = new_status;
-      if (new_status === 'EXPIRED') {
-        const entry = parseFloat(signal.entry_price);
-        const exit = parseFloat(candle.adjusted_close);
-        const rough_pnl_pct = entry > 0 ? Math.abs(((exit - entry) / entry) * 100) : 0;
+      if (evaluation.exit_reason === 'EXPIRED') {
+        const rough_pnl_pct = evaluation.realistic_entry > 0
+          ? Math.abs(((evaluation.exit_price - evaluation.realistic_entry) / evaluation.realistic_entry) * 100)
+          : 0;
         if (rough_pnl_pct < config.expired_movement_threshold) {
-          outcome_status = 'EXPIRED_PENALIZED';
+          evaluation.exit_reason = 'EXPIRED_PENALIZED';
         }
       }
-      await recordOutcome(signal, outcome_status, today);
+      const linked_trade = await paperTradeModel.findBySignalId(signal.id);
+      await recordOutcome(signal, evaluation, resolved_at, linked_trade);
 
       if (new_status === 'TARGET_HIT') {
         await sendTelegramAlert(
@@ -500,7 +762,7 @@ async function updateSignalStatuses() {
           `⏰ <b>EXPIRED</b> — ${signal.symbol}\n` +
           `Direction: ${signal.direction}\n` +
           `Entry: ₹${signal.entry_price}\n` +
-          `Held: ${config.holding_period_days} days\n` +
+          `Held: ${signal.max_hold_days || config.holding_period_days} days\n` +
           `Strategy: ${signal.strategy_source}`
         );
       }

@@ -15,6 +15,7 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { featureFlags } from '../../utils/featureFlags';
 import { useUiStore } from '../../store/ui.store';
+import { APP_NAME } from '../../utils/constants';
 
 interface NavItem {
   path: string;
@@ -64,7 +65,7 @@ export function Sidebar() {
         </div>
         {!collapsed && (
           <span className="hidden text-sm font-bold tracking-tight text-foreground lg:block">
-            TradeNeuron
+            {APP_NAME}
           </span>
         )}
       </div>

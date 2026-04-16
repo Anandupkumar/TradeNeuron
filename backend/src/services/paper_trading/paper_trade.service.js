@@ -5,6 +5,8 @@ const config = require('../../config/env');
 const paperTradeModel = require('../../models/paper_trade.model');
 const candleModel = require('../../models/candle.model');
 const signalModel = require('../../models/signal.model');
+const signalOutcomeModel = require('../../models/signal_outcome.model');
+const { evaluateSignalExit } = require('../../utils/exit_policy.util');
 
 async function createPaperTrades(signals) {
   let created = 0;
@@ -30,6 +32,8 @@ async function createPaperTrades(signals) {
       actual_entry_price: actual_entry,
       stop_loss: signal.stop_loss,
       target_price: signal.target_price,
+      exit_policy: signal.exit_policy || null,
+      max_hold_days: signal.max_hold_days || null,
       shares_to_buy: signal.shares_to_buy || null,
       execution_type: signal.execution_type || 'EQUITY',
       status: 'OPEN',
@@ -84,48 +88,31 @@ async function updatePaperTrades() {
       }
     }
 
-    const today = formatDate(candle.date);
-    const low = parseFloat(candle.low);
-    const high = parseFloat(candle.high);
-    const close = parseFloat(candle.adjusted_close);
-    const stop_loss = parseFloat(trade.stop_loss);
-    const target_price = parseFloat(trade.target_price);
+    const all_candles = await candleModel.findBySymbolAndDateRange(
+      trade.symbol,
+      formatDate(trade.entry_date),
+      formatDate(candle.date)
+    );
+    const future_candles = all_candles.filter((row) => formatDate(row.date) > formatDate(trade.entry_date));
     const entry_price = actual_entry != null ? actual_entry : parseFloat(trade.entry_price);
     const shares = trade.shares_to_buy ? parseInt(trade.shares_to_buy, 10) : 0;
+    const evaluation = evaluateSignalExit({
+      direction,
+      entry_price: trade.entry_price,
+      stop_loss: trade.stop_loss,
+      target_price: trade.target_price,
+      exit_policy: trade.exit_policy || (signal ? signal.exit_policy : null),
+      max_hold_days: trade.max_hold_days || (signal ? signal.max_hold_days : null) || config.holding_period_days,
+    }, future_candles, {
+      entry_price_override: entry_price,
+    });
+    if (!evaluation.exit_reason) continue;
 
-    let exit_price = null;
-    let exit_reason = null;
-
-    if (direction === 'SHORT') {
-      if (high >= stop_loss) {
-        exit_price = stop_loss;
-        exit_reason = 'SL_HIT';
-      } else if (low <= target_price) {
-        exit_price = target_price;
-        exit_reason = 'TARGET_HIT';
-      }
-    } else {
-      if (low <= stop_loss) {
-        exit_price = stop_loss;
-        exit_reason = 'SL_HIT';
-      } else if (high >= target_price) {
-        exit_price = target_price;
-        exit_reason = 'TARGET_HIT';
-      }
-    }
-
-    if (!exit_price) {
-      const entry_date = new Date(trade.entry_date);
-      const current_date = new Date(candle.date);
-      const days_held = Math.floor((current_date - entry_date) / (1000 * 60 * 60 * 24));
-
-      if (days_held >= config.holding_period_days) {
-        exit_price = close;
-        exit_reason = 'EXPIRED';
-      } else {
-        continue;
-      }
-    }
+    const exit_price = evaluation.exit_price;
+    let exit_reason = evaluation.exit_reason;
+    const resolved_idx = Math.max(0, (evaluation.days || 1) - 1);
+    const resolved_candle = future_candles[resolved_idx] || future_candles[future_candles.length - 1] || candle;
+    const today = formatDate(resolved_candle.date);
 
     let pnl_pct = calculateNetPnl(entry_price, exit_price, direction);
     const gross_pnl_inr = computeGrossPnlInr(entry_price, exit_price, shares, direction);
@@ -139,6 +126,13 @@ async function updatePaperTrades() {
     }
 
     await paperTradeModel.updateClose(trade.id, today, exit_price, exit_reason, pnl_pct, gross_pnl_inr);
+    await paperTradeModel.updateTelemetry(trade.id, evaluation);
+    await signalOutcomeModel.updatePaperTradeComparison(trade.signal_id, {
+      actual_entry_price: actual_entry,
+      entry_slippage_pct: evaluation.entry_gap_pct,
+      pnl_pct,
+      exit_reason,
+    });
     updated++;
   }
 

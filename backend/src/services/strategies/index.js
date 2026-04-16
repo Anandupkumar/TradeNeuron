@@ -4,7 +4,15 @@ const candleModel = require('../../models/candle.model');
 const indicatorModel = require('../../models/indicator.model');
 const featureModel = require('../../models/feature.model');
 const { nifty_index_symbol, india_vix_symbol } = require('../../utils/symbols.util');
+const { nifty_50_symbols } = require('../../utils/symbols.util');
 const config = require('../../config/env');
+const {
+  computeMarketRegime,
+  computeBreadthPct,
+  computePersistenceScore,
+} = require('./market_regime.util');
+const { applySlCapToSignal } = require('../../utils/stop_loss.util');
+const { attachExitPolicy } = require('../../utils/exit_policy.util');
 const { getThresholds } = require('../features/adaptive_threshold.service');
 const strategyConfigModel = require('../../models/strategy_config.model');
 const trendPullback = require('./trend_pullback.strategy');
@@ -43,24 +51,55 @@ async function checkMarketRegime() {
     }
   }
 
-  const nifty_above_ema200 = nifty_close > ema_200;
-  const vix_is_calm = vix_close < vix_threshold;
+  const breadth_snapshot = await featureModel.getBreadthSnapshot(formatDate(nifty_candle.date), nifty_50_symbols);
+  const breadth_pct = computeBreadthPct(breadth_snapshot);
 
-  if (nifty_above_ema200 && vix_is_calm) {
-    if (ema_20 != null && ema_50 != null && ema_50 !== 0) {
-      const nifty_range = Math.abs(ema_20 - ema_50) / ema_50 * 100;
-      if (nifty_range < 2.0) {
-        return { regime: 'SIDEWAYS', reason: `EMAs converged (range=${nifty_range.toFixed(2)}%)`, vix_close };
-      }
-    }
-    return { regime: 'BULLISH', reason: null, vix_close };
-  } else if (!nifty_above_ema200) {
+  const nifty_history = await candleModel.findBySymbolLast(nifty_index_symbol, 5);
+  const indicator_history = await indicatorModel.findBySymbolLast(nifty_index_symbol, 5);
+  const vix_history = await candleModel.findBySymbolLast(india_vix_symbol, 5);
+  const vix_by_date = new Map(vix_history.map((row) => [formatDate(row.date), parseFloat(row.close)]));
+  const persistence_inputs = nifty_history.map((row, idx) => ({
+    nifty_close: parseFloat(row.adjusted_close),
+    ema_200: indicator_history[idx] && indicator_history[idx].ema_200 != null
+      ? parseFloat(indicator_history[idx].ema_200)
+      : null,
+    ema_20: indicator_history[idx] && indicator_history[idx].ema_20 != null
+      ? parseFloat(indicator_history[idx].ema_20)
+      : null,
+    ema_50: indicator_history[idx] && indicator_history[idx].ema_50 != null
+      ? parseFloat(indicator_history[idx].ema_50)
+      : null,
+    vix_close: vix_by_date.get(formatDate(row.date)),
+    vix_threshold,
+  })).filter((row) => row.ema_200 != null && row.vix_close != null);
+  const persistence_score = computePersistenceScore(persistence_inputs);
+
+  const regime = computeMarketRegime({
+    nifty_close, ema_200, ema_20, ema_50, vix_close, vix_threshold, breadth_pct, persistence_score,
+  });
+
+  if (regime === 'BULLISH') {
+    return { regime: 'BULLISH', reason: breadth_pct != null ? `Breadth ${breadth_pct.toFixed(1)}%, persistence ${persistence_score}` : null, vix_close };
+  }
+  if (regime === 'SIDEWAYS') {
+    const nifty_range = ema_20 != null && ema_50 != null && ema_50 !== 0
+      ? Math.abs(ema_20 - ema_50) / ema_50 * 100
+      : 0;
+    return {
+      regime: 'SIDEWAYS',
+      reason: `EMAs converged (range=${nifty_range.toFixed(2)}%, breadth=${breadth_pct != null ? breadth_pct.toFixed(1) : 'n/a'}%, persistence=${persistence_score})`,
+      vix_close,
+    };
+  }
+  if (regime === 'BEARISH') {
     logger.info('NIFTY below EMA200');
-    return { regime: 'BEARISH', reason: 'NIFTY below EMA200', vix_close };
-  } else {
+    return { regime: 'BEARISH', reason: `NIFTY below EMA200 (breadth=${breadth_pct != null ? breadth_pct.toFixed(1) : 'n/a'}%, persistence=${persistence_score})`, vix_close };
+  }
+  if (regime === 'HIGH_VOLATILITY') {
     logger.info(`India VIX at ${vix_close}, above threshold ${vix_threshold}`);
     return { regime: 'HIGH_VOLATILITY', reason: `India VIX ${vix_close} > ${vix_threshold}`, vix_close };
   }
+  return { regime: 'UNKNOWN', reason: 'Insufficient inputs', vix_close };
 }
 
 async function runStrategies(symbol, date, market_regime) {
@@ -119,7 +158,14 @@ async function runStrategies(symbol, date, market_regime) {
     }
   }
 
-  return raw_signals;
+  if (config.max_sl_distance_pct > 0 && raw_signals.length > 0) {
+    return raw_signals
+      .map((s) => attachExitPolicy(s))
+      .map((s) => applySlCapToSignal(s, config.max_sl_distance_pct))
+      .filter(Boolean);
+  }
+
+  return raw_signals.map((s) => attachExitPolicy(s));
 }
 
 module.exports = { checkMarketRegime, runStrategies };

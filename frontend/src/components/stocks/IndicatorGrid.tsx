@@ -82,10 +82,10 @@ export function IndicatorGrid({ indicators, features, className }: IndicatorGrid
         return (
           <div
             key={card.label}
-            className="rounded-lg border border-border bg-card p-3"
+            className="rounded-lg border border-border bg-background/40 p-3"
           >
             <p className="text-xs text-muted-foreground">{card.label}</p>
-            <p className={cn('mt-1 text-lg font-semibold', color)}>{formatted}</p>
+            <p className={cn('mt-1 text-lg font-semibold tracking-tight', color)}>{formatted}</p>
           </div>
         );
       })}

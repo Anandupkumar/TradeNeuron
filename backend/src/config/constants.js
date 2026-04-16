@@ -48,6 +48,81 @@ const NEGATION_WORDS = [
   'overturned', 'exonerated', 'withdrawn',
 ];
 
+const EXIT_POLICY_PROFILES = {
+  TREND_PULLBACK: {
+    kind: 'FIXED_RR',
+    rr_multiple: 2.25,
+    max_hold_days: 12,
+  },
+  BREAKOUT: {
+    kind: 'TRAIL_ATR',
+    rr_multiple: 3.0,
+    trail_atr_multiple: 2.0,
+    max_hold_days: 15,
+  },
+  RANGE: {
+    kind: 'LEVEL_TARGET',
+    target_source: 'RANGE_RESISTANCE',
+    max_hold_days: 8,
+  },
+  MEAN_REVERSION: {
+    kind: 'LEVEL_TARGET',
+    target_source: 'MEAN_REVERSION',
+    max_hold_days: 6,
+  },
+  TREND_PULLBACK_SHORT: {
+    kind: 'FIXED_RR',
+    rr_multiple: 2.25,
+    max_hold_days: 9,
+  },
+  BREAKDOWN: {
+    kind: 'TRAIL_ATR',
+    rr_multiple: 2.5,
+    trail_atr_multiple: 2.0,
+    max_hold_days: 10,
+  },
+  COMBINED: {
+    kind: 'FIXED_RR',
+    rr_multiple: 2.2,
+    max_hold_days: 12,
+  },
+};
+
+const RANKING_WEIGHTS = {
+  CONFIDENCE: 0.55,
+  RELATIVE_STRENGTH: 0.2,
+  SECTOR_ALIGNMENT: 0.1,
+  DELIVERY_QUALITY: 0.075,
+  SETUP_QUALITY: 0.075,
+};
+
+const RANKING_SCORE_BANDS = {
+  STRONG_RS: 5,
+  VERY_STRONG_RS: 10,
+  WEAK_RS: -5,
+  VERY_WEAK_RS: -10,
+};
+
+const REGIME_BREADTH_THRESHOLDS = {
+  STRONG_BREADTH_PCT: 60,
+  WEAK_BREADTH_PCT: 40,
+  PERSISTENCE_WINDOW: 5,
+};
+
+const STRATEGY_RECOMMENDATIONS = {
+  KEEP: 'KEEP',
+  WATCH: 'WATCH',
+  DISABLE: 'DISABLE',
+};
+
+const VALIDATION_CRITERIA = {
+  MIN_SHADOW_DAYS: 15,
+  MIN_SHADOW_OVERLAP_PCT: 50,
+  MIN_PROFIT_FACTOR: 1.2,
+  MIN_EXPECTANCY_PCT: 0.05,
+  MAX_DRAWDOWN_PCT: 12,
+};
+
 module.exports = {
   SCORING_WEIGHTS,
   SHORT_SCORING_WEIGHTS,
@@ -57,4 +132,10 @@ module.exports = {
   NEGATIVE_KEYWORDS,
   NEGATION_WORDS,
   RSI_ZONES,
+  EXIT_POLICY_PROFILES,
+  RANKING_WEIGHTS,
+  RANKING_SCORE_BANDS,
+  REGIME_BREADTH_THRESHOLDS,
+  STRATEGY_RECOMMENDATIONS,
+  VALIDATION_CRITERIA,
 };

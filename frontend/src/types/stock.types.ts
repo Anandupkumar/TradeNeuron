@@ -2,7 +2,7 @@ import type { Signal } from './signal.types';
 
 export type RsiZone = 'OVERSOLD' | 'PULLBACK' | 'NEUTRAL' | 'OVERBOUGHT';
 export type MarketRegime = 'BULLISH' | 'SIDEWAYS' | 'BEARISH' | 'HIGH_VOLATILITY';
-export type VolumeTier = 'LOW' | 'NORMAL' | 'HIGH' | 'VERY_HIGH' | 'EXTREME';
+export type VolumeTier = 'normal' | 'elevated' | 'high' | 'extreme';
 
 export interface Candle {
   date: string;
@@ -56,9 +56,13 @@ export interface StockFeatures {
   relative_strength_vs_nifty: number | null;
   rvol: number | null;
   volume_tier: VolumeTier | null;
-  vwap: number | null;
-  vwap_distance_pct: number | null;
-  is_near_vwap: boolean;
+  vwma: number | null;
+  vwma_distance_pct: number | null;
+  is_near_vwma: boolean;
+  /** @deprecated Prefer vwma*; backend may duplicate when VWMA_API_ALIAS_ENABLED */
+  vwap?: number | null;
+  vwap_distance_pct?: number | null;
+  is_near_vwap?: boolean;
   is_high_delivery: boolean;
   delivery_pct: number | null;
 }

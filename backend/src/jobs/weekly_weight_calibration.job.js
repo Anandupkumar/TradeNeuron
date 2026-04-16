@@ -5,9 +5,11 @@ const config = require('../config/env');
 const signalOutcomeModel = require('../models/signal_outcome.model');
 const strategyConfigModel = require('../models/strategy_config.model');
 const confidenceCalibrationModel = require('../models/confidence_calibration.model');
+const strategyPerformanceSnapshotModel = require('../models/strategy_performance_snapshot.model');
 const { formatDate } = require('../utils/date.util');
 const { roundDecimal } = require('../utils/math.util');
 const { sendTelegramAlert } = require('../utils/notify.util');
+const { getStrategyPerformanceSlices } = require('../services/analytics/performance_analytics.service');
 
 function computeAdaptiveWeight(base_weight, win_rate) {
   return roundDecimal(base_weight * (0.5 + win_rate), 2);
@@ -161,28 +163,11 @@ async function calibrateConfidence() {
 async function evaluateStrategyPerformance() {
   logger.info('Evaluating per-strategy performance from paper trades...');
 
-  const [strategyStats] = await pool.query(`
-    SELECT s.strategy_source,
-           COUNT(*) as total,
-           SUM(CASE WHEN pt.exit_reason = 'TARGET_HIT' THEN 1 ELSE 0 END) as wins,
-           AVG(pt.pnl_pct) as avg_pnl
-    FROM paper_trades pt
-    JOIN signals s ON s.id = pt.signal_id
-    WHERE pt.status = 'CLOSED'
-      AND pt.exit_date >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-    GROUP BY s.strategy_source
-    HAVING total >= 10
-  `);
-
-  if (strategyStats.length === 0) {
-    logger.info('No strategy has enough closed paper trades (>= 10) for evaluation');
+  const slices = await getStrategyPerformanceSlices(90);
+  if (slices.length === 0) {
+    logger.info('No strategy slices available for evaluation');
     return;
   }
-
-  const disable_win_rate = config.strategy_disable_win_rate;
-  const disable_min_trades = config.strategy_disable_min_trades;
-  const reenable_win_rate = config.strategy_reenable_win_rate;
-  const reenable_min_trades = config.strategy_reenable_min_trades;
 
   const current_config = await strategyConfigModel.getAll();
   const enabled_map = {};
@@ -190,24 +175,57 @@ async function evaluateStrategyPerformance() {
     enabled_map[row.strategy_name] = row.is_enabled === 1;
   }
 
-  for (const stat of strategyStats) {
-    const win_rate = stat.wins / stat.total;
-    const strategy = stat.strategy_source;
-    const is_currently_enabled = enabled_map[strategy] !== false;
+  const today = formatDate(new Date());
+  for (const slice of slices) {
+    await strategyPerformanceSnapshotModel.upsert({
+      snapshot_date: today,
+      strategy_name: slice.strategy_name,
+      scope_type: slice.scope_type,
+      scope_value: slice.scope_value,
+      trade_count: slice.trade_count,
+      win_rate_pct: slice.win_rate_pct,
+      avg_pnl_pct: slice.avg_pnl_pct,
+      profit_factor: slice.profit_factor,
+      expectancy_pct: slice.expectancy_pct,
+      max_drawdown_pct: slice.max_drawdown_pct,
+      recommendation: slice.recommendation,
+      recommendation_reason: slice.recommendation_reason,
+      applied: false,
+    });
 
-    logger.info(`Strategy ${strategy}: ${stat.total} trades, win rate ${roundDecimal(win_rate * 100, 1)}%, avg PnL ${roundDecimal(Number(stat.avg_pnl), 2)}%`);
+    logger.info(
+      `Strategy slice ${slice.strategy_name} [${slice.scope_type}:${slice.scope_value}] ` +
+      `trades=${slice.trade_count}, win_rate=${slice.win_rate_pct}%, ` +
+      `pf=${slice.profit_factor}, expectancy=${slice.expectancy_pct}%, ` +
+      `recommendation=${slice.recommendation}`
+    );
 
-    if (is_currently_enabled && win_rate < disable_win_rate && stat.total >= disable_min_trades) {
-      const reason = `Win rate ${roundDecimal(win_rate * 100, 1)}% (${stat.wins}/${stat.total}) below ${disable_win_rate * 100}% threshold`;
-      await strategyConfigModel.setEnabled(strategy, false, reason);
-      logger.warn(`Strategy ${strategy} AUTO-DISABLED: ${reason}`);
-      await sendTelegramAlert(`⚠️ Strategy ${strategy} auto-disabled — win rate: ${roundDecimal(win_rate * 100, 1)}% over ${stat.total} trades`);
-    }
-
-    if (!is_currently_enabled && win_rate >= reenable_win_rate && stat.total >= reenable_min_trades) {
-      await strategyConfigModel.setEnabled(strategy, true);
-      logger.info(`Strategy ${strategy} AUTO-RE-ENABLED: win rate ${roundDecimal(win_rate * 100, 1)}% over ${stat.total} trades`);
-      await sendTelegramAlert(`✅ Strategy ${strategy} auto-re-enabled — win rate: ${roundDecimal(win_rate * 100, 1)}% over ${stat.total} trades`);
+    const is_global = slice.scope_type === 'GLOBAL' && slice.scope_value === 'ALL';
+    const is_currently_enabled = enabled_map[slice.strategy_name] !== false;
+    if (
+      is_global
+      && config.strategy_pruning_auto_apply
+      && is_currently_enabled
+      && slice.recommendation === 'DISABLE'
+    ) {
+      await strategyConfigModel.setEnabled(slice.strategy_name, false, slice.recommendation_reason);
+      logger.warn(`Strategy ${slice.strategy_name} AUTO-DISABLED: ${slice.recommendation_reason}`);
+      await strategyPerformanceSnapshotModel.upsert({
+        snapshot_date: today,
+        strategy_name: slice.strategy_name,
+        scope_type: slice.scope_type,
+        scope_value: slice.scope_value,
+        trade_count: slice.trade_count,
+        win_rate_pct: slice.win_rate_pct,
+        avg_pnl_pct: slice.avg_pnl_pct,
+        profit_factor: slice.profit_factor,
+        expectancy_pct: slice.expectancy_pct,
+        max_drawdown_pct: slice.max_drawdown_pct,
+        recommendation: slice.recommendation,
+        recommendation_reason: slice.recommendation_reason,
+        applied: true,
+      });
+      await sendTelegramAlert(`⚠️ Strategy ${slice.strategy_name} auto-disabled — ${slice.recommendation_reason}`);
     }
   }
 }

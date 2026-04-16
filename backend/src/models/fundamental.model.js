@@ -2,19 +2,21 @@ const { pool } = require('../config/db');
 
 async function upsert(fundamental) {
   const sql = `
-    INSERT INTO fundamentals (symbol, fetched_date, debt_to_equity, eps_growth_yoy, revenue_growth, promoter_pledge, is_healthy)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO fundamentals (symbol, fetched_date, debt_to_equity, eps_growth_yoy, revenue_growth, promoter_pledge, next_earnings_date, is_healthy)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       debt_to_equity = VALUES(debt_to_equity),
       eps_growth_yoy = VALUES(eps_growth_yoy),
       revenue_growth = VALUES(revenue_growth),
       promoter_pledge = VALUES(promoter_pledge),
+      next_earnings_date = VALUES(next_earnings_date),
       is_healthy = VALUES(is_healthy)
   `;
   const params = [
     fundamental.symbol, fundamental.fetched_date,
     fundamental.debt_to_equity, fundamental.eps_growth_yoy,
     fundamental.revenue_growth, fundamental.promoter_pledge,
+    fundamental.next_earnings_date != null ? fundamental.next_earnings_date : null,
     fundamental.is_healthy ? 1 : 0,
   ];
   const [result] = await pool.query(sql, params);

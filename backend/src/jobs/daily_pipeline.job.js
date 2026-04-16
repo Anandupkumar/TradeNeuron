@@ -19,6 +19,7 @@ const pipelineRunModel = require('../models/pipeline_run.model');
 const rejectedSignalModel = require('../models/rejected_signal.model');
 const config = require('../config/env');
 const { sendTelegramAlert } = require('../utils/notify.util');
+const { recordShadowComparison } = require('../services/analytics/shadow_validation.service');
 
 const ALL_FETCH_SYMBOLS = [...nifty_50_symbols, nifty_index_symbol, india_vix_symbol];
 const INDICATOR_SYMBOLS = [...nifty_50_symbols, nifty_index_symbol];
@@ -229,11 +230,11 @@ async function runDailyPipeline() {
         const sent_adj = sentiment_adjustments[symbol] || 0;
 
         if (long_signals.length > 0) {
-          const candidate = await buildCandidate(symbol, data_date, long_signals, candidates, nifty_pcr, sent_adj, vix_close);
+          const candidate = await buildCandidate(symbol, data_date, long_signals, candidates, nifty_pcr, sent_adj, vix_close, regime);
           if (candidate) candidates.push(candidate);
         }
         if (short_signals.length > 0) {
-          const candidate = await buildCandidate(symbol, data_date, short_signals, candidates, nifty_pcr, sent_adj, vix_close);
+          const candidate = await buildCandidate(symbol, data_date, short_signals, candidates, nifty_pcr, sent_adj, vix_close, regime);
           if (candidate) candidates.push(candidate);
         }
       } catch (error) {
@@ -244,11 +245,27 @@ async function runDailyPipeline() {
     // Phase 2: Frequency-controlled selection (or pass-through when disabled)
     let new_signals;
     if (config.frequency_controller_enabled) {
-      new_signals = await selectTopSignals(candidates, data_date);
+      new_signals = await selectTopSignals(candidates, data_date, regime);
       logger.info(`Step 10: ${candidates.length} candidates → ${new_signals.length} signals after frequency control`);
     } else {
       new_signals = candidates;
       logger.info(`Step 10: ${new_signals.length} signals generated (frequency controller disabled)`);
+    }
+
+    if (config.shadow_compare_enabled) {
+      try {
+        const shadow = await recordShadowComparison({
+          date: data_date,
+          regime,
+          candidates,
+          improved_selected: new_signals,
+        });
+        logger.info(
+          `Shadow compare: legacy=${shadow.legacy_selected.length}, improved=${shadow.improved_selected.length}, overlap=${shadow.overlap_selected}, ready=${shadow.readiness.promotion_ready}`
+        );
+      } catch (error) {
+        logger.warn(`Shadow comparison failed: ${error.message}`);
+      }
     }
 
     // Step 11: Store signals + create paper trades

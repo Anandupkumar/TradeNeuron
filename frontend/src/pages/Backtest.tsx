@@ -4,6 +4,7 @@ import { useBacktestResults } from '../hooks/useBacktest';
 import { BacktestResultCard } from '../components/backtest/BacktestResultCard';
 import { MetricsComparisonTable } from '../components/backtest/MetricsComparisonTable';
 import { WalkForwardChart } from '../components/backtest/WalkForwardChart';
+import { ChartErrorBoundary } from '../components/errors/ChartErrorBoundary';
 import { LoadingSkeleton } from '../components/common/LoadingSkeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { EmptyState } from '../components/common/EmptyState';
@@ -58,7 +59,15 @@ export default function BacktestPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Strategy Filter</h2>
+            <p className="text-sm text-muted-foreground">
+              Compare the latest run per strategy, or narrow to one model family.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
         <select
           value={strategy_filter}
           onChange={(e) => set_strategy_filter(e.target.value)}
@@ -75,12 +84,15 @@ export default function BacktestPage() {
         </select>
         {strategy_filter && (
           <button
+            type="button"
             onClick={() => set_strategy_filter('')}
             className="text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             Clear filter
           </button>
         )}
+          </div>
+        </div>
       </div>
 
       {results_query.isLoading && (
@@ -109,15 +121,20 @@ export default function BacktestPage() {
             ))}
           </div>
 
-          <div>
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
             <h2 className="mb-3 text-lg font-semibold text-foreground">Metrics Comparison</h2>
             <MetricsComparisonTable results={results} />
           </div>
 
           {all_results.length > 0 && (
-            <div>
-              <h2 className="mb-3 text-lg font-semibold text-foreground">Walk-Forward Analysis</h2>
-              <WalkForwardChart results={all_results} />
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <h2 className="mb-1 text-lg font-semibold text-foreground">Walk-Forward Analysis</h2>
+              <p className="mb-4 text-sm text-muted-foreground">
+                Win-rate stability across evaluation windows for each strategy family.
+              </p>
+              <ChartErrorBoundary className="h-[420px]">
+                <WalkForwardChart results={all_results} />
+              </ChartErrorBoundary>
             </div>
           )}
         </>

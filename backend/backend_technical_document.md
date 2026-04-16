@@ -4446,3 +4446,178 @@ Full-stack deployment script at the project root. Supports two modes:
 2. Installs backend deps, runs migrations
 3. Starts Node.js + FinBERT via `concurrently`
 4. Frontend `dist/` should be served by nginx or similar
+
+---
+
+## 23. Execution Improvements (migrations 039–040)
+
+**039_improvements_phase1.sql:** `fundamentals.next_earnings_date`; `signals.raw_confidence`, `signals.confidence_calibrated`, `signals.entry_degraded`; `rejected_signals` stages `EARNINGS_BLACKOUT`, `PORTFOLIO_RISK_CAP`.
+
+**040_rename_vwap_to_vwma.sql:** Renames feature columns `vwap` → `vwma`, `vwap_distance_pct` → `vwma_distance_pct`, `is_near_vwap` → `is_near_vwma`. Stock API returns canonical `vwma*` fields and optional legacy `vwap*` aliases when `VWMA_API_ALIAS_ENABLED=true`.
+
+**Behaviour:** Historical backtest aligns long/short strategy sets with live market regime (NIFTY + India VIX). Live pipeline applies confidence bucket calibration (when samples sufficient), earnings blackout windows, sector average RS penalty, portfolio risk cap, correlation-scaled position risk, drawdown-scaled risk, directional short exposure trim, entry freshness downgrade, futures SL buffer for FNO shorts, and regime-scaled daily frequency caps. Rolling VWAP-like line is stored as **VWMA** (20-session volume-weighted mean in `volume.service`).
+
+---
+
+## 24. Profitability Roadmap Infrastructure (migration 041)
+
+**041_profitability_roadmap.sql** extends the research, exit, ranking, pruning, and validation layers without changing the 13-step pipeline order.
+
+### 24.1 Schema additions
+
+- `signals` adds:
+  - `market_regime` — regime attached to the signal at generation time
+  - `ranking_score` and `ranking_components` — explicit candidate sort score and component breakdown
+  - `exit_policy` — JSON snapshot of the strategy-specific exit contract
+  - `max_hold_days` — per-signal hold cap used by live status updates and backtests
+- `paper_trades` adds:
+  - richer `exit_reason` ENUM values: `TRAILING_STOP_HIT`, `GAP_STOP`
+  - `exit_policy`, `max_hold_days`
+  - telemetry columns `mfe_pct`, `mae_pct`, `bars_held`, `entry_gap_pct`
+- `signal_outcomes` adds:
+  - confidence / ranking / regime / sector / RS context (`raw_confidence`, `confidence_bucket`, `ranking_score`, `market_regime`, `sector`, `relative_strength_vs_nifty`, `rs_bucket`)
+  - realized telemetry (`bars_held`, `mfe_pct`, `mae_pct`, `gap_open_loss`)
+  - live-vs-paper comparison fields (`expected_entry_price`, `actual_entry_price`, `entry_slippage_pct`, `paper_trade_pnl_pct`, `paper_trade_exit_reason`)
+  - richer `outcome` ENUM values: `TRAILING_STOP_HIT`, `GAP_STOP`
+- `backtest_results` adds aggregate telemetry:
+  - `expectancy_pct`
+  - `avg_mfe_pct`, `avg_mae_pct`
+  - `gap_open_losses`
+  - `avg_entry_gap_pct`
+  - `exit_reason_distribution`
+- New tables:
+  - `strategy_performance_snapshots` — per-strategy performance slices by `GLOBAL`, `REGIME`, and `SECTOR`
+  - `shadow_validation_runs` — daily improved-vs-legacy selection comparisons and rollout readiness state
+
+### 24.2 Shared exit-policy engine
+
+**Files:** `src/utils/exit_policy.util.js`, `src/services/strategies/index.js`, `src/services/signals/signal.service.js`, `src/services/paper_trading/paper_trade.service.js`, `src/services/backtesting/backtest.service.js`
+
+The system no longer relies on a single universal 2R assumption once a signal enters the pipeline. Instead, every signal carries an `exit_policy` JSON contract and `max_hold_days`.
+
+Current profiles:
+
+- `TREND_PULLBACK` — fixed R multiple (`2.25R`), `max_hold_days=12`
+- `BREAKOUT` — ATR trailing stop with initial `3.0R` target, `trail_atr_multiple=2.0`, `max_hold_days=15`
+- `RANGE` — level target (range resistance), `max_hold_days=8`
+- `MEAN_REVERSION` — level target (20-day mean), `max_hold_days=6`
+- `TREND_PULLBACK_SHORT` — fixed R multiple (`2.25R`), `max_hold_days=9`
+- `BREAKDOWN` — ATR trailing stop with initial `2.5R` target, `trail_atr_multiple=2.0`, `max_hold_days=10`
+- merged multi-strategy signals use a conservative merged target and shared hold cap
+
+**Key decision:** live signal resolution, paper-trade resolution, and backtesting all call the same path-based evaluator. This keeps `SL_HIT`, `TRAILING_STOP_HIT`, `GAP_STOP`, `TARGET_HIT`, and `EXPIRED` behavior aligned across simulation and runtime.
+
+### 24.3 Research telemetry
+
+**Files:** `src/services/backtesting/metrics.service.js`, `src/services/signals/signal.service.js`, `src/services/paper_trading/paper_trade.service.js`
+
+The system now captures:
+
+- MFE / MAE per resolved trade
+- realized bars held
+- gap-open stop events
+- entry gap / slippage between expected signal entry and actual paper-trade entry
+- exit-reason distributions in backtest aggregates
+
+`signal_outcomes` now acts as the central research table for feature snapshots plus realized trade telemetry. `paper_trades` remains the live-shadow book for executable trades, and the paper-trade service backfills live-vs-paper comparison data into `signal_outcomes` via upsert-safe updates.
+
+### 24.4 Candidate ranking upgrade
+
+**Files:** `src/utils/ranking.util.js`, `src/services/signals/signal.service.js`
+
+`selectTopSignals()` no longer depends only on `confidence DESC, risk_reward DESC`. It now uses:
+
+- `ranking_score DESC`
+- then `confidence DESC`
+- then `risk_reward DESC`
+
+`ranking_score` is a weighted composite of:
+
+- confidence
+- stock relative strength vs NIFTY
+- sector alignment
+- delivery / volume quality
+- setup quality
+
+**Key decision:** `confidence` remains stored and exposed for backward compatibility. The ranking layer is additive and transparent via `ranking_components`.
+
+### 24.5 Regime upgrade with breadth and persistence
+
+**Files:** `src/services/strategies/market_regime.util.js`, `src/services/strategies/index.js`, `src/services/backtesting/backtest.service.js`, `src/models/feature.model.js`
+
+The regime classifier still returns only:
+
+- `BULLISH`
+- `SIDEWAYS`
+- `BEARISH`
+- `HIGH_VOLATILITY`
+- `UNKNOWN`
+
+But it now uses two additional tie-breakers:
+
+- **breadth_pct** — derived from the latest NIFTY50 feature snapshot (`is_uptrend`, positive RS, positive EMA50 slope)
+- **persistence_score** — rolling 5-session trend persistence derived from NIFTY and VIX history
+
+**Key decision:** downstream routing remains unchanged, but weak breadth / fading persistence can downgrade `BULLISH` to `SIDEWAYS`, and strong breadth / positive persistence can soften some borderline `BEARISH` states into `SIDEWAYS`.
+
+### 24.6 Performance slices and conservative pruning
+
+**Files:** `src/services/analytics/performance_analytics.service.js`, `src/jobs/weekly_weight_calibration.job.js`, `src/models/strategy_performance_snapshot.model.js`, `src/routes/strategy.routes.js`
+
+The weekly calibration job now persists strategy performance slices across:
+
+- `GLOBAL`
+- `REGIME`
+- `SECTOR`
+
+Each snapshot stores:
+
+- trade count
+- win rate
+- average PnL
+- profit factor
+- expectancy
+- max drawdown
+- recommendation: `KEEP`, `WATCH`, `DISABLE`
+
+`STRATEGY_PRUNING_AUTO_APPLY` defaults to `false`. When false, pruning is log-only and recommendation-first. When enabled, only the global `ALL` slice can auto-disable a strategy.
+
+### 24.7 Shadow validation rollout
+
+**Files:** `src/services/analytics/shadow_validation.service.js`, `src/models/shadow_validation.model.js`, `src/jobs/daily_pipeline.job.js`, `src/routes/backtest.routes.js`
+
+Every daily pipeline run can record a shadow comparison between:
+
+- legacy selection (`confidence`, then `risk_reward`)
+- improved selection (`ranking_score`, then `confidence`, then `risk_reward`)
+
+Stored per day / regime:
+
+- candidate count
+- baseline selected count
+- improved selected count
+- overlap count
+- baseline and improved symbol lists
+- average baseline confidence
+- average improved ranking score
+- promotion readiness criteria snapshot
+
+Config:
+
+- `SHADOW_COMPARE_ENABLED`
+- `VALIDATION_MIN_SHADOW_DAYS`
+- `VALIDATION_MIN_SHADOW_OVERLAP_PCT`
+- `STRATEGY_PRUNING_AUTO_APPLY`
+- `STRATEGY_PRUNING_PROFIT_FACTOR_FLOOR`
+- `STRATEGY_PRUNING_EXPECTANCY_FLOOR`
+
+### 24.8 New read APIs
+
+- `GET /api/v1/signals/analytics/outcomes`
+  - grouped win-rate views by strategy, regime, sector, confidence bucket, RS bucket
+- `GET /api/v1/strategies/performance`
+  - current performance slices plus persisted snapshots
+- `GET /api/v1/backtest/validation/shadow`
+  - recent shadow validation runs plus promotion readiness
+
+These are backend-only research/monitoring endpoints. They do not alter signal generation by themselves.

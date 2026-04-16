@@ -2,8 +2,12 @@ const { pool } = require('../config/db');
 
 async function create(trade) {
   const sql = `
-    INSERT INTO paper_trades (signal_id, symbol, direction, execution_type, entry_date, entry_price, actual_entry_price, stop_loss, target_price, status, shares_to_buy)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO paper_trades (
+      signal_id, symbol, direction, execution_type, entry_date, entry_price,
+      actual_entry_price, stop_loss, target_price, exit_policy, max_hold_days,
+      status, shares_to_buy
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     trade.signal_id, trade.symbol, trade.direction || 'LONG',
@@ -12,6 +16,8 @@ async function create(trade) {
     trade.entry_price,
     trade.actual_entry_price || null,
     trade.stop_loss, trade.target_price,
+    trade.exit_policy ? JSON.stringify(trade.exit_policy) : null,
+    trade.max_hold_days || null,
     trade.status || 'OPEN',
     trade.shares_to_buy || null,
   ];
@@ -41,6 +47,30 @@ async function updateClose(id, exit_date, exit_price, exit_reason, pnl_pct, gros
   return result;
 }
 
+async function updateTelemetry(id, telemetry) {
+  const sql = `
+    UPDATE paper_trades
+    SET mfe_pct = ?, mae_pct = ?, bars_held = ?, entry_gap_pct = ?
+    WHERE id = ?
+  `;
+  const [result] = await pool.query(sql, [
+    telemetry.mfe_pct != null ? telemetry.mfe_pct : null,
+    telemetry.mae_pct != null ? telemetry.mae_pct : null,
+    telemetry.bars_held != null ? telemetry.bars_held : null,
+    telemetry.entry_gap_pct != null ? telemetry.entry_gap_pct : null,
+    id,
+  ]);
+  return result;
+}
+
+async function findBySignalId(signal_id) {
+  const [rows] = await pool.query(
+    `SELECT * FROM paper_trades WHERE signal_id = ? ORDER BY id DESC LIMIT 1`,
+    [signal_id]
+  );
+  return rows[0] || null;
+}
+
 async function findAll({ page = 1, limit = 20, sort_by = 'entry_date', sort_order = 'DESC', status, symbol } = {}) {
   let where_clauses = [];
   let params = [];
@@ -55,7 +85,7 @@ async function findAll({ page = 1, limit = 20, sort_by = 'entry_date', sort_orde
   }
 
   const where = where_clauses.length > 0 ? `WHERE ${where_clauses.join(' AND ')}` : '';
-  const allowed_sort = ['entry_date', 'pnl_pct', 'created_at'];
+  const allowed_sort = ['entry_date', 'pnl_pct', 'mfe_pct', 'mae_pct', 'created_at'];
   const safe_sort = allowed_sort.includes(sort_by) ? sort_by : 'entry_date';
   const safe_order = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   const offset = (page - 1) * limit;
@@ -114,4 +144,31 @@ async function getSummary() {
   };
 }
 
-module.exports = { create, findOpen, updateClose, updateActualEntry, findAll, getSummary };
+/** Current drawdown fraction (0–1) from peak equity on closed-trade PnL chain. */
+async function getPortfolioDrawdownFraction() {
+  const [rows] = await pool.query(
+    `SELECT pnl_pct FROM paper_trades WHERE status = 'CLOSED' AND pnl_pct IS NOT NULL ORDER BY exit_date ASC, id ASC LIMIT 2000`
+  );
+  if (rows.length === 0) return 0;
+  let equity = 1;
+  let peak = 1;
+  for (const r of rows) {
+    const p = parseFloat(r.pnl_pct) || 0;
+    equity *= 1 + p / 100;
+    if (equity > peak) peak = equity;
+  }
+  const current_dd = peak > 0 ? (peak - equity) / peak : 0;
+  return Math.max(0, current_dd);
+}
+
+module.exports = {
+  create,
+  findOpen,
+  updateClose,
+  updateTelemetry,
+  updateActualEntry,
+  findBySignalId,
+  findAll,
+  getSummary,
+  getPortfolioDrawdownFraction,
+};
