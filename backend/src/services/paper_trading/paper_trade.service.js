@@ -67,6 +67,44 @@ function computeGrossPnlInr(entry_price, exit_price, shares_to_buy, direction) {
   return roundDecimal(shares_to_buy * (exit_price - entry_price), 2);
 }
 
+// Phase A / Fix 1: share-weighted multi-leg PnL. Each leg pays its own slippage+brokerage
+// because in real execution the partial and the final are distinct fills.
+function computeMultiLegPnl(entry_price, evaluation, shares, direction) {
+  if (!evaluation || !evaluation.partial_fired) {
+    return {
+      pnl_pct: calculateNetPnl(entry_price, evaluation.exit_price, direction),
+      gross_pnl_inr: computeGrossPnlInr(entry_price, evaluation.exit_price, shares, direction),
+    };
+  }
+
+  const partial_fraction = parseFloat(evaluation.partial_fraction) || 0.5;
+  const partial_shares = Math.max(0, Math.floor((shares || 0) * partial_fraction));
+  const final_shares = Math.max(0, (shares || 0) - partial_shares);
+  const partial_price = parseFloat(evaluation.partial_exit_price);
+  const final_price = parseFloat(evaluation.final_leg_price != null ? evaluation.final_leg_price : evaluation.exit_price);
+
+  const partial_net_pct = calculateNetPnl(entry_price, partial_price, direction);
+  const final_net_pct = calculateNetPnl(entry_price, final_price, direction);
+
+  // Share-weighted blended net %.
+  const total_shares = partial_shares + final_shares;
+  const pnl_pct = total_shares > 0
+    ? roundDecimal((partial_net_pct * partial_shares + final_net_pct * final_shares) / total_shares, 4)
+    : roundDecimal((partial_net_pct + final_net_pct) / 2, 4);
+
+  const partial_gross = computeGrossPnlInr(entry_price, partial_price, partial_shares, direction) || 0;
+  const final_gross = computeGrossPnlInr(entry_price, final_price, final_shares, direction) || 0;
+  const gross_pnl_inr = shares > 0 ? roundDecimal(partial_gross + final_gross, 2) : null;
+
+  return {
+    pnl_pct,
+    gross_pnl_inr,
+    partial_shares,
+    partial_pnl_pct: partial_net_pct,
+    partial_realized_pnl_inr: partial_gross,
+  };
+}
+
 async function updatePaperTrades() {
   const open_trades = await paperTradeModel.findOpen();
   let updated = 0;
@@ -96,6 +134,15 @@ async function updatePaperTrades() {
     const future_candles = all_candles.filter((row) => formatDate(row.date) > formatDate(trade.entry_date));
     const entry_price = actual_entry != null ? actual_entry : parseFloat(trade.entry_price);
     const shares = trade.shares_to_buy ? parseInt(trade.shares_to_buy, 10) : 0;
+    // Phase C / Fix 6 pre-wire: pass trailing context for vol-compression exit when enabled.
+    const trailing_candles = config.vol_compression_exit_enabled
+      ? await candleModel.findTrailingBefore(
+          trade.symbol,
+          formatDate(trade.entry_date),
+          config.vol_compression_trailing_window
+        ).catch(() => null)
+      : null;
+
     const evaluation = evaluateSignalExit({
       direction,
       entry_price: trade.entry_price,
@@ -103,9 +150,35 @@ async function updatePaperTrades() {
       target_price: trade.target_price,
       exit_policy: trade.exit_policy || (signal ? signal.exit_policy : null),
       max_hold_days: trade.max_hold_days || (signal ? signal.max_hold_days : null) || config.holding_period_days,
+      strategy_source: signal ? signal.strategy_source : null,
     }, future_candles, {
       entry_price_override: entry_price,
+      trailing_candles: trailing_candles || undefined,
     });
+
+    // Record partial leg even if the trade has not yet closed (open question #2:
+    // in-flight retrofit — existing OPEN trades pick up partial-exit logic from
+    // the next pipeline tick forward).
+    if (evaluation.partial_fired && !trade.partial_exit_price) {
+      const partial_fraction = parseFloat(evaluation.partial_fraction) || 0.5;
+      const partial_shares = Math.max(0, Math.floor(shares * partial_fraction));
+      const partial_price = parseFloat(evaluation.partial_exit_price);
+      const partial_net_pct = calculateNetPnl(entry_price, partial_price, direction);
+      const partial_gross = computeGrossPnlInr(entry_price, partial_price, partial_shares, direction);
+      const partial_idx = Math.max(0, (evaluation.partial_exit_day || 1) - 1);
+      const partial_resolved_at = future_candles[partial_idx]
+        ? formatDate(future_candles[partial_idx].date)
+        : null;
+      await paperTradeModel.recordPartialLeg(trade.id, {
+        partial_exit_price: partial_price,
+        partial_exit_date: partial_resolved_at,
+        partial_shares_booked: partial_shares,
+        partial_realized_pnl_inr: partial_gross,
+        partial_pnl_pct: partial_net_pct,
+        sl_moved_to_breakeven: !!evaluation.sl_moved_to_breakeven,
+      });
+    }
+
     if (!evaluation.exit_reason) continue;
 
     const exit_price = evaluation.exit_price;
@@ -114,8 +187,9 @@ async function updatePaperTrades() {
     const resolved_candle = future_candles[resolved_idx] || future_candles[future_candles.length - 1] || candle;
     const today = formatDate(resolved_candle.date);
 
-    let pnl_pct = calculateNetPnl(entry_price, exit_price, direction);
-    const gross_pnl_inr = computeGrossPnlInr(entry_price, exit_price, shares, direction);
+    const pnl = computeMultiLegPnl(entry_price, evaluation, shares, direction);
+    let pnl_pct = pnl.pnl_pct;
+    const gross_pnl_inr = pnl.gross_pnl_inr;
 
     if (exit_reason === 'EXPIRED' && Math.abs(pnl_pct) < config.expired_movement_threshold) {
       const movement_ratio = 1 - Math.abs(pnl_pct) / config.expired_movement_threshold;

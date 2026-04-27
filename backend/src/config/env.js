@@ -155,6 +155,31 @@ const config = Object.freeze({
   shadow_compare_enabled: (process.env.SHADOW_COMPARE_ENABLED || 'true').toLowerCase() === 'true',
   validation_min_shadow_days: parseInt(process.env.VALIDATION_MIN_SHADOW_DAYS || '15', 10),
   validation_min_shadow_overlap_pct: parseFloat(process.env.VALIDATION_MIN_SHADOW_OVERLAP_PCT || '50'),
+
+  // --- Phase A: Partial-exit and dynamic frequency threshold ---
+  partial_exit_enabled: (process.env.PARTIAL_EXIT_ENABLED || 'true').toLowerCase() === 'true',
+  partial_exit_telegram_alerts: (process.env.PARTIAL_EXIT_TELEGRAM_ALERTS || 'true').toLowerCase() === 'true',
+  // HARD_CAP (legacy) | DYNAMIC_THRESHOLD | HYBRID
+  frequency_mode: (process.env.FREQUENCY_MODE || 'DYNAMIC_THRESHOLD').toUpperCase(),
+  dynamic_floor_slope_points: parseFloat(process.env.DYNAMIC_FLOOR_SLOPE_POINTS || '10'),
+  dynamic_floor_max: parseFloat(process.env.DYNAMIC_FLOOR_MAX || '85'),
+  hybrid_soft_cap_multiplier: parseFloat(process.env.HYBRID_SOFT_CAP_MULTIPLIER || '1.5'),
+
+  // --- Phase B: Per-strategy/direction calibration + return-correlation model ---
+  calibration_per_strategy_enabled: (process.env.CALIBRATION_PER_STRATEGY_ENABLED || 'true').toLowerCase() === 'true',
+  correlation_model_enabled: (process.env.CORRELATION_MODEL_ENABLED || 'true').toLowerCase() === 'true',
+  correlation_divisor_threshold: parseFloat(process.env.CORRELATION_DIVISOR_THRESHOLD || '0.7'),
+  correlation_lookback_days: parseInt(process.env.CORRELATION_LOOKBACK_DAYS || '20', 10),
+
+  // --- Phase C: Volatility-compression exit + continuous per-strategy risk budget ---
+  vol_compression_exit_enabled: (process.env.VOL_COMPRESSION_EXIT_ENABLED || 'true').toLowerCase() === 'true',
+  vol_compression_trailing_window: parseInt(process.env.VOL_COMPRESSION_TRAILING_WINDOW || '60', 10),
+  risk_budget_enabled: (process.env.RISK_BUDGET_ENABLED || 'true').toLowerCase() === 'true',
+  risk_budget_min_trades: parseInt(process.env.RISK_BUDGET_MIN_TRADES || '20', 10),
+  risk_budget_baseline_expectancy: parseFloat(process.env.RISK_BUDGET_BASELINE_EXPECTANCY || '0.3'),
+  risk_budget_blend: parseFloat(process.env.RISK_BUDGET_BLEND || '0.3'),
+  risk_budget_min_multiplier: parseFloat(process.env.RISK_BUDGET_MIN_MULTIPLIER || '0.5'),
+  risk_budget_max_multiplier: parseFloat(process.env.RISK_BUDGET_MAX_MULTIPLIER || '1.5'),
 });
 
 module.exports = config;

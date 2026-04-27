@@ -208,34 +208,41 @@ describe('selectTopSignals', () => {
     expect(result[2].symbol).toBe('INFY.NS');
   });
 
-  test('should respect weekly target — reduce daily limit when weekly count is high', async () => {
+  // Phase A / Fix 2: Dynamic threshold raises the confidence floor as the week fills.
+  // floor = MIN_CONFIDENCE + (weekly/target) * DYNAMIC_FLOOR_SLOPE_POINTS
+  // With defaults (MIN_CONFIDENCE=70, target=10, slope=10): week=8 → floor=78, week=10 → floor=80, week=15 → floor=85.
+  test('dynamic floor: raises floor when week is ~80% filled (weekly=8/10)', async () => {
     signalModel.countByWeek.mockResolvedValue(8);
 
     const candidates = [
-      makeCandidate('TCS.NS', 90, 2.5),
-      makeCandidate('RELIANCE.NS', 85, 2.0),
-      makeCandidate('INFY.NS', 80, 3.0),
+      makeCandidate('TCS.NS', 90, 2.5),        // passes floor 78
+      makeCandidate('RELIANCE.NS', 85, 2.0),   // passes
+      makeCandidate('INFY.NS', 77, 3.0),       // fails floor 78
     ];
 
     const result = await selectTopSignals(candidates, '2026-03-24');
 
     expect(result).toHaveLength(2);
-    expect(result[0].symbol).toBe('TCS.NS');
-    expect(result[1].symbol).toBe('RELIANCE.NS');
+    expect(result.map((r) => r.symbol)).toEqual(expect.arrayContaining(['TCS.NS', 'RELIANCE.NS']));
+    expect(rejectedSignalModel.insertRejected).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'INFY.NS', reject_stage: 'FREQUENCY_DYNAMIC_FLOOR' })
+    );
   });
 
-  test('should return empty array when weekly target is reached', async () => {
+  test('dynamic floor: at weekly target (10/10), floor=80 blocks sub-80 confidence', async () => {
     signalModel.countByWeek.mockResolvedValue(10);
 
     const candidates = [
-      makeCandidate('TCS.NS', 90, 2.5),
+      makeCandidate('TCS.NS', 90, 2.5),  // passes
+      makeCandidate('ABC.NS', 78, 2.5),  // blocked by floor=80
     ];
 
     const result = await selectTopSignals(candidates, '2026-03-24');
 
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(1);
+    expect(result[0].symbol).toBe('TCS.NS');
     expect(rejectedSignalModel.insertRejected).toHaveBeenCalledWith(
-      expect.objectContaining({ reject_stage: 'FREQUENCY_CAP' })
+      expect.objectContaining({ symbol: 'ABC.NS', reject_stage: 'FREQUENCY_DYNAMIC_FLOOR' })
     );
   });
 
@@ -244,31 +251,24 @@ describe('selectTopSignals', () => {
     expect(result).toHaveLength(0);
   });
 
-  test('should log deferred candidates as FREQUENCY_CAP', async () => {
+  // Phase A / Fix 2: absolute daily cap still wins when many candidates pass the dynamic floor.
+  test('dynamic mode still respects absolute daily cap (MAX_SIGNALS_PER_DAY)', async () => {
+    // weekly=0 → floor = MIN_CONFIDENCE (70). All 5 candidates pass floor,
+    // but MAX_SIGNALS_PER_DAY=3 caps the result.
     const candidates = [
       makeCandidate('A.NS', 90, 3.0),
       makeCandidate('B.NS', 85, 2.5),
       makeCandidate('C.NS', 80, 2.0),
       makeCandidate('D.NS', 75, 1.8),
-      makeCandidate('E.NS', 70, 1.5),
+      makeCandidate('E.NS', 72, 1.5),
     ];
 
     const result = await selectTopSignals(candidates, '2026-03-24');
 
     expect(result).toHaveLength(3);
-    expect(rejectedSignalModel.insertRejected).toHaveBeenCalledTimes(2);
-    expect(rejectedSignalModel.insertRejected).toHaveBeenCalledWith(
-      expect.objectContaining({
-        symbol: 'D.NS',
-        reject_stage: 'FREQUENCY_CAP',
-      })
-    );
-    expect(rejectedSignalModel.insertRejected).toHaveBeenCalledWith(
-      expect.objectContaining({
-        symbol: 'E.NS',
-        reject_stage: 'FREQUENCY_CAP',
-      })
-    );
+    const rejected_calls = rejectedSignalModel.insertRejected.mock.calls.map((c) => c[0]);
+    const daily_cap_hits = rejected_calls.filter((r) => r.reject_stage === 'FREQUENCY_CAP');
+    expect(daily_cap_hits.map((r) => r.symbol).sort()).toEqual(['D.NS', 'E.NS']);
   });
 
   test('should sort by confidence first, then risk_reward as tiebreaker when ranking_score is absent', async () => {
@@ -300,12 +300,20 @@ describe('selectTopSignals', () => {
     expect(result[2].symbol).toBe('A.NS');
   });
 
-  test('should handle weekly count exceeding target gracefully', async () => {
+  test('dynamic floor: caps at DYNAMIC_FLOOR_MAX when weekly count far exceeds target', async () => {
     signalModel.countByWeek.mockResolvedValue(15);
 
-    const candidates = [makeCandidate('TCS.NS', 95, 3.0)];
+    // At weekly=15, week_fill clamps to 1.5 → floor = min(85, 70 + 1.5*10) = 85.
+    const candidates = [
+      makeCandidate('TCS.NS', 95, 3.0),   // passes floor=85
+      makeCandidate('ABC.NS', 82, 3.0),   // fails
+    ];
     const result = await selectTopSignals(candidates, '2026-03-24');
 
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(1);
+    expect(result[0].symbol).toBe('TCS.NS');
+    expect(rejectedSignalModel.insertRejected).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'ABC.NS', reject_stage: 'FREQUENCY_DYNAMIC_FLOOR' })
+    );
   });
 });

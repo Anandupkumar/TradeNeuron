@@ -47,6 +47,37 @@ async function updateClose(id, exit_date, exit_price, exit_reason, pnl_pct, gros
   return result;
 }
 
+// Phase A / Fix 1: record partial-exit leg data on an open paper trade.
+async function recordPartialLeg(id, {
+  partial_exit_price = null,
+  partial_exit_date = null,
+  partial_shares_booked = null,
+  partial_realized_pnl_inr = null,
+  partial_pnl_pct = null,
+  sl_moved_to_breakeven = 0,
+} = {}) {
+  const sql = `
+    UPDATE paper_trades
+       SET partial_exit_price = ?,
+           partial_exit_date = ?,
+           partial_shares_booked = ?,
+           partial_realized_pnl_inr = ?,
+           partial_pnl_pct = ?,
+           sl_moved_to_breakeven = ?
+     WHERE id = ?
+  `;
+  const [result] = await pool.query(sql, [
+    partial_exit_price,
+    partial_exit_date,
+    partial_shares_booked,
+    partial_realized_pnl_inr,
+    partial_pnl_pct,
+    sl_moved_to_breakeven ? 1 : 0,
+    id,
+  ]);
+  return result;
+}
+
 async function updateTelemetry(id, telemetry) {
   const sql = `
     UPDATE paper_trades
@@ -167,6 +198,7 @@ module.exports = {
   updateClose,
   updateTelemetry,
   updateActualEntry,
+  recordPartialLeg,
   findBySignalId,
   findAll,
   getSummary,

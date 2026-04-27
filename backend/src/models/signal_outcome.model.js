@@ -6,10 +6,11 @@ async function create(outcome) {
       signal_id, outcome, strategy, raw_confidence, confidence_bucket,
       ranking_score, market_regime, sector, relative_strength_vs_nifty,
       rs_bucket, bars_held, mfe_pct, mae_pct, gap_open_loss,
+      partial_exit_hit, partial_pnl_pct, bars_to_partial,
       expected_entry_price, actual_entry_price, entry_slippage_pct,
       paper_trade_pnl_pct, paper_trade_exit_reason, features_json, resolved_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       outcome = VALUES(outcome),
       strategy = VALUES(strategy),
@@ -24,6 +25,9 @@ async function create(outcome) {
       mfe_pct = VALUES(mfe_pct),
       mae_pct = VALUES(mae_pct),
       gap_open_loss = VALUES(gap_open_loss),
+      partial_exit_hit = VALUES(partial_exit_hit),
+      partial_pnl_pct = VALUES(partial_pnl_pct),
+      bars_to_partial = VALUES(bars_to_partial),
       expected_entry_price = VALUES(expected_entry_price),
       actual_entry_price = VALUES(actual_entry_price),
       entry_slippage_pct = VALUES(entry_slippage_pct),
@@ -47,6 +51,9 @@ async function create(outcome) {
     outcome.mfe_pct != null ? outcome.mfe_pct : null,
     outcome.mae_pct != null ? outcome.mae_pct : null,
     outcome.gap_open_loss ? 1 : 0,
+    outcome.partial_exit_hit ? 1 : 0,
+    outcome.partial_pnl_pct != null ? outcome.partial_pnl_pct : null,
+    outcome.bars_to_partial != null ? outcome.bars_to_partial : null,
     outcome.expected_entry_price != null ? outcome.expected_entry_price : null,
     outcome.actual_entry_price != null ? outcome.actual_entry_price : null,
     outcome.entry_slippage_pct != null ? outcome.entry_slippage_pct : null,
