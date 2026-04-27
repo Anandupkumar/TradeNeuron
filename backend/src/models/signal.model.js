@@ -66,6 +66,34 @@ async function updateStatus(id, status, closed_at) {
   return result;
 }
 
+// Phase A / Fix 1: persist partial-exit leg data on the originating signal row.
+async function updatePartialExit(id, {
+  partial_exit_price = null,
+  partial_exit_date = null,
+  partial_shares_booked = null,
+  partial_realized_pnl_inr = null,
+  sl_moved_to_breakeven = 0,
+} = {}) {
+  const sql = `
+    UPDATE signals
+       SET partial_exit_price = ?,
+           partial_exit_date = ?,
+           partial_shares_booked = ?,
+           partial_realized_pnl_inr = ?,
+           sl_moved_to_breakeven = ?
+     WHERE id = ?
+  `;
+  const [result] = await pool.query(sql, [
+    partial_exit_price,
+    partial_exit_date,
+    partial_shares_booked,
+    partial_realized_pnl_inr,
+    sl_moved_to_breakeven ? 1 : 0,
+    id,
+  ]);
+  return result;
+}
+
 async function findAll({ page = 1, limit = 20, sort_by = 'date', sort_order = 'DESC', status, symbol, strategy_source, direction, confidence_tier, min_confidence, from_date, to_date, favorites_only, user_id } = {}) {
   let where_clauses = [];
   let params = [];
@@ -179,6 +207,7 @@ module.exports = {
   findActiveBySymbol,
   findById,
   updateStatus,
+  updatePartialExit,
   findAll,
   countActiveBySymbol,
   countActiveBySector,

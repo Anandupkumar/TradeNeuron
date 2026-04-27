@@ -39,6 +39,21 @@ function calculateNetReturn(entry_price, exit_price, direction = 'LONG') {
   return ((effective_exit - effective_entry) / effective_entry) * 100;
 }
 
+// Phase A / Fix 1: notional-weighted multi-leg backtest return. Each leg pays
+// its own cost. If the outcome is a single-leg trade, this reduces to the
+// original calculateNetReturn.
+function calculateMultiLegNetReturn(outcome, direction = 'LONG') {
+  const realistic_entry = outcome.realistic_entry;
+  if (!outcome.partial_fired || outcome.partial_exit_price == null) {
+    return calculateNetReturn(realistic_entry, outcome.exit_price, direction);
+  }
+  const partial_fraction = parseFloat(outcome.partial_fraction) || 0.5;
+  const partial_leg = calculateNetReturn(realistic_entry, parseFloat(outcome.partial_exit_price), direction);
+  const final_leg_price = parseFloat(outcome.final_leg_price != null ? outcome.final_leg_price : outcome.exit_price);
+  const final_leg = calculateNetReturn(realistic_entry, final_leg_price, direction);
+  return partial_fraction * partial_leg + (1 - partial_fraction) * final_leg;
+}
+
 function buildRegimeByDateMap(nifty_candles, nifty_indicators, vix_by_date, breadth_by_date = new Map()) {
   const map = new Map();
   for (let i = 0; i < nifty_candles.length; i++) {
@@ -227,7 +242,7 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
           const sig = capSignal(short_trend);
           if (sig) {
             const outcome = evaluateOutcome(sig, future_candles);
-            const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price, 'SHORT');
+            const net_return = calculateMultiLegNetReturn(outcome, 'SHORT');
             results_by_strategy.TREND_PULLBACK_SHORT.push({ ...outcome, net_return, days: outcome.days });
           }
         }
@@ -237,7 +252,7 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
           const sig = capSignal(breakdown_signal);
           if (sig) {
             const outcome = evaluateOutcome(sig, future_candles);
-            const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price, 'SHORT');
+            const net_return = calculateMultiLegNetReturn(outcome, 'SHORT');
             results_by_strategy.BREAKDOWN.push({ ...outcome, net_return, days: outcome.days });
           }
         }
@@ -261,13 +276,13 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
             direction: 'LONG',
           });
           const outcome = evaluateOutcome(merged, future_candles);
-          const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
+          const net_return = calculateMultiLegNetReturn(outcome, 'LONG');
           results_by_strategy.COMBINED.push({ ...outcome, net_return, days: outcome.days });
         }
       } else if (long_signals.length === 1) {
         const { name, signal: sig } = long_signals[0];
         const outcome = evaluateOutcome(sig, future_candles);
-        const net_return = calculateNetReturn(outcome.realistic_entry, outcome.exit_price);
+        const net_return = calculateMultiLegNetReturn(outcome, 'LONG');
         results_by_strategy[name].push({ ...outcome, net_return, days: outcome.days });
       }
     }
@@ -299,4 +314,4 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
   return results_by_strategy;
 }
 
-module.exports = { runBacktest, evaluateOutcome, calculateNetReturn };
+module.exports = { runBacktest, evaluateOutcome, calculateNetReturn, calculateMultiLegNetReturn };

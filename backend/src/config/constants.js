@@ -48,43 +48,89 @@ const NEGATION_WORDS = [
   'overturned', 'exonerated', 'withdrawn',
 ];
 
+// Partial-exit policy keys (Phase A, Fix 1 + Fix 4):
+//   partial_exit_rr                    — book first leg at this R-multiple of initial risk
+//   partial_fraction                   — fraction of shares booked at partial (0..1)
+//   move_sl_to_breakeven_after_partial — flip remainder SL to realistic entry price
+//   trail_after_partial                — 'ATR' | 'NONE' (Fix 4: enable ATR trailing on remainder even for FIXED_RR)
+// Volatility-compression keys (Phase C, Fix 6):
+//   vol_compression_exit_enabled       — enable BW-percentile exit
+//   vol_compression_bw_percentile      — BW percentile (over trailing 60d) below which to exit
+//   min_bars_before_vol_exit           — only arm vol exit after this many bars held
 const EXIT_POLICY_PROFILES = {
   TREND_PULLBACK: {
     kind: 'FIXED_RR',
     rr_multiple: 2.25,
     max_hold_days: 12,
+    partial_exit_rr: 1.0,
+    partial_fraction: 0.5,
+    move_sl_to_breakeven_after_partial: true,
+    trail_after_partial: 'ATR',
+    trail_atr_multiple: 2.0,
   },
   BREAKOUT: {
     kind: 'TRAIL_ATR',
     rr_multiple: 3.0,
     trail_atr_multiple: 2.0,
     max_hold_days: 15,
+    partial_exit_rr: 1.5,
+    partial_fraction: 0.33,
+    move_sl_to_breakeven_after_partial: true,
+    trail_after_partial: 'ATR',
   },
   RANGE: {
     kind: 'LEVEL_TARGET',
     target_source: 'RANGE_RESISTANCE',
     max_hold_days: 8,
+    partial_exit_rr: 1.0,
+    partial_fraction: 0.5,
+    move_sl_to_breakeven_after_partial: true,
+    trail_after_partial: 'NONE',
+    vol_compression_exit_enabled: true,
+    vol_compression_bw_percentile: 15,
+    min_bars_before_vol_exit: 3,
   },
   MEAN_REVERSION: {
     kind: 'LEVEL_TARGET',
     target_source: 'MEAN_REVERSION',
     max_hold_days: 6,
+    partial_exit_rr: 0.7,
+    partial_fraction: 0.5,
+    move_sl_to_breakeven_after_partial: true,
+    trail_after_partial: 'NONE',
+    vol_compression_exit_enabled: true,
+    vol_compression_bw_percentile: 15,
+    min_bars_before_vol_exit: 2,
   },
   TREND_PULLBACK_SHORT: {
     kind: 'FIXED_RR',
     rr_multiple: 2.25,
     max_hold_days: 9,
+    partial_exit_rr: 1.0,
+    partial_fraction: 0.5,
+    move_sl_to_breakeven_after_partial: true,
+    trail_after_partial: 'ATR',
+    trail_atr_multiple: 2.0,
   },
   BREAKDOWN: {
     kind: 'TRAIL_ATR',
     rr_multiple: 2.5,
     trail_atr_multiple: 2.0,
     max_hold_days: 10,
+    partial_exit_rr: 1.5,
+    partial_fraction: 0.33,
+    move_sl_to_breakeven_after_partial: true,
+    trail_after_partial: 'ATR',
   },
   COMBINED: {
     kind: 'FIXED_RR',
     rr_multiple: 2.2,
     max_hold_days: 12,
+    partial_exit_rr: 1.0,
+    partial_fraction: 0.5,
+    move_sl_to_breakeven_after_partial: true,
+    trail_after_partial: 'ATR',
+    trail_atr_multiple: 2.0,
   },
 };
 

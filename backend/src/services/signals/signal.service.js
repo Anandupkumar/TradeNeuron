@@ -24,6 +24,8 @@ const {
   deriveConservativeTarget,
 } = require('../../utils/exit_policy.util');
 const { computeRankingScore } = require('../../utils/ranking.util');
+// Correlation service is lazy-required in computePositionSizing so Phase B (the module
+// itself) can ship later without breaking Phase A boot.
 
 function vwDistPct(feature) {
   if (!feature) return null;
@@ -81,9 +83,17 @@ function computePositionSizing(entry_price, stop_loss, direction, opts = {}) {
   const drawdown_scale = opts.drawdown_scale != null && config.drawdown_risk_scaling_enabled
     ? opts.drawdown_scale
     : 1;
+  // Phase C / Fix 7: per-strategy continuous risk budget. Clamped to [min, max] before being applied.
+  const strategy_multiplier = opts.strategy_multiplier != null && config.risk_budget_enabled
+    ? Math.max(
+        config.risk_budget_min_multiplier,
+        Math.min(config.risk_budget_max_multiplier, parseFloat(opts.strategy_multiplier))
+      )
+    : 1;
 
   let risk_per_trade_inr = (config.total_capital_inr * (config.risk_pct_per_trade / 100)) / correlation_divisor;
   risk_per_trade_inr *= drawdown_scale;
+  risk_per_trade_inr *= strategy_multiplier;
 
   let shares_to_buy = Math.floor(risk_per_trade_inr / risk_per_share);
 
@@ -337,7 +347,11 @@ async function buildCandidate(
 
   if (config.confidence_calibration_enabled) {
     const bucket = Math.floor(pre_calib_confidence / 5) * 5;
-    const cal = await confidenceCalibrationModel.findLatestForBucket(bucket);
+    // Phase B / Fix 3: per-strategy x per-direction calibration with fallback.
+    const cal_args = config.calibration_per_strategy_enabled
+      ? [bucket, primaryStrategy, direction]
+      : [bucket];
+    const cal = await confidenceCalibrationModel.findLatestForBucket(...cal_args);
     if (cal && cal.total_signals >= config.calibration_min_bucket_samples) {
       const pw = config.calibration_prior_weight;
       const n = cal.total_signals;
@@ -345,6 +359,9 @@ async function buildCandidate(
       confidence = Math.round((pre_calib_confidence * pw + awr * n) / (pw + n));
       confidence = Math.max(0, Math.min(100, confidence));
       confidence_calibrated_flag = true;
+      if (cal.slice_level) {
+        logger.info(`Signal for ${symbol} calibrated: bucket=${bucket}, slice=${cal.slice_level}, n=${n}, awr=${awr}, pre=${pre_calib_confidence} → ${confidence}`);
+      }
     }
   }
 
@@ -412,11 +429,49 @@ async function buildCandidate(
     else if (dd_frac > config.drawdown_threshold_mid) drawdown_scale = config.drawdown_scale_moderate;
   }
 
-  const correlation_divisor = sector_active + 1;
+  // Phase B / Fix 5: 20D return-correlation divisor replaces sector proxy when enabled.
+  // Both values are logged for the first month so we can A/B the model before fully retiring the proxy.
+  let correlation_divisor = sector_active + 1;
+  let correlated_count = null;
+  if (config.correlation_model_enabled) {
+    try {
+      // eslint-disable-next-line global-require
+      const correlationService = require('../risk/correlation.service');
+      const active_rows = await signalModel.findActive();
+      const active_symbols = [...new Set(
+        active_rows
+          .filter((row) => row.symbol !== symbol && (direction ? row.direction === direction : true))
+          .map((row) => row.symbol)
+      )];
+      const batch_symbols = [...new Set(
+        batch_signals
+          .filter((b) => b.symbol !== symbol && (direction ? b.direction === direction : true))
+          .map((b) => b.symbol)
+      )];
+      const candidate_pool = [...new Set([...active_symbols, ...batch_symbols])];
+      correlated_count = await correlationService.countHighlyCorrelatedActive(
+        symbol,
+        candidate_pool,
+        config.correlation_divisor_threshold,
+        { lookback_days: config.correlation_lookback_days, as_of_date: date }
+      );
+      correlation_divisor = 1 + (correlated_count != null ? correlated_count : sector_active);
+    } catch (error) {
+      logger.warn(`Correlation divisor computation failed for ${symbol}: ${error.message} — falling back to sector proxy`);
+    }
+  }
+  logger.info(`Position sizing ${symbol} ${direction}: correlation_divisor=${correlation_divisor}, correlated_count=${correlated_count ?? 'n/a'}, sector_active=${sector_active}`);
+
+  // Phase C / Fix 7: per-strategy continuous risk budget multiplier from strategy_config.
+  let strategy_multiplier = 1;
+  if (config.risk_budget_enabled && strategyConfig && strategyConfig.risk_budget_multiplier != null) {
+    strategy_multiplier = parseFloat(strategyConfig.risk_budget_multiplier) || 1;
+  }
 
   const sizing = computePositionSizing(signal.entry_price, signal.stop_loss, direction, {
     correlation_divisor,
     drawdown_scale,
+    strategy_multiplier,
   });
   if (!sizing) {
     logger.info(`Signal for ${symbol} rejected: position sizing returned null (non-positive risk_per_share)`);
@@ -561,6 +616,11 @@ async function buildCandidate(
   };
 }
 
+// Phase A / Fix 2: Dynamic frequency threshold.
+// Three modes:
+//   HARD_CAP           — legacy (slice by daily_limit, everyone beyond = FREQUENCY_CAP)
+//   DYNAMIC_THRESHOLD  — weekly fill raises the confidence floor; no cross-day suppression
+//   HYBRID             — dynamic floor + soft absolute cap at target_weekly_signals * hybrid_soft_cap_multiplier
 async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
   if (candidates.length === 0) return [];
 
@@ -579,26 +639,6 @@ async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
     eff_max_per_day = Math.max(0, Math.floor(config.max_signals_per_day * m));
   }
 
-  const daily_limit = Math.min(eff_max_per_day, Math.max(0, remaining_slots));
-
-  logger.info(`Frequency controller: weekly=${weekly_count}/${config.target_weekly_signals}, remaining=${remaining_slots}, daily_limit=${daily_limit}, regime=${market_regime}, candidates=${candidates.length}`);
-
-  if (daily_limit <= 0) {
-    logger.info(`Frequency controller: weekly target reached — all ${candidates.length} candidates deferred`);
-    for (const c of candidates) {
-      await rejectedSignalModel.insertRejected({
-        symbol: c.symbol,
-        date: c.date,
-        strategy_source: c.strategy_source,
-        reject_stage: 'FREQUENCY_CAP',
-        reject_reason: `Weekly target ${config.target_weekly_signals} reached (${weekly_count} this week)`,
-        raw_confidence: c.confidence,
-        raw_rr: c.risk_reward,
-      });
-    }
-    return [];
-  }
-
   candidates.sort((a, b) => {
     const ranking_a = parseFloat(a.ranking_score != null ? a.ranking_score : a.confidence) || 0;
     const ranking_b = parseFloat(b.ranking_score != null ? b.ranking_score : b.confidence) || 0;
@@ -607,33 +647,117 @@ async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
     return b.risk_reward - a.risk_reward;
   });
 
-  const selected = candidates.slice(0, daily_limit);
-  const deferred = candidates.slice(daily_limit);
+  const mode = (config.frequency_mode || 'HARD_CAP').toUpperCase();
 
-  if (deferred.length > 0) {
-    logger.info(`Frequency controller: selected top ${selected.length}, deferred ${deferred.length} candidates`);
+  if (mode === 'HARD_CAP') {
+    const daily_limit = Math.min(eff_max_per_day, Math.max(0, remaining_slots));
+    logger.info(`Frequency controller [HARD_CAP]: weekly=${weekly_count}/${config.target_weekly_signals}, remaining=${remaining_slots}, daily_limit=${daily_limit}, regime=${market_regime}, candidates=${candidates.length}`);
+
+    if (daily_limit <= 0) {
+      for (const c of candidates) {
+        await rejectedSignalModel.insertRejected({
+          symbol: c.symbol, date: c.date, strategy_source: c.strategy_source,
+          reject_stage: 'FREQUENCY_CAP',
+          reject_reason: `Weekly target ${config.target_weekly_signals} reached (${weekly_count} this week)`,
+          raw_confidence: c.confidence, raw_rr: c.risk_reward,
+        });
+      }
+      return [];
+    }
+
+    const selected = candidates.slice(0, daily_limit);
+    const deferred = candidates.slice(daily_limit);
     for (const c of deferred) {
       await rejectedSignalModel.insertRejected({
-        symbol: c.symbol,
-        date: c.date,
-        strategy_source: c.strategy_source,
+        symbol: c.symbol, date: c.date, strategy_source: c.strategy_source,
         reject_stage: 'FREQUENCY_CAP',
-        reject_reason: `Ranked #${candidates.indexOf(c) + 1} but daily limit is ${daily_limit} (ranking=${c.ranking_score ?? c.confidence}, confidence=${c.confidence}, R:R=${c.risk_reward})`,
-        raw_confidence: c.confidence,
-        raw_rr: c.risk_reward,
+        reject_reason: `Ranked #${candidates.indexOf(c) + 1} but daily limit is ${daily_limit}`,
+        raw_confidence: c.confidence, raw_rr: c.risk_reward,
+      });
+    }
+    return selected;
+  }
+
+  // DYNAMIC_THRESHOLD or HYBRID share the same floor computation.
+  const target_weekly = Math.max(1, config.target_weekly_signals);
+  const week_fill = Math.max(0, Math.min(1.5, weekly_count / target_weekly));
+  const dynamic_floor = Math.min(
+    config.dynamic_floor_max,
+    config.min_confidence + week_fill * config.dynamic_floor_slope_points
+  );
+  const day_of_week = new Date(date).getDay();
+  logger.info(`Frequency controller [${mode}]: weekly=${weekly_count}/${target_weekly}, week_fill=${week_fill.toFixed(2)}, dynamic_floor=${dynamic_floor.toFixed(1)}, dow=${day_of_week}, regime=${market_regime}, candidates=${candidates.length}`);
+
+  const passing = [];
+  const deferred = [];
+  for (const c of candidates) {
+    const score = parseFloat(c.ranking_score != null ? c.ranking_score : c.confidence) || 0;
+    if (score >= dynamic_floor) passing.push(c);
+    else deferred.push(c);
+  }
+
+  for (const c of deferred) {
+    const score = parseFloat(c.ranking_score != null ? c.ranking_score : c.confidence) || 0;
+    await rejectedSignalModel.insertRejected({
+      symbol: c.symbol, date: c.date, strategy_source: c.strategy_source,
+      reject_stage: 'FREQUENCY_DYNAMIC_FLOOR',
+      reject_reason: `Ranking/confidence ${score.toFixed(1)} below dynamic floor ${dynamic_floor.toFixed(1)} (week_fill=${week_fill.toFixed(2)})`,
+      raw_confidence: c.confidence, raw_rr: c.risk_reward,
+    });
+  }
+
+  // Enforce absolute daily cap regardless of mode (protects against pathological 20-passing days).
+  let limited = passing;
+  if (eff_max_per_day > 0 && passing.length > eff_max_per_day) {
+    const spill = passing.slice(eff_max_per_day);
+    limited = passing.slice(0, eff_max_per_day);
+    for (const c of spill) {
+      await rejectedSignalModel.insertRejected({
+        symbol: c.symbol, date: c.date, strategy_source: c.strategy_source,
+        reject_stage: 'FREQUENCY_CAP',
+        reject_reason: `Passed dynamic floor but exceeded daily cap ${eff_max_per_day}`,
+        raw_confidence: c.confidence, raw_rr: c.risk_reward,
       });
     }
   }
 
-  return selected;
+  // HYBRID: also enforce a soft weekly absolute ceiling.
+  if (mode === 'HYBRID') {
+    const hybrid_cap = Math.max(0, Math.floor(target_weekly * config.hybrid_soft_cap_multiplier) - weekly_count);
+    if (limited.length > hybrid_cap) {
+      const spill = limited.slice(hybrid_cap);
+      limited = limited.slice(0, hybrid_cap);
+      for (const c of spill) {
+        await rejectedSignalModel.insertRejected({
+          symbol: c.symbol, date: c.date, strategy_source: c.strategy_source,
+          reject_stage: 'FREQUENCY_CAP',
+          reject_reason: `HYBRID soft weekly cap reached (${Math.floor(target_weekly * config.hybrid_soft_cap_multiplier)} vs current ${weekly_count})`,
+          raw_confidence: c.confidence, raw_rr: c.risk_reward,
+        });
+      }
+    }
+  }
+
+  logger.info(`Frequency controller [${mode}]: ${candidates.length} candidates → ${limited.length} selected (deferred=${deferred.length})`);
+  return limited;
 }
 
 async function deduplicateAndGenerate(symbol, date, raw_signals, batch_signals = [], nifty_pcr = null, sentiment_adjustment = 0, vix_close = null, market_regime = null) {
   return buildCandidate(symbol, date, raw_signals, batch_signals, nifty_pcr, sentiment_adjustment, vix_close, market_regime);
 }
 
+// Multi-leg aware mapping. signals.status stays at the simple 4-state lifecycle
+// (ACTIVE / TARGET_HIT / SL_HIT / EXPIRED). Granular leg detail is persisted on
+// paper_trades.exit_reason and signal_outcomes.outcome.
+// Mapping policy:
+//   - Any clean target hit (including PARTIAL_THEN_TARGET) → TARGET_HIT
+//   - Any pure stop without a partial leg → SL_HIT
+//   - Any multi-leg variant that closed the remainder at BE / trail / expiry → EXPIRED
+//     (the partial already locked at the intermediate — remainder outcome is mixed,
+//      so a TARGET_HIT lifecycle label would overstate it.)
+//   - VOL_COMPRESSION, EXPIRED, EXPIRED_PENALIZED → EXPIRED
 function resolveSignalStatus(exit_reason) {
-  if (exit_reason === 'TARGET_HIT') return 'TARGET_HIT';
+  if (exit_reason === 'TARGET_HIT' || exit_reason === 'PARTIAL_THEN_TARGET') return 'TARGET_HIT';
   if (exit_reason === 'SL_HIT' || exit_reason === 'TRAILING_STOP_HIT' || exit_reason === 'GAP_STOP') {
     return 'SL_HIT';
   }
@@ -678,6 +802,9 @@ async function recordOutcome(signal, evaluation, resolved_at, paper_trade = null
       mfe_pct: evaluation.mfe_pct != null ? evaluation.mfe_pct : null,
       mae_pct: evaluation.mae_pct != null ? evaluation.mae_pct : null,
       gap_open_loss: !!evaluation.gap_open,
+      partial_exit_hit: !!evaluation.partial_fired,
+      partial_pnl_pct: evaluation.partial_pnl_pct != null ? evaluation.partial_pnl_pct : null,
+      bars_to_partial: evaluation.partial_exit_day != null ? evaluation.partial_exit_day : null,
       expected_entry_price: expected_entry,
       actual_entry_price: actual_entry,
       entry_slippage_pct,
@@ -689,6 +816,19 @@ async function recordOutcome(signal, evaluation, resolved_at, paper_trade = null
   } catch (error) {
     logger.warn(`Failed to record outcome for signal ${signal.id}: ${error.message}`);
   }
+}
+
+function buildLegSummary(evaluation) {
+  if (!evaluation || !Array.isArray(evaluation.legs) || evaluation.legs.length === 0) return '';
+  return evaluation.legs
+    .map((leg, idx) => {
+      const prefix = leg.kind === 'PARTIAL'
+        ? `L${idx + 1} PARTIAL (${Math.round((leg.fraction || 0) * 100)}%)`
+        : `L${idx + 1} ${leg.reason}`;
+      const pnl = leg.pnl_pct != null ? `${leg.pnl_pct > 0 ? '+' : ''}${leg.pnl_pct.toFixed(2)}%` : '—';
+      return `${prefix} @ ₹${leg.price} (${pnl})`;
+    })
+    .join('\n');
 }
 
 async function updateSignalStatuses() {
@@ -707,9 +847,62 @@ async function updateSignalStatuses() {
     const future_candles = all_candles.filter((c) => formatDate(c.date) > formatDate(signal.date));
     if (future_candles.length === 0) continue;
 
+    // Phase C / Fix 6 pre-wiring: pass 60 bars of trailing context (pre-signal) for
+    // the Bollinger-bandwidth percentile baseline. Gated by VOL_COMPRESSION_EXIT_ENABLED.
+    const trailing_candles = config.vol_compression_exit_enabled
+      ? await candleModel.findTrailingBefore(
+          signal.symbol,
+          formatDate(signal.date),
+          config.vol_compression_trailing_window
+        ).catch(() => null)
+      : null;
+
     const evaluation = evaluateSignalExit(signal, future_candles, {
       entry_price_override: parseFloat(signal.entry_price),
+      trailing_candles: trailing_candles || undefined,
     });
+
+    // Phase A / Fix 1: persist partial-leg data the first time we see it, even if
+    // the remainder has not yet resolved. This keeps the signal row truthful and
+    // fires the brief partial-exit Telegram alert exactly once (open question #3).
+    if (evaluation.partial_fired && !signal.partial_exit_price) {
+      const partial_shares = signal.shares_to_buy && evaluation.partial_fraction
+        ? Math.floor(parseInt(signal.shares_to_buy, 10) * parseFloat(evaluation.partial_fraction))
+        : null;
+      const partial_realized_inr = partial_shares != null && evaluation.partial_exit_price != null
+        ? roundDecimal(
+            partial_shares *
+              (signal.direction === 'SHORT'
+                ? parseFloat(signal.entry_price) - evaluation.partial_exit_price
+                : evaluation.partial_exit_price - parseFloat(signal.entry_price)),
+            2
+          )
+        : null;
+
+      const partial_resolved_at = future_candles[Math.max(0, (evaluation.partial_exit_day || 1) - 1)]
+        ? formatDate(future_candles[Math.max(0, (evaluation.partial_exit_day || 1) - 1)].date)
+        : null;
+
+      await signalModel.updatePartialExit(signal.id, {
+        partial_exit_price: evaluation.partial_exit_price,
+        partial_exit_date: partial_resolved_at,
+        partial_shares_booked: partial_shares,
+        partial_realized_pnl_inr: partial_realized_inr,
+        sl_moved_to_breakeven: !!evaluation.sl_moved_to_breakeven,
+      });
+
+      if (config.partial_exit_telegram_alerts) {
+        await sendTelegramAlert(
+          `📈 <b>PARTIAL BOOKED</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction}\n` +
+          `Booked ${partial_shares != null ? partial_shares : '—'} @ ₹${evaluation.partial_exit_price}` +
+          (evaluation.partial_pnl_pct != null ? ` (${evaluation.partial_pnl_pct > 0 ? '+' : ''}${evaluation.partial_pnl_pct.toFixed(2)}%)` : '') +
+          (evaluation.sl_moved_to_breakeven ? '\nSL moved to BE on remainder.' : '') +
+          `\nStrategy: ${signal.strategy_source}`
+        );
+      }
+    }
+
     if (!evaluation.exit_reason) continue;
 
     const resolved_at = resolveOutcomeDate(
@@ -741,7 +934,37 @@ async function updateSignalStatuses() {
       const linked_trade = await paperTradeModel.findBySignalId(signal.id);
       await recordOutcome(signal, evaluation, resolved_at, linked_trade);
 
-      if (new_status === 'TARGET_HIT') {
+      // Consolidated final Telegram alert (open question #3) — includes leg summary
+      // when the trade went through a partial.
+      const leg_summary = buildLegSummary(evaluation);
+      const tail = leg_summary ? `\n<b>Legs:</b>\n${leg_summary}` : '';
+
+      if (evaluation.exit_reason === 'PARTIAL_THEN_TARGET') {
+        await sendTelegramAlert(
+          `🎯 <b>PARTIAL+TARGET</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction} | Strategy: ${signal.strategy_source}${tail}`
+        );
+      } else if (evaluation.exit_reason === 'PARTIAL_THEN_TRAIL_STOP') {
+        await sendTelegramAlert(
+          `🪢 <b>PARTIAL+TRAIL STOP</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction} | Strategy: ${signal.strategy_source}${tail}`
+        );
+      } else if (evaluation.exit_reason === 'PARTIAL_THEN_BE_STOP') {
+        await sendTelegramAlert(
+          `🪜 <b>PARTIAL+BE STOP</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction} | Strategy: ${signal.strategy_source}${tail}`
+        );
+      } else if (evaluation.exit_reason === 'PARTIAL_THEN_EXPIRED') {
+        await sendTelegramAlert(
+          `⌛ <b>PARTIAL+EXPIRED</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction} | Strategy: ${signal.strategy_source}${tail}`
+        );
+      } else if (evaluation.exit_reason === 'VOL_COMPRESSION') {
+        await sendTelegramAlert(
+          `🔻 <b>VOL COMPRESSION EXIT</b> — ${signal.symbol}\n` +
+          `Direction: ${signal.direction} | Strategy: ${signal.strategy_source}${tail}`
+        );
+      } else if (new_status === 'TARGET_HIT') {
         await sendTelegramAlert(
           `🎯 <b>TARGET HIT</b> — ${signal.symbol}\n` +
           `Direction: ${signal.direction}\n` +

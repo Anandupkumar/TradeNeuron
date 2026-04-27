@@ -117,47 +117,147 @@ async function calibrateWeights() {
 
   await calibrateConfidence();
 
+  await recalibrateRiskBudgets();
+
   logger.info('=== Weekly Weight Calibration End ===');
 }
 
-async function calibrateConfidence() {
-  logger.info('Running confidence calibration...');
-  const MIN_BUCKET_ENTRIES = 20;
+// Phase C / Fix 7: continuous per-strategy risk budget multiplier.
+// We look at the strategy's 90-day GLOBAL slice and blend its expectancy toward
+// the configured baseline. multiplier = clamp(expectancy / baseline, min, max),
+// then soften with RISK_BUDGET_BLEND to avoid whip-sawing size on a single week.
+// Sizing-only (open question #4): this never influences the confidence gate.
+async function recalibrateRiskBudgets() {
+  if (!config.risk_budget_enabled) {
+    logger.info('Risk budget recalibration: flag off — skipping');
+    return;
+  }
+  logger.info('Running risk budget recalibration...');
 
-  const [rows] = await pool.query(`
-    SELECT
-      FLOOR(raw_confidence / 5) * 5 AS bucket,
-      COUNT(*)                       AS total,
-      SUM(CASE WHEN outcome = 'TARGET_HIT' THEN 1 ELSE 0 END) AS wins
-    FROM signal_outcomes
-    WHERE raw_confidence IS NOT NULL
-    GROUP BY bucket
-    ORDER BY bucket
-  `);
-
-  if (rows.length === 0) {
-    logger.info('No signal_outcomes data — skipping confidence calibration');
+  const slices = await getStrategyPerformanceSlices(90);
+  const global_slices = slices.filter((s) => s.scope_type === 'GLOBAL' && s.scope_value === 'ALL');
+  if (global_slices.length === 0) {
+    logger.info('Risk budget: no GLOBAL strategy slices available — skipping');
     return;
   }
 
-  const has_sparse_bucket = rows.some((r) => r.total < MIN_BUCKET_ENTRIES);
-  if (has_sparse_bucket) {
-    const sparse = rows.filter((r) => r.total < MIN_BUCKET_ENTRIES).map((r) => `${r.bucket}(${r.total})`);
-    logger.info(`Sparse buckets (< ${MIN_BUCKET_ENTRIES} entries): ${sparse.join(', ')} — calibrating available buckets only`);
-  }
+  const baseline = Math.max(0.01, Number.parseFloat(config.risk_budget_baseline_expectancy) || 0.3);
+  const blend = Math.max(0, Math.min(1, Number.parseFloat(config.risk_budget_blend) || 0.3));
+  const min_mult = Number.parseFloat(config.risk_budget_min_multiplier) || 0.5;
+  const max_mult = Number.parseFloat(config.risk_budget_max_multiplier) || 1.5;
+  const min_trades = Number.parseInt(config.risk_budget_min_trades || 20, 10);
 
+  for (const slice of global_slices) {
+    const strategy = slice.strategy_name;
+    const trade_count = Number.parseInt(slice.trade_count, 10) || 0;
+    const expectancy = Number.parseFloat(slice.expectancy_pct) || 0;
+
+    if (trade_count < min_trades) {
+      logger.info(
+        `Risk budget [${strategy}]: ${trade_count}/${min_trades} trades — not enough data, leaving multiplier unchanged`
+      );
+      continue;
+    }
+
+    // Raw ratio of observed to baseline expectancy (baseline expressed as % matches expectancy_pct units).
+    const ratio = expectancy / baseline;
+    const clamped_ratio = Math.max(min_mult, Math.min(max_mult, ratio));
+    // Blend against neutral (1.0) so we don't overreact to a single 90-day window.
+    const blended = 1 * (1 - blend) + clamped_ratio * blend;
+    const multiplier = roundDecimal(Math.max(min_mult, Math.min(max_mult, blended)), 2);
+
+    await strategyConfigModel.updateRiskBudget(strategy, multiplier, trade_count, expectancy);
+    logger.info(
+      `Risk budget [${strategy}]: expectancy=${roundDecimal(expectancy, 4)}%, ratio=${roundDecimal(ratio, 3)}, ` +
+      `clamped=${roundDecimal(clamped_ratio, 3)}, blended=${multiplier} (trades=${trade_count})`
+    );
+  }
+}
+
+// Phase B / Fix 3: we emit three slice levels so the signal service can use the
+// finest available bucket at lookup time (STRATEGY_DIRECTION → STRATEGY → GLOBAL).
+// The minimum-samples gate is the same across slices — the caller picks which to
+// trust. We intentionally keep raw rows at every bucket (even sparse ones) so the
+// fallback chain can still find coarser coverage when finer slices are thin.
+async function calibrateConfidence() {
+  logger.info('Running confidence calibration (per-strategy/direction slices)...');
+  const MIN_BUCKET_ENTRIES = 20;
   const today = formatDate(new Date());
-  let upserted = 0;
 
-  for (const row of rows) {
-    if (row.total < MIN_BUCKET_ENTRIES) continue;
-    const win_rate = roundDecimal((row.wins / row.total) * 100, 2);
-    await confidenceCalibrationModel.upsertBucket(row.bucket, row.total, win_rate, today);
-    upserted++;
-    logger.info(`Calibration bucket ${row.bucket}: ${row.total} signals, win rate ${win_rate}%`);
+  const slices = [
+    {
+      label: 'GLOBAL',
+      slice_level: 'GLOBAL',
+      sql: `
+        SELECT FLOOR(raw_confidence / 5) * 5 AS bucket,
+               '*' AS strategy, '*' AS direction,
+               COUNT(*) AS total,
+               SUM(CASE WHEN outcome = 'TARGET_HIT' THEN 1 ELSE 0 END) AS wins
+          FROM signal_outcomes
+         WHERE raw_confidence IS NOT NULL
+         GROUP BY bucket
+      `,
+    },
+    {
+      label: 'STRATEGY',
+      slice_level: 'STRATEGY',
+      sql: `
+        SELECT FLOOR(so.raw_confidence / 5) * 5 AS bucket,
+               UPPER(COALESCE(so.strategy, s.strategy_source)) AS strategy,
+               '*' AS direction,
+               COUNT(*) AS total,
+               SUM(CASE WHEN so.outcome = 'TARGET_HIT' THEN 1 ELSE 0 END) AS wins
+          FROM signal_outcomes so
+          LEFT JOIN signals s ON s.id = so.signal_id
+         WHERE so.raw_confidence IS NOT NULL
+         GROUP BY bucket, strategy
+      `,
+    },
+    {
+      label: 'STRATEGY_DIRECTION',
+      slice_level: 'STRATEGY_DIRECTION',
+      sql: `
+        SELECT FLOOR(so.raw_confidence / 5) * 5 AS bucket,
+               UPPER(COALESCE(so.strategy, s.strategy_source)) AS strategy,
+               UPPER(COALESCE(s.direction, 'LONG')) AS direction,
+               COUNT(*) AS total,
+               SUM(CASE WHEN so.outcome = 'TARGET_HIT' THEN 1 ELSE 0 END) AS wins
+          FROM signal_outcomes so
+          LEFT JOIN signals s ON s.id = so.signal_id
+         WHERE so.raw_confidence IS NOT NULL
+         GROUP BY bucket, strategy, direction
+      `,
+    },
+  ];
+
+  let total_upserted = 0;
+  for (const slice of slices) {
+    const [rows] = await pool.query(slice.sql);
+    if (!rows || rows.length === 0) {
+      logger.info(`[${slice.label}] no signal_outcomes data — skipping`);
+      continue;
+    }
+    const sparse = rows.filter((r) => r.total < MIN_BUCKET_ENTRIES);
+    if (sparse.length > 0) {
+      logger.info(
+        `[${slice.label}] ${sparse.length} sparse buckets (< ${MIN_BUCKET_ENTRIES}) — emitted but downstream may fall back`
+      );
+    }
+    let upserted = 0;
+    for (const row of rows) {
+      const win_rate = row.total > 0 ? roundDecimal((row.wins / row.total) * 100, 2) : 0;
+      await confidenceCalibrationModel.upsertBucket(row.bucket, row.total, win_rate, today, {
+        slice_level: slice.slice_level,
+        strategy: row.strategy || '*',
+        direction: row.direction || '*',
+      });
+      upserted++;
+    }
+    logger.info(`[${slice.label}] upserted ${upserted} buckets`);
+    total_upserted += upserted;
   }
 
-  logger.info(`Confidence calibration complete — ${upserted} buckets updated`);
+  logger.info(`Confidence calibration complete — ${total_upserted} rows upserted across slices`);
 }
 
 async function evaluateStrategyPerformance() {
@@ -230,4 +330,4 @@ async function evaluateStrategyPerformance() {
   }
 }
 
-module.exports = { calibrateWeights, evaluateStrategyPerformance, calibrateConfidence };
+module.exports = { calibrateWeights, evaluateStrategyPerformance, calibrateConfidence, recalibrateRiskBudgets };

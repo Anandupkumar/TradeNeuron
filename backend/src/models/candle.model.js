@@ -99,6 +99,20 @@ async function findNextCandle(symbol, date) {
   return rows[0] || null;
 }
 
+// Phase C / Fix 6: fetch the N candles ending strictly BEFORE a given date,
+// returned in ascending order. Used to seed the Bollinger-bandwidth percentile
+// baseline before the signal fires so the vol-compression exit has context.
+async function findTrailingBefore(symbol, before_date, n) {
+  const sql = `
+    SELECT * FROM candles
+     WHERE symbol = ? AND date < ?
+     ORDER BY date DESC
+     LIMIT ?
+  `;
+  const [rows] = await pool.query(sql, [symbol, before_date, parseInt(n, 10)]);
+  return rows.reverse();
+}
+
 module.exports = {
   upsert,
   bulkUpsert,
@@ -109,4 +123,5 @@ module.exports = {
   find52WeekHigh,
   findDatesForSymbol,
   findNextCandle,
+  findTrailingBefore,
 };
