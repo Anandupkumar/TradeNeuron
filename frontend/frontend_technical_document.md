@@ -116,6 +116,7 @@ frontend/
       favorites.api.ts
       paperTrading.api.ts
       backtest.api.ts
+      reports.api.ts          # Consolidated system performance report + CSV export
       health.api.ts
       tradeDecision.api.ts   # get, upsert, history for manual trade decisions
     components/
@@ -160,6 +161,8 @@ frontend/
         BacktestResultCard.tsx
         MetricsComparisonTable.tsx
         WalkForwardChart.tsx
+      reports/
+        ReportMetricCards.tsx
       favorites/
         FavoritesList.tsx
         FavoriteCard.tsx
@@ -183,6 +186,7 @@ frontend/
       useFavorites.ts
       usePaperTrading.ts
       useBacktest.ts
+      usePerformanceReport.ts
       useHealth.ts
       useMarketStatus.ts
       useDebounce.ts         # Re-export from use-debounce for uniformity
@@ -196,6 +200,7 @@ frontend/
       StockDetail.tsx
       PaperTrading.tsx
       Backtest.tsx
+      Report.tsx
       Watchlist.tsx
       Settings.tsx
     store/
@@ -214,6 +219,7 @@ frontend/
       stock.types.ts
       paperTrade.types.ts
       backtest.types.ts
+      report.types.ts
       health.types.ts
       favorite.types.ts
       rejectedSignal.types.ts  # RejectStage, RejectedSignal, RejectedSignalsResponse
@@ -259,6 +265,7 @@ VITE_APP_VERSION=1.0.0
 VITE_ENABLE_SHORT_SIGNALS=true
 VITE_ENABLE_PAPER_TRADING=true
 VITE_ENABLE_BACKTEST=true
+VITE_ENABLE_REPORTS=true
 
 # Debug
 VITE_DEBUG_MODE=false
@@ -277,6 +284,7 @@ export const DEBUG_MODE     = import.meta.env.VITE_DEBUG_MODE === 'true';
 export const FEATURES = {
   shortSignals: import.meta.env.VITE_ENABLE_SHORT_SIGNALS === 'true',
   paperTrading: import.meta.env.VITE_ENABLE_PAPER_TRADING === 'true',
+  reports: import.meta.env.VITE_ENABLE_REPORTS === 'true',
   backtest:     import.meta.env.VITE_ENABLE_BACKTEST === 'true',
 };
 
@@ -614,6 +622,25 @@ export interface BacktestResult {
   sharpe_ratio: number | null;
   profit_factor: number | null;
   avg_holding_days: number | null;
+}
+```
+
+### Report types
+
+```typescript
+// src/types/report.types.ts
+
+export interface PerformanceReport {
+  range: { from_date: string; to_date: string; days: number };
+  generated_at_ist: string;
+  overview: ReportOverview;
+  pipeline: PipelineReport;
+  signals: SignalReport;
+  signal_funnel: SignalFunnelReport;
+  signal_outcomes: SignalOutcomeReport;
+  paper_trading: PaperTradingSummary;
+  strategy_performance: { current: StrategyPerformanceRow[]; snapshots: StrategySnapshotRow[] };
+  backtest_summary: BacktestReportSummary;
 }
 ```
 
@@ -962,6 +989,20 @@ export const backtestApi = {
 };
 ```
 
+**`src/api/reports.api.ts`**
+
+```typescript
+import apiClient from './client';
+import type { PerformanceReport, PerformanceReportParams } from '../types';
+
+export const reportsApi = {
+  performance: (params: PerformanceReportParams): Promise<PerformanceReport> =>
+    apiClient.get('/reports/performance', { params }),
+  performanceCsv: (params: PerformanceReportParams): Promise<Blob> =>
+    apiClient.get('/reports/performance/export.csv', { params, responseType: 'blob' }),
+};
+```
+
 **`src/api/health.api.ts`**
 
 ```typescript
@@ -995,6 +1036,7 @@ The frontend uses two distinct state layers with a clear separation:
 | Paper trading summary | 5 minutes | No |
 | Paper trading trades | 2 minutes | No |
 | Backtest results | 10 minutes | No |
+| Performance report | 5 minutes | No |
 | Health check | 60 seconds (polling) | Yes |
 
 All data changes daily after the pipeline. `refetchOnWindowFocus` is deliberately disabled for most queries to avoid surprise re-fetches when the user switches browser tabs.
@@ -1038,6 +1080,19 @@ export function useHealth() {
     staleTime:      60 * 1000,
     refetchInterval: 60 * 1000,  // poll every 60 seconds
     refetchOnWindowFocus: true,
+  });
+}
+```
+
+**`src/hooks/usePerformanceReport.ts`**
+
+```typescript
+export function usePerformanceReport(params: PerformanceReportParams) {
+  return useQuery({
+    queryKey: ['reports', 'performance', params],
+    queryFn: () => reportsApi.performance(params),
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 }
 ```
@@ -1171,6 +1226,9 @@ export default function App() {
           <Route path="/backtest"
             element={FEATURES.backtest ? <Backtest /> : <Navigate to="/" replace />}
           />
+          <Route path="/reports"
+            element={FEATURES.reports ? <Report /> : <Navigate to="/" replace />}
+          />
         </Route>
 
         {/* Catch-all */}
@@ -1191,6 +1249,7 @@ export default function App() {
 | Star | Watchlist | /watchlist | Favorite count | — |
 | Wallet | Paper Trading | /paper-trading | Open trade count | `paperTrading` |
 | FlaskConical | Backtest | /backtest | — | `backtest` |
+| FileBarChart | Reports | /reports | — | `reports` |
 | Settings | Settings | /settings | — | — |
 
 ### URL design for StockDetail
@@ -1441,7 +1500,24 @@ Only rendered if `FEATURES.backtest` is true.
 
 ---
 
-### 10.7 Watchlist (`/watchlist`)
+### 10.7 Reports (`/reports`)
+
+Only rendered if `FEATURES.reports` is true.
+
+**Layout:**
+1. URL-synced date range controls (`from_date`, `to_date`) with a 30-day default window
+2. Overview metric cards for total signals, closed paper trades, paper PnL, pipeline success, and signal conversion
+3. Pipeline health and signal factory sections
+4. Paper trading performance summary
+5. Signal outcome details for generated, active, target-hit, stop-loss-hit, expired, resolved, and target-hit-rate counts
+6. Outcome, rejection-stage, strategy-performance, recent pipeline run, and backtest summary tables
+7. Export actions: CSV download from `/api/v1/reports/performance/export.csv` and browser print for Save as PDF
+
+The page uses `usePerformanceReport` and never calls the reports API module directly. It uses `useReportFilters` from `useFilterUrlSync.ts` so report links are shareable and survive refresh.
+
+---
+
+### 10.8 Watchlist (`/watchlist`)
 
 **Layout:**
 1. Add stock button (opens `AddFavoriteDialog`)
@@ -1464,7 +1540,7 @@ Only rendered if `FEATURES.backtest` is true.
 
 ---
 
-### 10.8 Settings (`/settings`)
+### 10.9 Settings (`/settings`)
 
 **Sections:**
 - **Connection:** API Key field (masked, toggleable) + "Test Connection" button
@@ -2050,7 +2126,7 @@ useSignals({ ...otherFilters, symbol: debouncedSymbol });
 
 ### URL state sync
 
-All filter state on the Signals, Funnel, Paper Trading, and Backtest pages is synced to URL query params. Query params are normalized before they become component state. This means:
+All filter state on the Signals, Funnel, Paper Trading, Backtest, and Reports pages is synced to URL query params. Query params are normalized before they become component state. This means:
 - Filters survive page refresh
 - URLs can be shared and reproduce the same view
 - Browser back/forward button navigates filter history
@@ -2063,6 +2139,7 @@ All filter state on the Signals, Funnel, Paper Trading, and Backtest pages is sy
 | Funnel | `date`, `period` |
 | Paper Trading | `status`, `symbol`, `page`, `limit` |
 | Backtest | `strategy` |
+| Reports | `from_date`, `to_date` |
 
 **File:** `src/hooks/useFilterUrlSync.ts`
 
@@ -2124,6 +2201,7 @@ export const featureFlags = {
   // Routing
   canAccessPaperTrading: () => FEATURES.paperTrading,
   canAccessBacktest:     () => FEATURES.backtest,
+  canAccessReports:      () => FEATURES.reports,
 
   // UI elements
   showShortDirection:    () => FEATURES.shortSignals,
@@ -2146,6 +2224,7 @@ const navItems = [
   ...alwaysVisible,
   featureFlags.canAccessPaperTrading() && { path: '/paper-trading', label: 'Paper Trading' },
   featureFlags.canAccessBacktest()     && { path: '/backtest',      label: 'Backtest' },
+  featureFlags.canAccessReports()      && { path: '/reports',       label: 'Reports' },
 ].filter(Boolean);
 
 // In SignalTable.tsx:

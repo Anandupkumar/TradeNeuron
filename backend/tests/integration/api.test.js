@@ -42,6 +42,22 @@ jest.mock('../../src/models/paper_trade.model', () => ({
   }),
 }));
 
+jest.mock('../../src/services/reports/performance_report.service', () => ({
+  getPerformanceReport: jest.fn().mockResolvedValue({
+    range: { from_date: '2026-05-01', to_date: '2026-05-30', days: 30 },
+    generated_at_ist: '2026-05-30T17:30:00+05:30',
+    overview: { total_signals: 0 },
+    pipeline: { total_runs: 0 },
+    signals: { total_signals: 0 },
+    signal_funnel: { total_candidates: 0 },
+    signal_outcomes: {},
+    paper_trading: { total_trades: 0 },
+    strategy_performance: { current: [], snapshots: [] },
+    backtest_summary: { total_runs: 0, recent_results: [] },
+  }),
+  buildPerformanceReportCsv: jest.fn().mockReturnValue('section,metric,value\noverview,total_signals,0\n'),
+}));
+
 jest.mock('../../src/models/favorite.model', () => ({
   findOne: jest.fn().mockResolvedValue(null),
   findByUser: jest.fn().mockResolvedValue([]),
@@ -115,6 +131,28 @@ describe('API Integration Tests', () => {
         .set('X-API-Key', api_key);
       expect(res.status).toBe(200);
       expect(res.body.data.total_trades).toBe(0);
+    });
+  });
+
+  describe('GET /api/v1/reports/performance', () => {
+    test('should return consolidated performance report', async () => {
+      const res = await request(app)
+        .get('/api/v1/reports/performance?from_date=2026-05-01&to_date=2026-05-30')
+        .set('X-API-Key', api_key);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.range.from_date).toBe('2026-05-01');
+    });
+  });
+
+  describe('GET /api/v1/reports/performance/export.csv', () => {
+    test('should return performance report CSV', async () => {
+      const res = await request(app)
+        .get('/api/v1/reports/performance/export.csv?from_date=2026-05-01&to_date=2026-05-30')
+        .set('X-API-Key', api_key);
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.text).toContain('overview,total_signals,0');
     });
   });
 

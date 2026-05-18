@@ -10,6 +10,7 @@ import {
   mockPaperTradeSummary,
   mockPaperTrade,
   mockBacktestResults,
+  mockPerformanceReport,
 } from './fixtures';
 
 function envelope<T>(data: T) {
@@ -65,5 +66,15 @@ export const handlers = [
 
   http.get('*/backtest/results', () => {
     return HttpResponse.json(envelope({ results: mockBacktestResults }));
+  }),
+
+  http.get('*/reports/performance', () => {
+    return HttpResponse.json(envelope(mockPerformanceReport));
+  }),
+
+  http.get('*/reports/performance/export.csv', () => {
+    return new HttpResponse('section,metric,value\noverview,total_signals,12\n', {
+      headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+    });
   }),
 ];

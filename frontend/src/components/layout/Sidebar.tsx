@@ -7,6 +7,7 @@ import {
   Star,
   Wallet,
   FlaskConical,
+  FileBarChart,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -42,6 +43,9 @@ function buildNavItems(): NavItem[] {
       : []),
     ...(featureFlags.canAccessBacktest()
       ? [{ path: '/backtest', label: 'Backtest', icon: FlaskConical }]
+      : []),
+    ...(featureFlags.canAccessReports()
+      ? [{ path: '/reports', label: 'Reports', icon: FileBarChart }]
       : []),
     ...trailing_nav_items,
   ];

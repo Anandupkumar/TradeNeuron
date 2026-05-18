@@ -50,3 +50,19 @@ export type {
 export type { BacktestResult } from './backtest.types';
 export type { HealthData } from './health.types';
 export type { FavoriteRecord, FavoritesResponse } from './favorite.types';
+export type {
+  ReportDateRange,
+  ReportOverview,
+  PipelineRunSummary,
+  PipelineReport,
+  ReportBucket,
+  RejectionStageReport,
+  SignalReport,
+  SignalFunnelReport,
+  SignalOutcomeReport,
+  StrategyPerformanceRow,
+  StrategySnapshotRow,
+  BacktestReportSummary,
+  PerformanceReport,
+  PerformanceReportParams,
+} from './report.types';

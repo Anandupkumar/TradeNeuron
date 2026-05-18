@@ -102,7 +102,16 @@ async function findBySignalId(signal_id) {
   return rows[0] || null;
 }
 
-async function findAll({ page = 1, limit = 20, sort_by = 'entry_date', sort_order = 'DESC', status, symbol } = {}) {
+async function findAll({
+  page = 1,
+  limit = 20,
+  sort_by = 'entry_date',
+  sort_order = 'DESC',
+  status,
+  symbol,
+  from_date,
+  to_date,
+} = {}) {
   let where_clauses = [];
   let params = [];
 
@@ -114,9 +123,17 @@ async function findAll({ page = 1, limit = 20, sort_by = 'entry_date', sort_orde
     where_clauses.push('symbol = ?');
     params.push(symbol);
   }
+  if (from_date) {
+    where_clauses.push('(entry_date >= ? OR exit_date >= ?)');
+    params.push(from_date, from_date);
+  }
+  if (to_date) {
+    where_clauses.push('(entry_date <= ? OR exit_date <= ?)');
+    params.push(to_date, to_date);
+  }
 
   const where = where_clauses.length > 0 ? `WHERE ${where_clauses.join(' AND ')}` : '';
-  const allowed_sort = ['entry_date', 'pnl_pct', 'mfe_pct', 'mae_pct', 'created_at'];
+  const allowed_sort = ['entry_date', 'exit_date', 'pnl_pct', 'mfe_pct', 'mae_pct', 'created_at'];
   const safe_sort = allowed_sort.includes(sort_by) ? sort_by : 'entry_date';
   const safe_order = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   const offset = (page - 1) * limit;
@@ -129,6 +146,64 @@ async function findAll({ page = 1, limit = 20, sort_by = 'entry_date', sort_orde
   const [rows] = await pool.query(data_sql, [...params, limit, offset]);
 
   return { rows, total, page, limit };
+}
+
+async function getSummaryByDateRange(from_date, to_date) {
+  const sql = `
+    SELECT
+      COUNT(*) as total_trades,
+      SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_trades,
+      SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) as closed_trades,
+      SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) as winning_trades,
+      SUM(CASE WHEN pnl_pct < 0 THEN 1 ELSE 0 END) as losing_trades,
+      AVG(CASE WHEN status = 'CLOSED' THEN pnl_pct ELSE NULL END) as avg_pnl_pct,
+      MAX(CASE WHEN status = 'CLOSED' THEN pnl_pct ELSE NULL END) as best_trade_pct,
+      MIN(CASE WHEN status = 'CLOSED' THEN pnl_pct ELSE NULL END) as worst_trade_pct,
+      SUM(CASE WHEN status = 'CLOSED' THEN pnl_pct ELSE 0 END) as total_pnl_pct,
+      SUM(CASE WHEN status = 'CLOSED' THEN gross_pnl_inr ELSE 0 END) as total_gross_pnl_inr,
+      AVG(CASE WHEN status = 'CLOSED' THEN mfe_pct ELSE NULL END) as avg_mfe_pct,
+      AVG(CASE WHEN status = 'CLOSED' THEN mae_pct ELSE NULL END) as avg_mae_pct,
+      AVG(CASE WHEN status = 'CLOSED' THEN bars_held ELSE NULL END) as avg_bars_held
+    FROM paper_trades
+    WHERE (entry_date BETWEEN ? AND ?) OR (exit_date BETWEEN ? AND ?)
+  `;
+  const [rows] = await pool.query(sql, [from_date, to_date, from_date, to_date]);
+  const row = rows[0] || {};
+
+  const closed = parseInt(row.closed_trades, 10) || 0;
+  const winning = parseInt(row.winning_trades, 10) || 0;
+  const win_rate_pct = closed > 0 ? (winning / closed) * 100 : 0;
+
+  let max_drawdown_pct = 0;
+  if (closed > 0) {
+    const [closed_rows] = await pool.query(
+      `SELECT pnl_pct FROM paper_trades
+       WHERE status = 'CLOSED'
+         AND exit_date BETWEEN ? AND ?
+         AND pnl_pct IS NOT NULL
+       ORDER BY exit_date ASC, id ASC`,
+      [from_date, to_date]
+    );
+    let cumulative = 0;
+    let peak = 0;
+    for (const trade of closed_rows) {
+      cumulative += parseFloat(trade.pnl_pct) || 0;
+      if (cumulative > peak) peak = cumulative;
+      const drawdown = peak - cumulative;
+      if (drawdown > max_drawdown_pct) max_drawdown_pct = drawdown;
+    }
+  }
+
+  return {
+    ...row,
+    total_trades: parseInt(row.total_trades, 10) || 0,
+    open_trades: parseInt(row.open_trades, 10) || 0,
+    closed_trades: closed,
+    winning_trades: winning,
+    losing_trades: parseInt(row.losing_trades, 10) || 0,
+    win_rate_pct: Math.round(win_rate_pct * 100) / 100,
+    max_drawdown_pct: Math.round(max_drawdown_pct * 100) / 100,
+  };
 }
 
 async function getSummary() {
@@ -202,5 +277,6 @@ module.exports = {
   findBySignalId,
   findAll,
   getSummary,
+  getSummaryByDateRange,
   getPortfolioDrawdownFraction,
 };

@@ -94,6 +94,8 @@ backend/
         favorite.service.js   # Add/remove/list favorite stocks
       paper_trading/
         paper_trade.service.js   # Creates and tracks simulated trades
+      reports/
+        performance_report.service.js  # Consolidated system performance report aggregation + CSV export
     routes/
       signal.routes.js              # Signal CRUD + rejected signals endpoint
       stock.routes.js
@@ -104,6 +106,7 @@ backend/
       health.routes.js
       strategy.routes.js            # Strategy config enable/disable + list
       tradeDecision.routes.js       # Manual trade decision CRUD
+      report.routes.js              # Consolidated performance report JSON + CSV export
     middlewares/
       error_handler.middleware.js
       logger.middleware.js
@@ -3507,7 +3510,67 @@ Error responses:
 
 ---
 
-### 17.9 Authentication (MVP)
+### 17.9 Performance Report Endpoints
+
+#### GET /api/v1/reports/performance
+
+**Description:** Consolidated system performance report for a user-selected date range. The endpoint composes pipeline runs, generated signals, rejection funnel, resolved signal outcomes, paper trading results, strategy performance slices, and backtest summaries into one response. All date filters use `YYYY-MM-DD` and are capped at 365 calendar days to keep the report bounded.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| from_date | string (YYYY-MM-DD) | 29 days before today IST | Start date |
+| to_date | string (YYYY-MM-DD) | today IST | End date |
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "range": { "from_date": "2026-05-01", "to_date": "2026-05-30", "days": 30 },
+    "generated_at_ist": "2026-05-30T17:30:00+05:30",
+    "overview": {
+      "total_signals": 12,
+      "closed_paper_trades": 8,
+      "paper_win_rate_pct": 62.50,
+      "paper_total_pnl_pct": 4.25,
+      "pipeline_success_rate_pct": 100.00,
+      "signal_conversion_pct": 15.00,
+      "backtest_runs": 2
+    },
+    "pipeline": { "total_runs": 10, "completed_runs": 10, "failed_runs": 0, "recent_runs": [] },
+    "signals": {
+      "total_signals": 12,
+      "active_signals": 3,
+      "target_hits": 5,
+      "sl_hits": 2,
+      "expired_signals": 1,
+      "resolved_signals": 8,
+      "target_hit_rate_pct": 62.50
+    },
+    "signal_funnel": { "total_candidates": 80, "final_signals": 12, "total_rejected": 68 },
+    "signal_outcomes": { "by_strategy": [], "by_regime": [], "by_sector": [] },
+    "paper_trading": { "closed_trades": 8, "win_rate_pct": 62.50, "total_pnl_pct": 4.25 },
+    "strategy_performance": { "current": [], "snapshots": [] },
+    "backtest_summary": { "total_runs": 2, "recent_results": [] }
+  },
+  "error": null
+}
+```
+
+#### GET /api/v1/reports/performance/export.csv
+
+**Description:** CSV export of the same consolidated report range, including signal outcome counts (`target_hits`, `sl_hits`, `expired_signals`, `active_signals`, and `resolved_signals`). This endpoint intentionally returns `text/csv` rather than the standard JSON envelope so the frontend can download it as a file.
+
+**Query Parameters:** Same as `GET /api/v1/reports/performance`.
+
+**Response 200:** `Content-Type: text/csv; charset=utf-8` and attachment filename `tradeneuron-performance-<from_date>-to-<to_date>.csv`.
+
+---
+
+### 17.10 Authentication (MVP)
 
 All endpoints (except `/health`) require an `X-API-Key` header:
 
@@ -3536,7 +3599,7 @@ FUNCTION userIdMiddleware(req, res, next)
     next()
 ```
 
-### 17.10 Rate Limiting
+### 17.11 Rate Limiting
 
 ```
 Global:     100 requests per minute per IP
@@ -3552,7 +3615,7 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 
 ---
 
-### 17.11 GET /api/v1/signals/rejected
+### 17.12 GET /api/v1/signals/rejected
 
 **Description:** Retrieve rejected signal candidates from the latest pipeline run, optionally filtered by date.
 
@@ -3587,7 +3650,7 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 
 ---
 
-### 17.12 GET /api/v1/signals/funnel
+### 17.13 GET /api/v1/signals/funnel
 
 **Description:** Gate funnel audit — shows how many signals entered each pipeline gate and how many were rejected, with pass rates and over-strict warnings.
 
@@ -3635,7 +3698,7 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 
 ---
 
-### 17.13 GET /api/v1/signals/rejected/distribution
+### 17.14 GET /api/v1/signals/rejected/distribution
 
 **Description:** Aggregate rejection statistics over a configurable period. Complements the per-date funnel endpoint with a period-based view.
 
@@ -3663,7 +3726,7 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 
 ---
 
-### 17.14 GET /api/v1/signals/calibration
+### 17.15 GET /api/v1/signals/calibration
 
 **Description:** Returns the latest confidence calibration data — mapping confidence score buckets to actual historical win rates.
 
@@ -3683,7 +3746,7 @@ If a manual pipeline trigger endpoint is added (e.g., `POST /api/v1/admin/run-pi
 
 ---
 
-### 17.15 Trade Decision Endpoints
+### 17.16 Trade Decision Endpoints
 
 #### POST /api/v1/signals/:id/decision
 
@@ -3786,7 +3849,7 @@ Returns `null` data if no decision exists for this signal + user.
 }
 ```
 
-### 17.13 GET /api/v1/strategies
+### 17.17 GET /api/v1/strategies
 
 **Description:** Returns the current enable/disable state of all strategies.
 

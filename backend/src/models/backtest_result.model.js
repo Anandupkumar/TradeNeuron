@@ -27,13 +27,29 @@ async function create(result) {
   return { id: row.insertId, ...result };
 }
 
-async function findAll({ page = 1, limit = 20, sort_by = 'run_date', sort_order = 'DESC', strategy_name } = {}) {
+async function findAll({
+  page = 1,
+  limit = 20,
+  sort_by = 'run_date',
+  sort_order = 'DESC',
+  strategy_name,
+  from_date,
+  to_date,
+} = {}) {
   let where_clauses = [];
   let params = [];
 
   if (strategy_name) {
     where_clauses.push('strategy_name = ?');
     params.push(strategy_name);
+  }
+  if (from_date) {
+    where_clauses.push('run_date >= ?');
+    params.push(from_date);
+  }
+  if (to_date) {
+    where_clauses.push('run_date <= ?');
+    params.push(to_date);
   }
 
   const where = where_clauses.length > 0 ? `WHERE ${where_clauses.join(' AND ')}` : '';
@@ -58,4 +74,39 @@ async function findLatestByStrategy(strategy_name) {
   return rows[0] || null;
 }
 
-module.exports = { create, findAll, findLatestByStrategy };
+async function getSummaryByDateRange(from_date, to_date) {
+  const [summary_rows] = await pool.query(
+    `SELECT
+       COUNT(*) AS total_runs,
+       AVG(win_rate_pct) AS avg_win_rate_pct,
+       AVG(avg_return_pct) AS avg_return_pct,
+       AVG(expectancy_pct) AS avg_expectancy_pct,
+       AVG(max_drawdown_pct) AS avg_max_drawdown_pct,
+       AVG(sharpe_ratio) AS avg_sharpe_ratio,
+       AVG(profit_factor) AS avg_profit_factor,
+       SUM(total_signals) AS total_signals
+     FROM backtest_results
+     WHERE run_date BETWEEN ? AND ?`,
+    [from_date, to_date]
+  );
+
+  const [strategy_rows] = await pool.query(
+    `SELECT strategy_name,
+            COUNT(*) AS runs,
+            AVG(win_rate_pct) AS avg_win_rate_pct,
+            AVG(expectancy_pct) AS avg_expectancy_pct,
+            AVG(profit_factor) AS avg_profit_factor
+     FROM backtest_results
+     WHERE run_date BETWEEN ? AND ?
+     GROUP BY strategy_name
+     ORDER BY avg_expectancy_pct DESC, strategy_name ASC`,
+    [from_date, to_date]
+  );
+
+  return {
+    ...(summary_rows[0] || {}),
+    by_strategy: strategy_rows,
+  };
+}
+
+module.exports = { create, findAll, findLatestByStrategy, getSummaryByDateRange };

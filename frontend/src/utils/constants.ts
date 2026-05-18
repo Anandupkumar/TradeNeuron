@@ -8,6 +8,7 @@ export const FEATURES = {
   shortSignals: import.meta.env.VITE_ENABLE_SHORT_SIGNALS === 'true',
   paperTrading: import.meta.env.VITE_ENABLE_PAPER_TRADING === 'true',
   backtest: import.meta.env.VITE_ENABLE_BACKTEST === 'true',
+  reports: import.meta.env.VITE_ENABLE_REPORTS === 'true',
 };
 
 export const PAGINATION = {

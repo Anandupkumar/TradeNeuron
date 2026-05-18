@@ -9,6 +9,10 @@ describe('featureFlags', () => {
     expect(typeof featureFlags.canAccessBacktest()).toBe('boolean');
   });
 
+  it('canAccessReports returns a boolean', () => {
+    expect(typeof featureFlags.canAccessReports()).toBe('boolean');
+  });
+
   it('showShortDirection returns a boolean', () => {
     expect(typeof featureFlags.showShortDirection()).toBe('boolean');
   });
