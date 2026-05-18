@@ -1,4 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
+import { format, subDays } from 'date-fns';
 import type { SignalFilters, SignalStatus, SignalDirection, ConfidenceTier } from '../types';
 import { PAGINATION } from '../utils/constants';
 
@@ -82,6 +83,46 @@ export function useSignalFilters(): [SignalFilters, (f: Partial<SignalFilters>) 
       }
     });
     if (!('page' in updates)) next.set('page', '1');
+    setParams(next, { replace: true });
+  };
+
+  return [filters, setFilters];
+}
+
+export interface ReportFilters {
+  from_date: string;
+  to_date: string;
+}
+
+function defaultReportDateRange(): ReportFilters {
+  const today = new Date();
+  return {
+    from_date: format(subDays(today, 29), 'yyyy-MM-dd'),
+    to_date: format(today, 'yyyy-MM-dd'),
+  };
+}
+
+function parseReportDate(value: string | null, fallback: string): string {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+export function useReportFilters(): [ReportFilters, (updates: Partial<ReportFilters>) => void] {
+  const [params, setParams] = useSearchParams();
+  const defaults = defaultReportDateRange();
+  const filters: ReportFilters = {
+    from_date: parseReportDate(params.get('from_date'), defaults.from_date),
+    to_date: parseReportDate(params.get('to_date'), defaults.to_date),
+  };
+
+  const setFilters = (updates: Partial<ReportFilters>) => {
+    const next = new URLSearchParams(params);
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
+    });
     setParams(next, { replace: true });
   };
 

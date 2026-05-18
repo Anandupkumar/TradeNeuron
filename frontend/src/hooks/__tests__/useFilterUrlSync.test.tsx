@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { useSignalFilters } from '../useFilterUrlSync';
+import { useReportFilters, useSignalFilters } from '../useFilterUrlSync';
 import { createHookWrapper } from '../../test/test-utils';
 
 describe('useSignalFilters', () => {
@@ -36,6 +36,38 @@ describe('useSignalFilters', () => {
     await waitFor(() => {
       expect(result.current[0].symbol).toBe('TCS.NS');
       expect(result.current[0].page).toBe(1);
+    });
+  });
+});
+
+describe('useReportFilters', () => {
+  it('reads date range filters from URL params', () => {
+    const { result } = renderHook(() => useReportFilters(), {
+      wrapper: createHookWrapper({
+        route: '/reports?from_date=2026-05-01&to_date=2026-05-30',
+      }),
+    });
+
+    expect(result.current[0]).toEqual({
+      from_date: '2026-05-01',
+      to_date: '2026-05-30',
+    });
+  });
+
+  it('updates date range filters in URL params', async () => {
+    const { result } = renderHook(() => useReportFilters(), {
+      wrapper: createHookWrapper({
+        route: '/reports?from_date=2026-05-01&to_date=2026-05-30',
+      }),
+    });
+
+    act(() => {
+      result.current[1]({ from_date: '2026-05-10' });
+    });
+
+    await waitFor(() => {
+      expect(result.current[0].from_date).toBe('2026-05-10');
+      expect(result.current[0].to_date).toBe('2026-05-30');
     });
   });
 });

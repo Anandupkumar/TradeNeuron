@@ -84,6 +84,61 @@ async function getDistribution(period_days) {
   };
 }
 
+async function getDistributionByDateRange(from_date, to_date) {
+  const [total_rows] = await pool.query(
+    `SELECT COUNT(*) AS total_rejected FROM rejected_signals WHERE date BETWEEN ? AND ?`,
+    [from_date, to_date]
+  );
+
+  const [by_stage] = await pool.query(
+    `SELECT reject_stage, COUNT(*) AS count
+     FROM rejected_signals
+     WHERE date BETWEEN ? AND ?
+     GROUP BY reject_stage
+     ORDER BY count DESC`,
+    [from_date, to_date]
+  );
+
+  const [by_symbol] = await pool.query(
+    `SELECT symbol, COUNT(*) AS count
+     FROM rejected_signals
+     WHERE date BETWEEN ? AND ?
+     GROUP BY symbol
+     ORDER BY count DESC
+     LIMIT 20`,
+    [from_date, to_date]
+  );
+
+  const [avg_rows] = await pool.query(
+    `SELECT
+       AVG(raw_confidence) AS avg_raw_confidence,
+       AVG(raw_rr)         AS avg_raw_rr
+     FROM rejected_signals
+     WHERE date BETWEEN ? AND ?
+       AND raw_confidence IS NOT NULL`,
+    [from_date, to_date]
+  );
+
+  const total_rejected = parseInt(total_rows[0].total_rejected, 10) || 0;
+  const by_stage_pct = by_stage.map((row) => ({
+    reject_stage: row.reject_stage,
+    count: row.count,
+    pct: total_rejected > 0 ? parseFloat(((row.count / total_rejected) * 100).toFixed(1)) : 0,
+  }));
+
+  return {
+    total_rejected,
+    by_stage: by_stage_pct,
+    by_symbol,
+    avg_raw_confidence_at_rejection: avg_rows[0].avg_raw_confidence != null
+      ? parseFloat(parseFloat(avg_rows[0].avg_raw_confidence).toFixed(1))
+      : null,
+    avg_raw_rr_at_rejection: avg_rows[0].avg_raw_rr != null
+      ? parseFloat(parseFloat(avg_rows[0].avg_raw_rr).toFixed(2))
+      : null,
+  };
+}
+
 async function getVwapQualityAudit(period_days) {
   const [rows] = await pool.query(
     `SELECT
@@ -103,4 +158,10 @@ async function getVwapQualityAudit(period_days) {
   };
 }
 
-module.exports = { insertRejected, findByDate, getDistribution, getVwapQualityAudit };
+module.exports = {
+  insertRejected,
+  findByDate,
+  getDistribution,
+  getDistributionByDateRange,
+  getVwapQualityAudit,
+};

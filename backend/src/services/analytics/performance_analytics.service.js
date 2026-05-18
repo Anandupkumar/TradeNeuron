@@ -127,21 +127,43 @@ async function getOutcomeAnalytics(days = 90) {
   };
 }
 
-async function getStrategyPerformanceSlices(days = 90) {
+function groupOutcomeRows(rows) {
+  const groupBy = (key) => {
+    const map = new Map();
+    for (const row of rows) {
+      const bucket = row[key] == null ? 'UNKNOWN' : row[key];
+      const current = map.get(bucket) || { key: bucket, total: 0, wins: 0 };
+      current.total += 1;
+      if (row.outcome === 'TARGET_HIT') current.wins += 1;
+      map.set(bucket, current);
+    }
+    return Array.from(map.values()).map((item) => ({
+      ...item,
+      win_rate_pct: item.total > 0 ? roundDecimal((item.wins / item.total) * 100, 2) : 0,
+    })).sort((a, b) => b.total - a.total);
+  };
+
+  return {
+    by_strategy: groupBy('strategy'),
+    by_regime: groupBy('market_regime'),
+    by_sector: groupBy('sector'),
+    by_confidence_bucket: groupBy('confidence_bucket'),
+    by_rs_bucket: groupBy('rs_bucket'),
+  };
+}
+
+async function getOutcomeAnalyticsByDateRange(from_date, to_date) {
   const [rows] = await pool.query(
-    `SELECT
-       pt.pnl_pct,
-       pt.exit_date,
-       s.strategy_source,
-       s.market_regime,
-       s.symbol
-     FROM paper_trades pt
-     JOIN signals s ON s.id = pt.signal_id
-     WHERE pt.status = 'CLOSED'
-       AND pt.exit_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
-    [days]
+    `SELECT strategy, market_regime, sector, confidence_bucket, rs_bucket, outcome
+     FROM signal_outcomes
+     WHERE DATE(resolved_at) BETWEEN ? AND ?`,
+    [from_date, to_date]
   );
 
+  return groupOutcomeRows(rows);
+}
+
+function buildStrategyPerformanceRows(rows) {
   const scopes = {
     GLOBAL: new Map(),
     REGIME: new Map(),
@@ -193,11 +215,49 @@ async function getStrategyPerformanceSlices(days = 90) {
   return snapshots;
 }
 
+async function getStrategyPerformanceSlices(days = 90) {
+  const [rows] = await pool.query(
+    `SELECT
+       pt.pnl_pct,
+       pt.exit_date,
+       s.strategy_source,
+       s.market_regime,
+       s.symbol
+     FROM paper_trades pt
+     JOIN signals s ON s.id = pt.signal_id
+     WHERE pt.status = 'CLOSED'
+       AND pt.exit_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+    [days]
+  );
+
+  return buildStrategyPerformanceRows(rows);
+}
+
+async function getStrategyPerformanceSlicesByDateRange(from_date, to_date) {
+  const [rows] = await pool.query(
+    `SELECT
+       pt.pnl_pct,
+       pt.exit_date,
+       s.strategy_source,
+       s.market_regime,
+       s.symbol
+     FROM paper_trades pt
+     JOIN signals s ON s.id = pt.signal_id
+     WHERE pt.status = 'CLOSED'
+       AND pt.exit_date BETWEEN ? AND ?`,
+    [from_date, to_date]
+  );
+
+  return buildStrategyPerformanceRows(rows);
+}
+
 module.exports = {
   bucketRelativeStrength,
   bucketConfidence,
   getOutcomeAnalytics,
+  getOutcomeAnalyticsByDateRange,
   getStrategyPerformanceSlices,
+  getStrategyPerformanceSlicesByDateRange,
   buildStats,
   recommendSlice,
 };

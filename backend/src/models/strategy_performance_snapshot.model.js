@@ -49,4 +49,14 @@ async function findRecent(days = 30) {
   return rows;
 }
 
-module.exports = { upsert, findRecent };
+async function findByDateRange(from_date, to_date) {
+  const [rows] = await pool.query(
+    `SELECT * FROM strategy_performance_snapshots
+     WHERE snapshot_date BETWEEN ? AND ?
+     ORDER BY snapshot_date DESC, strategy_name ASC, scope_type ASC, scope_value ASC`,
+    [from_date, to_date]
+  );
+  return rows;
+}
+
+module.exports = { upsert, findRecent, findByDateRange };

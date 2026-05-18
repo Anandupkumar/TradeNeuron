@@ -12,6 +12,7 @@ const Funnel = React.lazy(() => import('./pages/Funnel'));
 const StockDetailPage = React.lazy(() => import('./pages/StockDetail'));
 const PaperTrading = React.lazy(() => import('./pages/PaperTrading'));
 const Backtest = React.lazy(() => import('./pages/Backtest'));
+const Report = React.lazy(() => import('./pages/Report'));
 const Watchlist = React.lazy(() => import('./pages/Watchlist'));
 const Settings = React.lazy(() => import('./pages/Settings'));
 
@@ -42,6 +43,10 @@ export default function App() {
           <Route
             path="/backtest"
             element={featureFlags.canAccessBacktest() ? <Suspense fallback={<PageFallback />}><Backtest /></Suspense> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/reports"
+            element={featureFlags.canAccessReports() ? <Suspense fallback={<PageFallback />}><Report /></Suspense> : <Navigate to="/" replace />}
           />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

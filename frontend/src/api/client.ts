@@ -29,6 +29,11 @@ function isApiEnvelope(data: unknown): data is ApiEnvelope<unknown> {
 
 apiClient.interceptors.response.use(
   (response) => {
+    if (response.config.responseType === 'blob') {
+      logger.debug('[API] <--', response.status, response.config.url);
+      return response.data as never;
+    }
+
     if (typeof response.data === 'string' || !isApiEnvelope(response.data)) {
       logger.error('[API] Unexpected response format (likely 404 HTML fallback).');
       return Promise.reject(new Error('Invalid API response format. Check API URL and server status.'));
@@ -49,7 +54,7 @@ apiClient.interceptors.response.use(
   },
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      window.dispatchEvent(new CustomEvent('tn:auth-failure'));
+      globalThis.dispatchEvent(new CustomEvent('tn:auth-failure'));
     }
     const message =
       (error.response?.data as ApiEnvelope<never>)?.error ?? error.message ?? 'Unknown error';

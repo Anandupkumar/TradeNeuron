@@ -50,6 +50,22 @@ export function formatConfidence(value: number | string | null | undefined): str
   return Math.round(n).toString();
 }
 
+export function formatNumber(value: number | string | null | undefined): string {
+  const n = toNum(value);
+  if (n == null) return '—';
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+
+export function formatDurationMs(value: number | string | null | undefined): string {
+  const n = toNum(value);
+  if (n == null) return '—';
+  if (n < 1000) return `${Math.round(n)} ms`;
+  const seconds = n / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)} sec`;
+  const minutes = seconds / 60;
+  return `${minutes.toFixed(1)} min`;
+}
+
 export function formatExitReason(reason: string | null | undefined): string {
   if (!reason) return '—';
   if (reason === 'EXPIRED_PENALIZED') return 'Expired (penalized)';
