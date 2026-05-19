@@ -8,9 +8,10 @@ async function create(signal) {
       risk_reward, reasons, status, strategy_source, direction, execution_type,
       is_executable, shares_to_buy, position_value, capital_risk_inr,
       regime_size_multiplier, explanation, confidence_breakdown, market_regime,
-      ranking_score, ranking_components, exit_policy, max_hold_days
+      ranking_score, ranking_components, exit_policy, max_hold_days,
+      target_reachability_warning, signal_flags
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     signal.symbol, signal.date, signal.signal_type || 'BUY',
@@ -37,6 +38,8 @@ async function create(signal) {
     signal.ranking_components ? JSON.stringify(signal.ranking_components) : null,
     signal.exit_policy ? JSON.stringify(signal.exit_policy) : null,
     signal.max_hold_days != null ? signal.max_hold_days : null,
+    signal.target_reachability_warning ? 1 : 0,
+    signal.signal_flags ? JSON.stringify(signal.signal_flags) : null,
   ];
   const [result] = await pool.query(sql, params);
   return { id: result.insertId, ...signal };

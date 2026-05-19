@@ -1,7 +1,27 @@
 import type { SignalDirection, ExecutionType } from './signal.types';
 
-export type ExitReason = 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED' | 'MANUAL';
+export type ExitReason =
+  | 'TARGET_HIT'
+  | 'SL_HIT'
+  | 'TRAILING_STOP_HIT'
+  | 'GAP_STOP'
+  | 'EXPIRED'
+  | 'EXPIRED_PENALIZED'
+  | 'PARTIAL_THEN_TARGET'
+  | 'PARTIAL_THEN_BE_STOP'
+  | 'PARTIAL_THEN_TRAIL_STOP'
+  | 'PARTIAL_THEN_EXPIRED'
+  | 'VOL_COMPRESSION'
+  | 'MANUAL';
 export type TradeStatus = 'OPEN' | 'CLOSED';
+export type TradeLifecycleState =
+  | 'ACTIVE'
+  | 'PARTIAL_EXITED'
+  | 'TRAILING'
+  | 'STALE'
+  | 'COMPRESSING'
+  | 'FAILED'
+  | 'EXITED';
 
 export interface PaperTrade {
   id: number;
@@ -21,6 +41,9 @@ export interface PaperTrade {
   pnl_pct: number | null;
   gross_pnl_inr: number | null;
   status: TradeStatus;
+  lifecycle_state: TradeLifecycleState;
+  lifecycle_note: string | null;
+  lifecycle_state_changed_at: string | null;
   exit_policy?: Record<string, unknown> | null;
   max_hold_days?: number | null;
   mfe_pct?: number | null;
@@ -37,4 +60,8 @@ export interface PaperTradingSummary {
   avg_pnl_pct: number;
   total_pnl_pct: number;
   max_drawdown_pct: number;
+  partial_exited_trades: number;
+  trailing_trades: number;
+  stale_trades: number;
+  compressing_trades: number;
 }

@@ -18,8 +18,29 @@ function parseSignalJson(s) {
     confidence_breakdown: typeof s.confidence_breakdown === 'string' ? JSON.parse(s.confidence_breakdown) : (s.confidence_breakdown || null),
     ranking_components: typeof s.ranking_components === 'string' ? JSON.parse(s.ranking_components) : (s.ranking_components || null),
     exit_policy: typeof s.exit_policy === 'string' ? JSON.parse(s.exit_policy) : (s.exit_policy || null),
+    signal_flags: typeof s.signal_flags === 'string' ? JSON.parse(s.signal_flags) : (s.signal_flags || null),
+    target_reachability_warning: s.target_reachability_warning === 1 || s.target_reachability_warning === true,
   };
 }
+
+const funnel_stage_order = [
+  'FUNDAMENTAL_FILTER',
+  'SENTIMENT_FILTER',
+  'DUPLICATE',
+  'EARNINGS_BLACKOUT',
+  'MERGED_RISK_ZERO',
+  'VWAP_FILTER',
+  'PCR_FILTER',
+  'CONFIDENCE_GATE',
+  'RR_GATE',
+  'ACTIVE_CAP',
+  'SECTOR_GATE',
+  'POSITION_SIZING',
+  'PORTFOLIO_RISK_CAP',
+  'FREQUENCY_DYNAMIC_FLOOR',
+  'FREQUENCY_CAP',
+  'LIQUIDITY_GATE',
+];
 
 router.get('/signals/funnel', async (req, res, next) => {
   try {
@@ -36,11 +57,8 @@ router.get('/signals/funnel', async (req, res, next) => {
        FROM rejected_signals
        WHERE date = ?
        GROUP BY reject_stage
-       ORDER BY FIELD(reject_stage,
-         'FUNDAMENTAL_FILTER','SENTIMENT_FILTER','VWAP_FILTER',
-         'PCR_FILTER','CONFIDENCE_GATE','RR_GATE',
-         'SECTOR_GATE','ACTIVE_CAP','DUPLICATE','MERGED_RISK_ZERO','POSITION_SIZING'
-       )`, [date]
+       ORDER BY FIELD(reject_stage, ${funnel_stage_order.map(() => '?').join(',')})`,
+      [date, ...funnel_stage_order]
     );
 
     const [[{ final_signals }]] = await pool.query(
@@ -168,10 +186,20 @@ router.get('/signals', async (req, res, next) => {
 
 router.get('/signals/calibration', async (req, res, next) => {
   try {
-    const buckets = await confidenceCalibrationModel.getLatest();
+    const { slice_level, strategy, direction } = req.query;
+    const buckets = (slice_level || strategy || direction)
+      ? await confidenceCalibrationModel.getLatestSlices({ slice_level, strategy, direction })
+      : await confidenceCalibrationModel.getLatestSlices();
     res.json({
       success: true,
-      data: { buckets },
+      data: {
+        buckets,
+        filters: {
+          slice_level: slice_level || null,
+          strategy: strategy || null,
+          direction: direction || null,
+        },
+      },
       error: null,
     });
   } catch (err) {

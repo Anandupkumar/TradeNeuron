@@ -8,7 +8,7 @@ interface PaperSummaryCardsProps {
 
 export function PaperSummaryCards({ summary }: PaperSummaryCardsProps) {
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
       {StatCard({ label: 'Total Trades', value: summary.total_trades })}
       {StatCard({ label: 'Open', value: summary.open_trades })}
       {StatCard({ label: 'Closed', value: summary.closed_trades })}
@@ -32,6 +32,10 @@ export function PaperSummaryCards({ summary }: PaperSummaryCardsProps) {
         value: formatPct(summary.max_drawdown_pct, true),
         trend: 'down',
       })}
+      {StatCard({ label: 'Partial', value: summary.partial_exited_trades })}
+      {StatCard({ label: 'Trailing', value: summary.trailing_trades })}
+      {StatCard({ label: 'Stale', value: summary.stale_trades, trend: summary.stale_trades > 0 ? 'down' : 'neutral' })}
+      {StatCard({ label: 'Compressing', value: summary.compressing_trades })}
     </div>
   );
 }

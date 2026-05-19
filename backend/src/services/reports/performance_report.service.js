@@ -11,6 +11,13 @@ const {
   getOutcomeAnalyticsByDateRange,
   getStrategyPerformanceSlicesByDateRange,
 } = require('../analytics/performance_analytics.service');
+const { getOpportunityCostSummaryByDateRange } = require('../analytics/opportunity_cost.service');
+const {
+  getCalibrationQualityByDateRange,
+  getRegimeProbabilityByDateRange,
+  getPortfolioRiskSnapshot,
+  getSignalFlagSummaryByDateRange,
+} = require('../analytics/intelligence.service');
 
 const max_report_days = 365;
 const date_pattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -191,6 +198,11 @@ async function getPerformanceReport(input = {}) {
     strategy_snapshots,
     backtest_summary,
     backtest_results,
+    opportunity_cost,
+    calibration_quality,
+    regime_probability,
+    portfolio_risk,
+    signal_flags,
   ] = await Promise.all([
     pipelineRunModel.getSummaryByDateRange(from_date, to_date),
     getSignalOverview(from_date, to_date),
@@ -208,6 +220,11 @@ async function getPerformanceReport(input = {}) {
       from_date,
       to_date,
     }),
+    getOpportunityCostSummaryByDateRange(from_date, to_date),
+    getCalibrationQualityByDateRange(from_date, to_date),
+    getRegimeProbabilityByDateRange(from_date, to_date),
+    getPortfolioRiskSnapshot(),
+    getSignalFlagSummaryByDateRange(from_date, to_date),
   ]);
 
   const overview = {
@@ -229,6 +246,11 @@ async function getPerformanceReport(input = {}) {
     signal_funnel,
     signal_outcomes,
     paper_trading,
+    opportunity_cost,
+    calibration_quality,
+    regime_probability,
+    portfolio_risk,
+    signal_flags,
     strategy_performance: {
       current: strategy_current,
       snapshots: strategy_snapshots,
@@ -252,6 +274,10 @@ function csvLine(values) {
 }
 
 function buildPerformanceReportCsv(report) {
+  const opportunity_cost = report.opportunity_cost || {};
+  const calibration_quality = report.calibration_quality || {};
+  const portfolio_risk = report.portfolio_risk || {};
+  const signal_flags = report.signal_flags || {};
   const lines = [
     csvLine(['section', 'metric', 'value']),
     csvLine(['range', 'from_date', report.range.from_date]),
@@ -275,6 +301,13 @@ function buildPerformanceReportCsv(report) {
     csvLine(['signals', 'target_hit_rate_pct', report.signals.target_hit_rate_pct]),
     csvLine(['paper_trading', 'avg_pnl_pct', report.paper_trading.avg_pnl_pct]),
     csvLine(['paper_trading', 'max_drawdown_pct', report.paper_trading.max_drawdown_pct]),
+    csvLine(['opportunity_cost', 'total_blocked', opportunity_cost.total_blocked]),
+    csvLine(['opportunity_cost', 'score', opportunity_cost.opportunity_cost_score]),
+    csvLine(['opportunity_cost', 'stale_capital_suppression_rate_pct', opportunity_cost.stale_capital_suppression_rate_pct]),
+    csvLine(['calibration', 'expected_calibration_error', calibration_quality.expected_calibration_error]),
+    csvLine(['calibration', 'brier_score', calibration_quality.brier_score]),
+    csvLine(['risk', 'active_risk_pct', portfolio_risk.active_risk_pct]),
+    csvLine(['signals', 'target_reachability_warnings', signal_flags.target_reachability_warnings]),
     csvLine(['backtest', 'total_runs', report.backtest_summary.total_runs]),
     csvLine(['backtest', 'avg_win_rate_pct', report.backtest_summary.avg_win_rate_pct]),
     '',

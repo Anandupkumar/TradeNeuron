@@ -5,9 +5,9 @@ async function create(trade) {
     INSERT INTO paper_trades (
       signal_id, symbol, direction, execution_type, entry_date, entry_price,
       actual_entry_price, stop_loss, target_price, exit_policy, max_hold_days,
-      status, shares_to_buy
+      status, lifecycle_state, lifecycle_note, lifecycle_state_changed_at, shares_to_buy
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     trade.signal_id, trade.symbol, trade.direction || 'LONG',
@@ -19,6 +19,9 @@ async function create(trade) {
     trade.exit_policy ? JSON.stringify(trade.exit_policy) : null,
     trade.max_hold_days || null,
     trade.status || 'OPEN',
+    trade.lifecycle_state || 'ACTIVE',
+    trade.lifecycle_note || null,
+    trade.lifecycle_state_changed_at || null,
     trade.shares_to_buy || null,
   ];
   const [result] = await pool.query(sql, params);
@@ -40,10 +43,39 @@ async function findOpen() {
 async function updateClose(id, exit_date, exit_price, exit_reason, pnl_pct, gross_pnl_inr = null) {
   const sql = `
     UPDATE paper_trades
-    SET exit_date = ?, exit_price = ?, exit_reason = ?, pnl_pct = ?, gross_pnl_inr = ?, status = 'CLOSED'
+    SET exit_date = ?,
+        exit_price = ?,
+        exit_reason = ?,
+        pnl_pct = ?,
+        gross_pnl_inr = ?,
+        status = 'CLOSED',
+        lifecycle_state = 'EXITED',
+        lifecycle_note = ?,
+        lifecycle_state_changed_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `;
-  const [result] = await pool.query(sql, [exit_date, exit_price, exit_reason, pnl_pct, gross_pnl_inr, id]);
+  const [result] = await pool.query(sql, [
+    exit_date,
+    exit_price,
+    exit_reason,
+    pnl_pct,
+    gross_pnl_inr,
+    `Closed via ${exit_reason}`,
+    id,
+  ]);
+  return result;
+}
+
+async function updateLifecycleState(id, lifecycle_state, lifecycle_note = null) {
+  const sql = `
+    UPDATE paper_trades
+       SET lifecycle_state = ?,
+           lifecycle_note = ?,
+           lifecycle_state_changed_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND lifecycle_state <> ?
+  `;
+  const [result] = await pool.query(sql, [lifecycle_state, lifecycle_note, id, lifecycle_state]);
   return result;
 }
 
@@ -154,6 +186,10 @@ async function getSummaryByDateRange(from_date, to_date) {
       COUNT(*) as total_trades,
       SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_trades,
       SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) as closed_trades,
+      SUM(CASE WHEN lifecycle_state = 'PARTIAL_EXITED' THEN 1 ELSE 0 END) as partial_exited_trades,
+      SUM(CASE WHEN lifecycle_state = 'TRAILING' THEN 1 ELSE 0 END) as trailing_trades,
+      SUM(CASE WHEN lifecycle_state = 'STALE' THEN 1 ELSE 0 END) as stale_trades,
+      SUM(CASE WHEN lifecycle_state = 'COMPRESSING' THEN 1 ELSE 0 END) as compressing_trades,
       SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) as winning_trades,
       SUM(CASE WHEN pnl_pct < 0 THEN 1 ELSE 0 END) as losing_trades,
       AVG(CASE WHEN status = 'CLOSED' THEN pnl_pct ELSE NULL END) as avg_pnl_pct,
@@ -199,6 +235,10 @@ async function getSummaryByDateRange(from_date, to_date) {
     total_trades: parseInt(row.total_trades, 10) || 0,
     open_trades: parseInt(row.open_trades, 10) || 0,
     closed_trades: closed,
+    partial_exited_trades: parseInt(row.partial_exited_trades, 10) || 0,
+    trailing_trades: parseInt(row.trailing_trades, 10) || 0,
+    stale_trades: parseInt(row.stale_trades, 10) || 0,
+    compressing_trades: parseInt(row.compressing_trades, 10) || 0,
     winning_trades: winning,
     losing_trades: parseInt(row.losing_trades, 10) || 0,
     win_rate_pct: Math.round(win_rate_pct * 100) / 100,
@@ -212,6 +252,10 @@ async function getSummary() {
       COUNT(*) as total_trades,
       SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_trades,
       SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) as closed_trades,
+      SUM(CASE WHEN lifecycle_state = 'PARTIAL_EXITED' THEN 1 ELSE 0 END) as partial_exited_trades,
+      SUM(CASE WHEN lifecycle_state = 'TRAILING' THEN 1 ELSE 0 END) as trailing_trades,
+      SUM(CASE WHEN lifecycle_state = 'STALE' THEN 1 ELSE 0 END) as stale_trades,
+      SUM(CASE WHEN lifecycle_state = 'COMPRESSING' THEN 1 ELSE 0 END) as compressing_trades,
       SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) as winning_trades,
       SUM(CASE WHEN pnl_pct < 0 THEN 1 ELSE 0 END) as losing_trades,
       AVG(CASE WHEN status = 'CLOSED' THEN pnl_pct ELSE NULL END) as avg_pnl_pct,
@@ -245,6 +289,13 @@ async function getSummary() {
 
   return {
     ...row,
+    total_trades: parseInt(row.total_trades, 10) || 0,
+    open_trades: parseInt(row.open_trades, 10) || 0,
+    closed_trades: closed,
+    partial_exited_trades: parseInt(row.partial_exited_trades, 10) || 0,
+    trailing_trades: parseInt(row.trailing_trades, 10) || 0,
+    stale_trades: parseInt(row.stale_trades, 10) || 0,
+    compressing_trades: parseInt(row.compressing_trades, 10) || 0,
     win_rate_pct: Math.round(win_rate_pct * 100) / 100,
     max_drawdown_pct: Math.round(max_drawdown_pct * 100) / 100,
   };
@@ -272,6 +323,7 @@ module.exports = {
   findOpen,
   updateClose,
   updateTelemetry,
+  updateLifecycleState,
   updateActualEntry,
   recordPartialLeg,
   findBySignalId,

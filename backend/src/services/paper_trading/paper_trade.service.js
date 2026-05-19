@@ -7,6 +7,8 @@ const candleModel = require('../../models/candle.model');
 const signalModel = require('../../models/signal.model');
 const signalOutcomeModel = require('../../models/signal_outcome.model');
 const { evaluateSignalExit } = require('../../utils/exit_policy.util');
+const { applyExpiredPenalty } = require('../../utils/exit_accounting.util');
+const { classifyTradeLifecycle } = require('../../utils/trade_lifecycle.util');
 
 async function createPaperTrades(signals) {
   let created = 0;
@@ -37,6 +39,8 @@ async function createPaperTrades(signals) {
       shares_to_buy: signal.shares_to_buy || null,
       execution_type: signal.execution_type || 'EQUITY',
       status: 'OPEN',
+      lifecycle_state: 'ACTIVE',
+      lifecycle_note: 'Paper trade created',
     });
     created++;
   }
@@ -179,6 +183,20 @@ async function updatePaperTrades() {
       });
     }
 
+    const lifecycle = classifyTradeLifecycle(trade, evaluation, future_candles, {
+      direction,
+      entry_price,
+      exit_policy: trade.exit_policy || (signal ? signal.exit_policy : null),
+      max_hold_days: trade.max_hold_days || (signal ? signal.max_hold_days : null) || config.holding_period_days,
+    });
+    if (!evaluation.exit_reason) {
+      await paperTradeModel.updateLifecycleState(
+        trade.id,
+        lifecycle.lifecycle_state,
+        lifecycle.lifecycle_note
+      );
+    }
+
     if (!evaluation.exit_reason) continue;
 
     const exit_price = evaluation.exit_price;
@@ -191,12 +209,11 @@ async function updatePaperTrades() {
     let pnl_pct = pnl.pnl_pct;
     const gross_pnl_inr = pnl.gross_pnl_inr;
 
-    if (exit_reason === 'EXPIRED' && Math.abs(pnl_pct) < config.expired_movement_threshold) {
-      const movement_ratio = 1 - Math.abs(pnl_pct) / config.expired_movement_threshold;
-      const penalty = config.expired_min_penalty + (config.expired_max_penalty - config.expired_min_penalty) * movement_ratio;
-      logger.info(`Paper trade ${trade.symbol}: expired with negligible movement (${pnl_pct.toFixed(4)}%), applying penalty ${penalty.toFixed(2)}%`);
-      pnl_pct = roundDecimal(pnl_pct + penalty, 4);
-      exit_reason = 'EXPIRED_PENALIZED';
+    const penalty_result = applyExpiredPenalty(exit_reason, pnl_pct);
+    if (penalty_result.penalty_applied) {
+      logger.info(`Paper trade ${trade.symbol}: expired with negligible movement (${pnl_pct.toFixed(4)}%), applying penalty ${penalty_result.penalty_pct.toFixed(2)}%`);
+      pnl_pct = penalty_result.pnl_pct;
+      exit_reason = penalty_result.exit_reason;
     }
 
     await paperTradeModel.updateClose(trade.id, today, exit_price, exit_reason, pnl_pct, gross_pnl_inr);

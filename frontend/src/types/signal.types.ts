@@ -53,6 +53,8 @@ export interface Signal {
   ranking_components?: Record<string, number | null> | null;
   exit_policy?: Record<string, unknown> | null;
   max_hold_days?: number | null;
+  target_reachability_warning?: boolean;
+  signal_flags?: string[] | null;
   is_favorite: boolean;
   created_at: string;
   closed_at: string | null;
@@ -123,6 +125,9 @@ export interface RejectionDistributionResponse {
 
 export interface CalibrationBucket {
   confidence_bucket: number;
+  slice_level: 'GLOBAL' | 'STRATEGY' | 'STRATEGY_DIRECTION';
+  strategy: string;
+  direction: SignalDirection | '*';
   total_signals: number;
   actual_win_rate: number;
   computed_at: string;
@@ -130,4 +135,9 @@ export interface CalibrationBucket {
 
 export interface CalibrationResponse {
   buckets: CalibrationBucket[];
+  filters?: {
+    slice_level: string | null;
+    strategy: string | null;
+    direction: string | null;
+  };
 }
