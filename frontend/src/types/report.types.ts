@@ -95,6 +95,70 @@ export interface SignalOutcomeReport {
   by_rs_bucket: ReportBucket[];
 }
 
+export interface OpportunityCostReport {
+  total_blocked: number;
+  opportunity_cost_score: number;
+  stale_capital_suppression_rate_pct: number;
+  blocked_by_stale: number;
+  avg_blocked_confidence: number | null;
+  avg_blocked_rr: number | null;
+  by_reason: Array<{
+    blocked_reason: string;
+    count: number;
+    expected_value: number;
+  }>;
+  by_symbol: Array<{
+    symbol: string;
+    count: number;
+    expected_value: number;
+  }>;
+}
+
+export interface CalibrationQualityReport {
+  sample_count: number;
+  expected_calibration_error: number | null;
+  brier_score: number | null;
+  by_strategy: Array<{
+    key: string;
+    total: number;
+    predicted_win_rate_pct: number;
+    actual_win_rate_pct: number;
+    calibration_error_pct: number;
+  }>;
+  by_regime: Array<{
+    key: string;
+    total: number;
+    predicted_win_rate_pct: number;
+    actual_win_rate_pct: number;
+    calibration_error_pct: number;
+  }>;
+}
+
+export interface RegimeProbabilityReport {
+  sample_count: number;
+  bullish_probability: number;
+  sideways_probability: number;
+  bearish_probability: number;
+  high_volatility_probability: number;
+  unknown_probability: number;
+}
+
+export interface PortfolioRiskReport {
+  active_signals: number;
+  total_capital_risk_inr: number;
+  total_position_value: number;
+  active_risk_pct: number;
+  risk_concentration_score: number;
+  by_direction: Array<{ direction: string; capital_risk_inr: number }>;
+  by_sector: Array<{ sector: string; capital_risk_inr: number }>;
+}
+
+export interface SignalFlagReport {
+  total_signals: number;
+  target_reachability_warnings: number;
+  target_reachability_warning_rate_pct: number;
+}
+
 export interface StrategyPerformanceRow {
   strategy_name: string;
   scope_type: string;
@@ -141,6 +205,11 @@ export interface PerformanceReport {
   signals: SignalReport;
   signal_funnel: SignalFunnelReport;
   signal_outcomes: SignalOutcomeReport;
+  opportunity_cost: OpportunityCostReport;
+  calibration_quality: CalibrationQualityReport;
+  regime_probability: RegimeProbabilityReport;
+  portfolio_risk: PortfolioRiskReport;
+  signal_flags: SignalFlagReport;
   paper_trading: PaperTradingSummary & {
     winning_trades: number;
     losing_trades: number;

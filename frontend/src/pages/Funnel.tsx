@@ -21,6 +21,10 @@ const GATE_LABELS: Record<string, string> = {
   MERGED_RISK_ZERO: 'Merged Risk Zero',
   POSITION_SIZING: 'Position Sizing',
   FREQUENCY_CAP: 'Frequency Cap',
+  FREQUENCY_DYNAMIC_FLOOR: 'Dynamic Frequency Floor',
+  EARNINGS_BLACKOUT: 'Earnings Blackout',
+  PORTFOLIO_RISK_CAP: 'Portfolio Risk Cap',
+  LIQUIDITY_GATE: 'Liquidity Gate',
 };
 
 const GATE_COLORS: Record<string, string> = {
@@ -36,6 +40,10 @@ const GATE_COLORS: Record<string, string> = {
   MERGED_RISK_ZERO: 'bg-red-500',
   POSITION_SIZING: 'bg-pink-500',
   FREQUENCY_CAP: 'bg-emerald-500',
+  FREQUENCY_DYNAMIC_FLOOR: 'bg-lime-500',
+  EARNINGS_BLACKOUT: 'bg-stone-500',
+  PORTFOLIO_RISK_CAP: 'bg-rose-500',
+  LIQUIDITY_GATE: 'bg-sky-500',
 };
 
 function PassRateBar({ gate }: { gate: FunnelGate }) {

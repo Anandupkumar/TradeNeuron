@@ -211,6 +211,83 @@ export default function ReportPage() {
             </div>
           </SectionCard>
 
+          <SectionCard title="Opportunity Cost Telemetry">
+            <div className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-5">
+              <div>
+                <p className="text-muted-foreground">Blocked Signals</p>
+                <p className="font-semibold text-foreground">{formatNumber(report.opportunity_cost.total_blocked)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Blocked EV Score</p>
+                <p className="font-semibold text-foreground">{formatNumber(report.opportunity_cost.opportunity_cost_score)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Stale Suppression</p>
+                <p className="font-semibold text-amber-400">
+                  {formatPct(report.opportunity_cost.stale_capital_suppression_rate_pct)}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Avg Confidence</p>
+                <p className="font-semibold text-foreground">{formatNumber(report.opportunity_cost.avg_blocked_confidence)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Avg R/R</p>
+                <p className="font-semibold text-foreground">{formatRR(report.opportunity_cost.avg_blocked_rr)}</p>
+              </div>
+            </div>
+          </SectionCard>
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <SectionCard title="Probability Calibration">
+              <div className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
+                <div>
+                  <p className="text-muted-foreground">Samples</p>
+                  <p className="font-semibold text-foreground">{formatNumber(report.calibration_quality.sample_count)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">ECE</p>
+                  <p className="font-semibold text-foreground">{formatNumber(report.calibration_quality.expected_calibration_error)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Brier Score</p>
+                  <p className="font-semibold text-foreground">{formatNumber(report.calibration_quality.brier_score)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Reachability Warnings</p>
+                  <p className="font-semibold text-amber-400">
+                    {formatNumber(report.signal_flags.target_reachability_warnings)}
+                  </p>
+                </div>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Regime And Portfolio Risk">
+              <div className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
+                <div>
+                  <p className="text-muted-foreground">Bullish Prob.</p>
+                  <p className="font-semibold text-foreground">
+                    {formatPct(report.regime_probability.bullish_probability * 100)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Bearish Prob.</p>
+                  <p className="font-semibold text-foreground">
+                    {formatPct(report.regime_probability.bearish_probability * 100)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Active Risk</p>
+                  <p className="font-semibold text-foreground">{formatPct(report.portfolio_risk.active_risk_pct)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Concentration</p>
+                  <p className="font-semibold text-foreground">{formatNumber(report.portfolio_risk.risk_concentration_score)}</p>
+                </div>
+              </div>
+            </SectionCard>
+          </div>
+
           <SectionCard title="Signal Outcome Details">
             <div className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-6">
               <div>

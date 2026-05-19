@@ -15,6 +15,7 @@ const strategyConfigModel = require('../../models/strategy_config.model');
 const fundamentalModel = require('../../models/fundamental.model');
 const confidenceCalibrationModel = require('../../models/confidence_calibration.model');
 const paperTradeModel = require('../../models/paper_trade.model');
+const blockedSignalEventModel = require('../../models/blocked_signal_event.model');
 const { getSectorAverageRelativeStrength } = require('../fundamentals/sector_context.service');
 const { tradingDaysUntilNext, countTradingDaysAfterUntil } = require('../../utils/date.util');
 const {
@@ -23,6 +24,7 @@ const {
   evaluateSignalExit,
   deriveConservativeTarget,
 } = require('../../utils/exit_policy.util');
+const { applyExpiredPenalty } = require('../../utils/exit_accounting.util');
 const { computeRankingScore } = require('../../utils/ranking.util');
 // Correlation service is lazy-required in computePositionSizing so Phase B (the module
 // itself) can ship later without breaking Phase A boot.
@@ -57,6 +59,32 @@ function bucketRelativeStrength(value) {
   return 'NEUTRAL';
 }
 
+function assessTargetReachability(signal) {
+  const entry = parseFloat(signal.entry_price);
+  const target = parseFloat(signal.target_price);
+  const max_hold_days = parseInt(signal.max_hold_days || config.holding_period_days, 10);
+  const atr = signal.exit_policy && signal.exit_policy.atr_value != null
+    ? parseFloat(signal.exit_policy.atr_value)
+    : null;
+
+  if (!(entry > 0) || !(target > 0) || !(atr > 0) || !(max_hold_days > 0)) {
+    return { warning: false, flags: [] };
+  }
+
+  const target_distance = Math.abs(target - entry);
+  const projected_move = atr * Math.sqrt(max_hold_days);
+  if (target_distance > projected_move * 1.5) {
+    return {
+      warning: true,
+      flags: ['TARGET_REACHABILITY_WARNING'],
+      projected_move: roundDecimal(projected_move, 2),
+      target_distance: roundDecimal(target_distance, 2),
+    };
+  }
+
+  return { warning: false, flags: [] };
+}
+
 function resolveExecutionType(direction, accountType) {
   if (direction === 'LONG') {
     return { execution_type: 'EQUITY', is_executable: true };
@@ -68,6 +96,35 @@ function resolveExecutionType(direction, accountType) {
     return { execution_type: 'NONE', is_executable: false };
   }
   return { execution_type: 'EQUITY', is_executable: true };
+}
+
+async function recordBlockedEvent(candidate, blocked_reason, active_trade = null) {
+  try {
+    await blockedSignalEventModel.create({
+      symbol: candidate.symbol,
+      date: candidate.date,
+      strategy_source: candidate.strategy_source || candidate.strategy,
+      direction: candidate.direction || null,
+      blocked_reason,
+      blocked_confidence: candidate.confidence != null ? candidate.confidence : candidate.raw_confidence,
+      blocked_rr: candidate.risk_reward,
+      active_trade_id: active_trade ? active_trade.id : null,
+      active_trade_symbol: active_trade ? active_trade.symbol : null,
+      active_trade_lifecycle_state: active_trade ? active_trade.lifecycle_state : null,
+    });
+  } catch (error) {
+    logger.warn(`Blocked signal telemetry failed for ${candidate.symbol}: ${error.message}`);
+  }
+}
+
+async function findStaleOpenTrade() {
+  try {
+    const open_trades = await paperTradeModel.findOpen();
+    return open_trades.find((trade) => trade.lifecycle_state === 'STALE') || null;
+  } catch (error) {
+    logger.warn(`Failed to inspect stale open trades: ${error.message}`);
+    return null;
+  }
 }
 
 function computePositionSizing(entry_price, stop_loss, direction, opts = {}) {
@@ -406,6 +463,10 @@ async function buildCandidate(
   if (total_active >= config.max_active_signals) {
     logger.info(`Signal for ${symbol} rejected: active ${direction} signal cap reached (${total_active}/${config.max_active_signals})`);
     await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'ACTIVE_CAP', reject_reason: `Active ${direction} signal cap reached (${total_active}/${config.max_active_signals})`, raw_confidence: confidence });
+    const stale_trade = await findStaleOpenTrade();
+    await recordBlockedEvent({
+      symbol, date, strategy_source: signal.strategy, direction, confidence, risk_reward: signal.risk_reward,
+    }, stale_trade ? 'STALE_CAPITAL' : 'MAX_ACTIVE_TRADES', stale_trade);
     return null;
   }
 
@@ -419,6 +480,10 @@ async function buildCandidate(
   if (sector_active >= config.max_sector_signals) {
     logger.info(`Signal for ${symbol} rejected: sector ${sector} ${direction} cap reached (${sector_active}/${config.max_sector_signals})`);
     await rejectedSignalModel.insertRejected({ symbol, date, strategy_source: signal.strategy, reject_stage: 'SECTOR_GATE', reject_reason: `Sector ${sector} ${direction} cap reached (${sector_active}/${config.max_sector_signals})`, raw_confidence: confidence });
+    const stale_trade = await findStaleOpenTrade();
+    await recordBlockedEvent({
+      symbol, date, strategy_source: signal.strategy, direction, confidence, risk_reward: signal.risk_reward,
+    }, stale_trade ? 'STALE_CAPITAL' : 'SECTOR_CAP', stale_trade);
     return null;
   }
 
@@ -499,6 +564,10 @@ async function buildCandidate(
         reject_reason: `Portfolio capital at risk would exceed ${config.max_portfolio_risk_pct}% of capital`,
         raw_confidence: confidence, raw_rr: signal.risk_reward,
       });
+      const stale_trade = await findStaleOpenTrade();
+      await recordBlockedEvent({
+        symbol, date, strategy_source: signal.strategy, direction, confidence, risk_reward: signal.risk_reward,
+      }, stale_trade ? 'STALE_CAPITAL' : 'PORTFOLIO_RISK_CAP', stale_trade);
       return null;
     }
   }
@@ -575,6 +644,7 @@ async function buildCandidate(
   const explanation = buildExplanations(scoreFeature, scoreIndicator, null, null, direction);
 
   const { execution_type, is_executable } = resolveExecutionType(direction, config.account_type);
+  const reachability = assessTargetReachability(signal);
   const { ranking_score, ranking_components } = computeRankingScore({
     confidence,
     feature,
@@ -604,6 +674,8 @@ async function buildCandidate(
     risk_reward: signal.risk_reward,
     exit_policy: signal.exit_policy,
     max_hold_days: signal.max_hold_days,
+    target_reachability_warning: reachability.warning,
+    signal_flags: reachability.flags,
     reasons: signal.reasons,
     status: 'ACTIVE',
     strategy_source: signal.strategy,
@@ -661,6 +733,7 @@ async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
           reject_reason: `Weekly target ${config.target_weekly_signals} reached (${weekly_count} this week)`,
           raw_confidence: c.confidence, raw_rr: c.risk_reward,
         });
+        await recordBlockedEvent(c, 'MAX_SIGNALS_PER_DAY');
       }
       return [];
     }
@@ -674,6 +747,7 @@ async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
         reject_reason: `Ranked #${candidates.indexOf(c) + 1} but daily limit is ${daily_limit}`,
         raw_confidence: c.confidence, raw_rr: c.risk_reward,
       });
+      await recordBlockedEvent(c, 'MAX_SIGNALS_PER_DAY');
     }
     return selected;
   }
@@ -704,6 +778,7 @@ async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
       reject_reason: `Ranking/confidence ${score.toFixed(1)} below dynamic floor ${dynamic_floor.toFixed(1)} (week_fill=${week_fill.toFixed(2)})`,
       raw_confidence: c.confidence, raw_rr: c.risk_reward,
     });
+    await recordBlockedEvent(c, 'DYNAMIC_CONFIDENCE_FLOOR');
   }
 
   // Enforce absolute daily cap regardless of mode (protects against pathological 20-passing days).
@@ -718,6 +793,7 @@ async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
         reject_reason: `Passed dynamic floor but exceeded daily cap ${eff_max_per_day}`,
         raw_confidence: c.confidence, raw_rr: c.risk_reward,
       });
+      await recordBlockedEvent(c, 'MAX_SIGNALS_PER_DAY');
     }
   }
 
@@ -734,6 +810,7 @@ async function selectTopSignals(candidates, date, market_regime = 'BULLISH') {
           reject_reason: `HYBRID soft weekly cap reached (${Math.floor(target_weekly * config.hybrid_soft_cap_multiplier)} vs current ${weekly_count})`,
           raw_confidence: c.confidence, raw_rr: c.risk_reward,
         });
+        await recordBlockedEvent(c, 'MAX_SIGNALS_PER_DAY');
       }
     }
   }
@@ -925,10 +1002,12 @@ async function updateSignalStatuses() {
 
       if (evaluation.exit_reason === 'EXPIRED') {
         const rough_pnl_pct = evaluation.realistic_entry > 0
-          ? Math.abs(((evaluation.exit_price - evaluation.realistic_entry) / evaluation.realistic_entry) * 100)
+          ? ((evaluation.exit_price - evaluation.realistic_entry) / evaluation.realistic_entry) * 100
           : 0;
-        if (rough_pnl_pct < config.expired_movement_threshold) {
-          evaluation.exit_reason = 'EXPIRED_PENALIZED';
+        const penalty_result = applyExpiredPenalty(evaluation.exit_reason, rough_pnl_pct);
+        if (penalty_result.penalty_applied) {
+          evaluation.exit_reason = penalty_result.exit_reason;
+          evaluation.expired_penalty_pct = penalty_result.penalty_pct;
         }
       }
       const linked_trade = await paperTradeModel.findBySignalId(signal.id);

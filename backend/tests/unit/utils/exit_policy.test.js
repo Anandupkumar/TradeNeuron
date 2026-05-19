@@ -2,6 +2,7 @@ const {
   attachExitPolicy,
   evaluateSignalExit,
 } = require('../../../src/utils/exit_policy.util');
+const { applyExpiredPenalty } = require('../../../src/utils/exit_accounting.util');
 
 describe('exit_policy.util', () => {
   test('should attach fixed RR policy for trend pullback', () => {
@@ -75,5 +76,62 @@ describe('exit_policy.util', () => {
     expect(evaluation.exit_reason).toBe('EXPIRED');
     expect(evaluation.exit_price).toBe(104);
     expect(evaluation.result).toBe('NEUTRAL');
+  });
+
+  test('should classify partial then target as a multi-leg target exit', () => {
+    const evaluation = evaluateSignalExit({
+      strategy: 'TREND_PULLBACK',
+      direction: 'LONG',
+      entry_price: 100,
+      stop_loss: 90,
+      target_price: 122.5,
+      exit_policy: {
+        kind: 'FIXED_RR',
+        partial_exit_rr: 1,
+        partial_fraction: 0.5,
+        move_sl_to_breakeven_after_partial: true,
+        trail_after_partial: 'NONE',
+      },
+      max_hold_days: 5,
+    }, [
+      { open: 100, high: 111, low: 101, adjusted_close: 110 },
+      { open: 111, high: 123, low: 111, adjusted_close: 122.5 },
+    ]);
+
+    expect(evaluation.partial_fired).toBe(true);
+    expect(evaluation.exit_reason).toBe('PARTIAL_THEN_TARGET');
+    expect(evaluation.partial_exit_price).toBe(110);
+  });
+
+  test('should classify partial then breakeven stop', () => {
+    const evaluation = evaluateSignalExit({
+      strategy: 'TREND_PULLBACK',
+      direction: 'LONG',
+      entry_price: 100,
+      stop_loss: 90,
+      target_price: 122.5,
+      exit_policy: {
+        kind: 'FIXED_RR',
+        partial_exit_rr: 1,
+        partial_fraction: 0.5,
+        move_sl_to_breakeven_after_partial: true,
+        trail_after_partial: 'NONE',
+      },
+      max_hold_days: 5,
+    }, [
+      { open: 100, high: 111, low: 99, adjusted_close: 110 },
+      { open: 110, high: 112, low: 100, adjusted_close: 101 },
+    ]);
+
+    expect(evaluation.partial_fired).toBe(true);
+    expect(evaluation.exit_reason).toBe('PARTIAL_THEN_BE_STOP');
+  });
+
+  test('should apply expired penalty to negligible movement exits', () => {
+    const result = applyExpiredPenalty('EXPIRED', 0.05);
+
+    expect(result.exit_reason).toBe('EXPIRED_PENALIZED');
+    expect(result.penalty_applied).toBe(true);
+    expect(result.pnl_pct).toBeLessThan(0.05);
   });
 });

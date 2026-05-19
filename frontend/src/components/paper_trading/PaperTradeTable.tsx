@@ -21,6 +21,10 @@ function pnlCell(value: number | null) {
   );
 }
 
+function formatLifecycleState(value: PaperTrade['lifecycle_state']) {
+  return value.replaceAll('_', ' ');
+}
+
 const columns = [
   {
     key: 'symbol',
@@ -92,6 +96,25 @@ const columns = [
     key: 'status',
     header: 'Status',
     render: (t: PaperTrade) => StatusBadge({ status: t.status }),
+  },
+  {
+    key: 'lifecycle_state',
+    header: 'Lifecycle',
+    render: (t: PaperTrade) => (
+      <span
+        title={t.lifecycle_note ?? undefined}
+        className={cn(
+          'rounded-full px-2 py-0.5 text-[11px] font-medium',
+          t.lifecycle_state === 'STALE' ? 'bg-red-500/15 text-red-400' :
+          t.lifecycle_state === 'COMPRESSING' ? 'bg-amber-500/15 text-amber-400' :
+          t.lifecycle_state === 'TRAILING' ? 'bg-blue-500/15 text-blue-400' :
+          t.lifecycle_state === 'PARTIAL_EXITED' ? 'bg-emerald-500/15 text-emerald-400' :
+          'bg-muted text-muted-foreground',
+        )}
+      >
+        {formatLifecycleState(t.lifecycle_state)}
+      </span>
+    ),
   },
   {
     key: 'exit_reason',

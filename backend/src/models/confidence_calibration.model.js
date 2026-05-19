@@ -50,6 +50,35 @@ async function getLatest() {
   return rows;
 }
 
+async function getLatestSlices(filters = {}) {
+  const params = [];
+  const where = [];
+
+  if (filters.slice_level) {
+    where.push('slice_level = ?');
+    params.push(String(filters.slice_level).toUpperCase());
+  }
+  if (filters.strategy) {
+    where.push('strategy = ?');
+    params.push(normalizeStrategy(filters.strategy));
+  }
+  if (filters.direction) {
+    where.push('direction = ?');
+    params.push(normalizeDirection(filters.direction));
+  }
+
+  const where_sql = where.length > 0 ? `AND ${where.join(' AND ')}` : '';
+  const sql = `
+    SELECT confidence_bucket, slice_level, strategy, direction, total_signals, actual_win_rate, computed_at
+      FROM confidence_calibration
+     WHERE computed_at = (SELECT MAX(computed_at) FROM confidence_calibration)
+       ${where_sql}
+     ORDER BY slice_level ASC, strategy ASC, direction ASC, confidence_bucket ASC
+  `;
+  const [rows] = await pool.query(sql, params);
+  return rows;
+}
+
 async function findBySlice(confidence_bucket, slice_level, strategy, direction) {
   const sql = `
     SELECT confidence_bucket, slice_level, strategy, direction, total_signals, actual_win_rate, computed_at
@@ -97,6 +126,7 @@ async function findLatestForBucket(confidence_bucket, strategy = null, direction
 module.exports = {
   upsertBucket,
   getLatest,
+  getLatestSlices,
   findLatestForBucket,
   findBySlice,
   SLICE_GLOBAL,

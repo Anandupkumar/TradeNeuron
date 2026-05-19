@@ -548,8 +548,28 @@ export interface HistoryResponse {
 ```typescript
 // src/types/paperTrade.types.ts
 
-export type ExitReason = 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'EXPIRED_PENALIZED' | 'MANUAL';
+export type ExitReason =
+  | 'TARGET_HIT'
+  | 'SL_HIT'
+  | 'TRAILING_STOP_HIT'
+  | 'GAP_STOP'
+  | 'EXPIRED'
+  | 'EXPIRED_PENALIZED'
+  | 'PARTIAL_THEN_TARGET'
+  | 'PARTIAL_THEN_BE_STOP'
+  | 'PARTIAL_THEN_TRAIL_STOP'
+  | 'PARTIAL_THEN_EXPIRED'
+  | 'VOL_COMPRESSION'
+  | 'MANUAL';
 export type TradeStatus = 'OPEN' | 'CLOSED';
+export type TradeLifecycleState =
+  | 'ACTIVE'
+  | 'PARTIAL_EXITED'
+  | 'TRAILING'
+  | 'STALE'
+  | 'COMPRESSING'
+  | 'FAILED'
+  | 'EXITED';
 
 export interface PaperTrade {
   id: number;
@@ -569,6 +589,9 @@ export interface PaperTrade {
   pnl_pct: number | null;
   gross_pnl_inr: number | null;
   status: TradeStatus;
+  lifecycle_state: TradeLifecycleState;
+  lifecycle_note: string | null;
+  lifecycle_state_changed_at: string | null;
 }
 
 export interface PaperTradingSummary {
@@ -579,13 +602,18 @@ export interface PaperTradingSummary {
   avg_pnl_pct: number;
   total_pnl_pct: number;
   max_drawdown_pct: number;
+  partial_exited_trades: number;
+  trailing_trades: number;
+  stale_trades: number;
+  compressing_trades: number;
 }
 ```
 
 > **Backend contract notes:**
 > - `direction` and `shares_to_buy` live on the `signals` table, not on `paper_trades`. The backend `GET /api/v1/paper-trading/trades` endpoint must JOIN `paper_trades` with `signals` to include these fields in the response. Verify the backend query includes this join.
 > - `gross_pnl_inr` is computed as `pnl_pct / 100 × entry_price × shares_to_buy`. The backend should compute and return this field, or the frontend can derive it from available data if the backend omits it.
-> - `max_drawdown_pct` in `PaperTradingSummary` requires the backend to compute a running cumulative drawdown over closed trades. If the backend's `getSummary()` does not compute this, it should be added. As a fallback, the frontend can compute it client-side from the trades list by tracking peak cumulative PnL and the maximum drop from that peak.
+> - `max_drawdown_pct` in `PaperTradingSummary` requires the backend to compute a running cumulative drawdown over closed trades.
+> - `lifecycle_state` is separate from `status`. `status` remains `OPEN` / `CLOSED`; lifecycle state captures in-flight management state such as `STALE`, `TRAILING`, or `PARTIAL_EXITED`.
 
 ### Health type
 
@@ -638,6 +666,11 @@ export interface PerformanceReport {
   signals: SignalReport;
   signal_funnel: SignalFunnelReport;
   signal_outcomes: SignalOutcomeReport;
+  opportunity_cost: OpportunityCostReport;
+  calibration_quality: CalibrationQualityReport;
+  regime_probability: RegimeProbabilityReport;
+  portfolio_risk: PortfolioRiskReport;
+  signal_flags: SignalFlagReport;
   paper_trading: PaperTradingSummary;
   strategy_performance: { current: StrategyPerformanceRow[]; snapshots: StrategySnapshotRow[] };
   backtest_summary: BacktestReportSummary;

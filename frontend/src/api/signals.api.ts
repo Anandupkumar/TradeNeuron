@@ -22,6 +22,6 @@ export const signalsApi = {
     apiClient.get('/signals/funnel', { params: date ? { date } : {} }),
   rejectionDistribution: (period_days = 30): Promise<RejectionDistributionResponse> =>
     apiClient.get('/signals/rejected/distribution', { params: { period_days } }),
-  calibration: (): Promise<CalibrationResponse> =>
-    apiClient.get('/signals/calibration'),
+  calibration: (filters?: { slice_level?: string; strategy?: string; direction?: string }): Promise<CalibrationResponse> =>
+    apiClient.get('/signals/calibration', { params: filters ?? {} }),
 };

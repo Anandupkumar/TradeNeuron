@@ -23,9 +23,13 @@ const {
   evaluateSignalExit,
   deriveConservativeTarget,
 } = require('../../utils/exit_policy.util');
+const { applyExpiredPenalty } = require('../../utils/exit_accounting.util');
 
-function evaluateOutcome(signal, future_candles) {
-  return evaluateSignalExit(signal, future_candles, { force_close_on_last_candle: true });
+function evaluateOutcome(signal, future_candles, options = {}) {
+  return evaluateSignalExit(signal, future_candles, {
+    force_close_on_last_candle: true,
+    ...options,
+  });
 }
 
 function calculateNetReturn(entry_price, exit_price, direction = 'LONG') {
@@ -52,6 +56,19 @@ function calculateMultiLegNetReturn(outcome, direction = 'LONG') {
   const final_leg_price = parseFloat(outcome.final_leg_price != null ? outcome.final_leg_price : outcome.exit_price);
   const final_leg = calculateNetReturn(realistic_entry, final_leg_price, direction);
   return partial_fraction * partial_leg + (1 - partial_fraction) * final_leg;
+}
+
+function buildBacktestTrade(outcome, direction = 'LONG') {
+  const raw_return = calculateMultiLegNetReturn(outcome, direction);
+  const penalty_result = applyExpiredPenalty(outcome.exit_reason, raw_return);
+  return {
+    ...outcome,
+    exit_reason: penalty_result.exit_reason,
+    net_return: penalty_result.pnl_pct,
+    expired_penalty_applied: penalty_result.penalty_applied,
+    expired_penalty_pct: penalty_result.penalty_pct,
+    days: outcome.days,
+  };
 }
 
 function buildRegimeByDateMap(nifty_candles, nifty_indicators, vix_by_date, breadth_by_date = new Map()) {
@@ -196,6 +213,9 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
       if (!indicators[i] || !features[i]) continue;
 
       const past_candles = all_candles.slice(Math.max(0, i - 25), i);
+      const trailing_candles = config.vol_compression_exit_enabled
+        ? all_candles.slice(Math.max(0, i - config.vol_compression_trailing_window), i)
+        : null;
       const future_candles = all_candles.slice(i + 1, i + 1 + max_strategy_hold_days);
       if (future_candles.length === 0) continue;
 
@@ -241,9 +261,8 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
         if (short_trend) {
           const sig = capSignal(short_trend);
           if (sig) {
-            const outcome = evaluateOutcome(sig, future_candles);
-            const net_return = calculateMultiLegNetReturn(outcome, 'SHORT');
-            results_by_strategy.TREND_PULLBACK_SHORT.push({ ...outcome, net_return, days: outcome.days });
+            const outcome = evaluateOutcome(sig, future_candles, { trailing_candles: trailing_candles || undefined });
+            results_by_strategy.TREND_PULLBACK_SHORT.push(buildBacktestTrade(outcome, 'SHORT'));
           }
         }
 
@@ -251,9 +270,8 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
         if (breakdown_signal) {
           const sig = capSignal(breakdown_signal);
           if (sig) {
-            const outcome = evaluateOutcome(sig, future_candles);
-            const net_return = calculateMultiLegNetReturn(outcome, 'SHORT');
-            results_by_strategy.BREAKDOWN.push({ ...outcome, net_return, days: outcome.days });
+            const outcome = evaluateOutcome(sig, future_candles, { trailing_candles: trailing_candles || undefined });
+            results_by_strategy.BREAKDOWN.push(buildBacktestTrade(outcome, 'SHORT'));
           }
         }
       }
@@ -275,15 +293,13 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
             strategy: 'COMBINED',
             direction: 'LONG',
           });
-          const outcome = evaluateOutcome(merged, future_candles);
-          const net_return = calculateMultiLegNetReturn(outcome, 'LONG');
-          results_by_strategy.COMBINED.push({ ...outcome, net_return, days: outcome.days });
+          const outcome = evaluateOutcome(merged, future_candles, { trailing_candles: trailing_candles || undefined });
+          results_by_strategy.COMBINED.push(buildBacktestTrade(outcome, 'LONG'));
         }
       } else if (long_signals.length === 1) {
         const { name, signal: sig } = long_signals[0];
-        const outcome = evaluateOutcome(sig, future_candles);
-        const net_return = calculateMultiLegNetReturn(outcome, 'LONG');
-        results_by_strategy[name].push({ ...outcome, net_return, days: outcome.days });
+        const outcome = evaluateOutcome(sig, future_candles, { trailing_candles: trailing_candles || undefined });
+        results_by_strategy[name].push(buildBacktestTrade(outcome, 'LONG'));
       }
     }
   }
@@ -314,4 +330,4 @@ async function runBacktest(train_start, train_end, test_start, test_end) {
   return results_by_strategy;
 }
 
-module.exports = { runBacktest, evaluateOutcome, calculateNetReturn, calculateMultiLegNetReturn };
+module.exports = { runBacktest, evaluateOutcome, calculateNetReturn, calculateMultiLegNetReturn, buildBacktestTrade };

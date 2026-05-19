@@ -167,6 +167,15 @@ backend/
     036_create_pipeline_runs.sql
     037_add_min_confidence_to_strategy_config.sql
     038_add_expired_penalized.sql
+    039_improvements_phase1.sql
+    040_rename_vwap_to_vwma.sql
+    041_profitability_roadmap.sql
+    042_partial_exit_and_dynamic_frequency.sql
+    043_per_strategy_calibration.sql
+    044_strategy_config_risk_budget.sql
+    045_add_trade_lifecycle_state.sql
+    046_create_blocked_signal_events.sql
+    047_add_signal_intelligence_flags.sql
   tests/
     unit/
       indicators/
@@ -980,7 +989,7 @@ CREATE TABLE IF NOT EXISTS confidence_calibration (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-**Key decision:** Stores weekly-computed calibration data mapping confidence score ranges (bucketed in 5-point intervals: 70, 75, 80, ...) to their actual historical win rates. The weekly calibration job populates this table. Buckets with fewer than 20 samples are skipped. This is display-only data — it does not auto-adjust scoring weights.
+**Key decision:** Stores weekly-computed calibration data mapping confidence score ranges (bucketed in 5-point intervals: 70, 75, 80, ...) to their actual historical win rates. The weekly calibration job populates global, strategy, and strategy+direction slices. Runtime confidence calibration uses the same fallback order as storage: strategy+direction → strategy → global.
 
 ### 4.30 FREQUENCY_CAP reject stage (migration 035)
 
@@ -1045,7 +1054,18 @@ adaptive_thresholds                (stores adaptive RSI/volume thresholds + scor
 strategy_config                    (stores per-strategy enable/disable state + min_confidence threshold)
 confidence_calibration             (weekly calibration: confidence bucket → actual win rate)
 pipeline_runs                      (tracks daily pipeline execution completion timestamps)
+blocked_signal_events              (read-only opportunity-cost telemetry for quality candidates blocked by caps)
 ```
+
+### Upgrade Telemetry Tables
+
+Migrations 045-047 add the upgrade observability layer:
+
+- `paper_trades.lifecycle_state` tracks operational state independently from `status`: `ACTIVE`, `PARTIAL_EXITED`, `TRAILING`, `STALE`, `COMPRESSING`, `FAILED`, `EXITED`.
+- `blocked_signal_events` stores candidates blocked by frequency, active-trade, sector, stale-capital, or portfolio-risk constraints. It includes confidence, R:R, expected-value score, and optional active-trade linkage.
+- `signals.target_reachability_warning` and `signals.signal_flags` store target feasibility warnings without changing target generation.
+
+The performance report now includes opportunity-cost, calibration-quality, regime-probability, portfolio-risk, and target-reachability sections. These metrics are read-only diagnostics and must not change signal selection unless explicitly promoted after validation.
 
 ### Migration Strategy
 

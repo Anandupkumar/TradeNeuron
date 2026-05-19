@@ -24,6 +24,34 @@ const { recordShadowComparison } = require('../services/analytics/shadow_validat
 const ALL_FETCH_SYMBOLS = [...nifty_50_symbols, nifty_index_symbol, india_vix_symbol];
 const INDICATOR_SYMBOLS = [...nifty_50_symbols, nifty_index_symbol];
 
+function summarizeRawSignals(signals = []) {
+  return {
+    strategy_source: signals.map((signal) => signal.strategy).filter(Boolean).join('+') || 'unknown',
+    raw_rr: signals.reduce((best, signal) => {
+      const rr = signal.risk_reward != null ? parseFloat(signal.risk_reward) : null;
+      if (rr == null || Number.isNaN(rr)) return best;
+      return best == null ? rr : Math.max(best, rr);
+    }, null),
+  };
+}
+
+async function recordFilteredRejections(before_map, after_map, date, reject_stage, reason_builder) {
+  const after_symbols = new Set(Object.keys(after_map));
+  for (const [symbol, signals] of Object.entries(before_map)) {
+    if (after_symbols.has(symbol)) continue;
+    const summary = summarizeRawSignals(signals);
+    await rejectedSignalModel.insertRejected({
+      symbol,
+      date,
+      strategy_source: summary.strategy_source,
+      reject_stage,
+      reject_reason: reason_builder(symbol),
+      raw_confidence: null,
+      raw_rr: summary.raw_rr,
+    });
+  }
+}
+
 async function runDailyPipeline() {
   const start_time = Date.now();
   const today = formatDate(new Date());
@@ -211,11 +239,25 @@ async function runDailyPipeline() {
     // Step 8: Fundamental filter
     logger.info('Step 8/13: Applying fundamental filter');
     const post_fundamental = await filterByFundamentals(raw_signal_map);
+    await recordFilteredRejections(
+      raw_signal_map,
+      post_fundamental,
+      data_date,
+      'FUNDAMENTAL_FILTER',
+      (symbol) => `${symbol} failed health gate`
+    );
     logger.info(`Step 8: ${Object.keys(post_fundamental).length} symbols passed fundamental filter`);
 
     // Step 9: Sentiment filter (soft scoring — only STRONGLY_NEGATIVE hard-rejects)
     logger.info('Step 9/13: Applying sentiment filter');
     const { passed: post_sentiment, adjustments: sentiment_adjustments } = await filterBySentiment(post_fundamental);
+    await recordFilteredRejections(
+      post_fundamental,
+      post_sentiment,
+      data_date,
+      'SENTIMENT_FILTER',
+      (symbol) => `${symbol} hard-rejected by strongly negative sentiment`
+    );
     logger.info(`Step 9: ${Object.keys(post_sentiment).length} symbols passed sentiment filter`);
 
     // Step 10: Score, deduplicate, position sizing, and generate signals
